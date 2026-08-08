@@ -10,13 +10,13 @@ from tests.fixtures.layout_factory import write_advanced_layout
 
 @pytest.mark.parametrize("suffix", [".gds", ".oas"])
 def test_generated_multilayer_hierarchy_and_shape_policy(suffix: str, tmp_path: Path) -> None:
-    """GDS/OASIS 应一致应用全部层级变换并在几何物化时忽略 Text。"""
+    """流文件应一致应用全部层级变换，并在几何物化时忽略文本。"""
     path = write_advanced_layout(tmp_path / f"advanced{suffix}")
     mask, auxiliary = LayerSpec(1, 0), LayerSpec(2, 5)
     with LayoutDB.open(path) as db:
         assert db.layers() == (mask, auxiliary)
         box = db.bbox()
-        # Layout 层的 bbox 有意反映全部流文件对象，其中也包括 Text。
+        # 版图层的包围盒有意反映全部流文件对象，其中也包括文本。
         assert box == DbuBox(-200, -200, 1000, 2700)
         batch = db.query([mask, auxiliary], box).materialize(diagnostics=True)
         # 8 个 LEAF 实例 × 每实例 3 个可转 Polygon 图形，再加 1 个顶层 Polygon。

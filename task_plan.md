@@ -20,9 +20,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 2. Layout layer | complete | LayoutDB, hierarchy, layers, lazy ROI queries |
 | 3. Geometry layer | complete | Region operations, contours, edges, validation, local index |
 | 4. Patch/output | complete | Ownership clipping, conflicts, GDS/OASIS export |
-| 5. Verification | in_progress | Unit/integration/regression/performance tests |
-| 6. Reports | pending | Development and test reports under `doc/` |
-| 7. Simplify and harden audit | pending | Remove overdesign, error-driven special cases, cycles, and dead abstractions; rerun all verification |
+| 5. Verification | complete | Unit/integration/regression/performance tests |
+| 6. Reports | complete | Development and test reports under `doc/` |
+| 7. Simplify and harden audit | complete | Removed overdesign, error-driven special cases, cycles, and dead abstractions; reran all verification |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -44,6 +44,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | Generated transform fixture expected geometry-only layout bbox and two ROI shapes | 1 | Corrected full bbox to include Text and ROI count to include Box/Path/Polygon |
 | Hierarchical ROI diagnostics counted zero Text objects | 1 | Diagnostic-only iterator now uses touching semantics for zero-area objects; materialization remains overlapping |
 | CLI comma-separated negative Box was parsed as an option | 1 | Simplified CLI to four integer arguments; removed the comma parser instead of adding a special case |
+| Ruff audit command was unavailable | 1 | Added Ruff as an optional development dependency; runtime remains unaffected |
+| Ruff found 10 maintainability findings | 1 | Manually simplified imports, constants, casts, test defaults, and context managers; no auto-fix used |
+| Ruff formatter would expand the requested compact style | 1 | Keep compact manual layout; use Ruff rules, compileall, and tests as quality gates instead |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -52,3 +55,4 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - OPC fragmentation remains outside geometry.
 - `TestReticle/gcd_45nm.gds` is user-owned and excluded from commits unless explicitly requested.
 - Direct execution: `python run_layout_geometry.py ...`; editable installation is optional and used only for development tooling.
+- Final audit simplification: diagnostics allocate stats only when requested; PatchSet uses per-layer native ownership/result Regions instead of Python O(n²) scans and per-add sorting.

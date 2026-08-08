@@ -4,7 +4,7 @@
 
 **Logged**: 2026-08-09T03:05:00+08:00
 **Priority**: high
-**Status**: pending
+**Status**: resolved
 **Area**: backend
 
 ### Summary
@@ -15,6 +15,10 @@
 
 ### Suggested Action
 统一翻译源码与测试注释，提供根目录 CLI，最终执行独立的简化与加固审查。
+
+### Resolution
+- **Resolved**: 2026-08-09T04:30:00+08:00
+- **Notes**: 注释与 docstring 已统一为中文；根目录入口在卸载项目包后通过外部工作目录测试；最终简化审查已完成。
 
 ### Metadata
 - Source: user_feedback
@@ -31,7 +35,7 @@
 
 **Logged**: 2026-08-09T01:00:00+08:00
 **Priority**: high
-**Status**: pending
+**Status**: resolved
 **Area**: backend
 
 ### Summary
@@ -42,6 +46,10 @@ KLayout can retain the hierarchy and materialize only shapes intersecting a loca
 
 ### Suggested Action
 Keep LayoutDB hierarchical and read-only, use lazy ROI queries, and convert to NumPy only once per local work area.
+
+### Resolution
+- **Resolved**: 2026-08-09T04:30:00+08:00
+- **Notes**: 已落实为只读 LayoutDB、惰性 ROI 查询、原生 Region 批处理和显式 NumPy 转换边界，并通过百万逻辑实例基准。
 
 ### Metadata
 - Source: conversation

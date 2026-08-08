@@ -17,7 +17,7 @@ from layout import (
 
 
 def test_open_simple_and_inspect_hierarchy(reticle_dir: Path) -> None:
-    """simple 版图应稳定给出 DBU、顶层 Cell、Layer、bbox 和子 Cell 信息。"""
+    """简单版图应稳定给出数据库单位、顶层单元、图层、包围盒和子单元信息。"""
     with LayoutDB.open(reticle_dir / "simple.gds") as db:
         assert db.dbu_um == pytest.approx(0.001)
         assert db.top_cell.name == "TOP"
@@ -44,9 +44,8 @@ def test_invalid_file_cell_and_layer_fail_clearly(reticle_dir: Path, tmp_path: P
         LayoutDB.open(tmp_path / "missing.gds")
     with pytest.raises(CellNotFoundError):
         LayoutDB.open(reticle_dir / "simple.gds", top_cell="MISSING")
-    with LayoutDB.open(reticle_dir / "simple.gds") as db:
-        with pytest.raises(LayerNotFoundError):
-            db.query([LayerSpec(99, 0)], DbuBox(-10, -10, 10, 10))
+    with LayoutDB.open(reticle_dir / "simple.gds") as db, pytest.raises(LayerNotFoundError):
+        db.query([LayerSpec(99, 0)], DbuBox(-10, -10, 10, 10))
 
 
 def test_closed_database_invalidates_lazy_query(reticle_dir: Path) -> None:

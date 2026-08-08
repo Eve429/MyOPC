@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from numbers import Integral
 from types import MappingProxyType
-from typing import Mapping
 
 import klayout.db as kdb
 
@@ -101,7 +101,7 @@ class CellRef:
 
 @dataclass(frozen=True, slots=True)
 class LayerShapeStats:
-    """ROI 迭代器返回图形的可选诊断计数。"""
+    """局部区域迭代器返回图形的可选诊断计数。"""
 
     polygon_like: int = 0
     text: int = 0

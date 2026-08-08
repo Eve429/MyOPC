@@ -1,4 +1,4 @@
-# Python caches and local test artifacts.
+# Python 缓存和本地测试产物。
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -8,5 +8,5 @@ build/
 dist/
 *.egg-info/
 
-# Local benchmark output; final human-readable results live in doc/.
+# 本地基准测试中间结果；最终可读报告统一放入 doc/。
 .benchmarks/

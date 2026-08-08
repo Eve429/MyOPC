@@ -1,4 +1,4 @@
-"""Layout/Geometry 测试共享路径和确定性工具。"""
+"""版图与几何测试共享路径和确定性工具。"""
 
 from pathlib import Path
 

@@ -25,6 +25,7 @@ def test_existing_fixture_counts_and_top_transforms(reticle_dir: Path) -> None:
         box = db.bbox()
         assert box is not None
         batch = db.query(list(expected), box).materialize()
+        assert batch.stats is None
         assert dict(batch.counts()) == expected
         assert str(batch.region(LayerSpec(1, 0)).bbox()) == "(-2300,-2800;7350,3600)"
 

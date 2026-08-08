@@ -69,7 +69,7 @@ class UniformGridIndex:
         if not isinstance(radius_dbu, Integral) or radius_dbu < 0:
             raise ValueError("radius_dbu must be a non-negative integer")
         radius = int(radius_dbu)
-        # DbuBox 不允许零面积，因此半径为 0 时用一个 DBU 的最小查询框表达点查询。
+        # 数据库单位矩形不允许零面积，因此半径为 0 时用一个 DBU 的最小查询框表达点查询。
         if radius == 0:
             return self.query_box(DbuBox(int(x), int(y), int(x) + 1, int(y) + 1))
         return self.query_box(DbuBox(int(x) - radius, int(y) - radius,

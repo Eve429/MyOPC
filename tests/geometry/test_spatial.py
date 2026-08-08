@@ -1,4 +1,4 @@
-"""Tile-local 均匀网格边索引正确性测试。"""
+"""局部区域均匀网格边索引正确性测试。"""
 
 import numpy as np
 import pytest

@@ -82,9 +82,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             }
             if args.arrays:
                 layer_result.update(
-                    vertex_count=int(len(contour_batches[layer].vertices)),
-                    ring_count=int(contour_batches[layer].ring_count),
-                    edge_count=int(edge_batches[layer].edge_count),
+                    vertex_count=len(contour_batches[layer].vertices),
+                    ring_count=contour_batches[layer].ring_count,
+                    edge_count=edge_batches[layer].edge_count,
                 )
             if args.diagnostics and queried.stats is not None:
                 stats = queried.stats.shapes[layer]

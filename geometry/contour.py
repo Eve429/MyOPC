@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Mapping
 
 import klayout.db as kdb
 import numpy as np
@@ -47,7 +47,7 @@ def _extract_layer(layer: LayerSpec, region: kdb.Region) -> ContourBatch:
 def contours_to_region(contours: ContourBatch) -> kdb.Region:
     """在保留 Polygon 孔洞拓扑的前提下重建原生 Region。"""
     region = kdb.Region()
-    polygon_ids = sorted(set(int(value) for value in contours.ring_polygon_ids))
+    polygon_ids = sorted({int(value) for value in contours.ring_polygon_ids})
     for polygon_id in polygon_ids:
         ring_ids = np.flatnonzero(contours.ring_polygon_ids == polygon_id)
         hull_ids = [index for index in ring_ids if not contours.ring_is_hole[index]]

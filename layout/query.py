@@ -35,14 +35,14 @@ class ShapeQuery:
         native_box = self.box.to_native()
         regions: dict[LayerSpec, kdb.Region] = {}
         diagnostic_map: dict[LayerSpec, LayerShapeStats] = {}
-        started = perf_counter()
+        started = perf_counter() if diagnostics else 0.0
         for layer in self.layers:
             index = db._native_layer_index(layer)
             # 关键性能路径：递归迭代、实例变换和 Region 构造都在 KLayout C++ 内完成。
-            # Python 每层只发起一次批量调用，不逐 Shape 读取坐标，也不展开完整层级。
+            # 解释器每层只发起一次批量调用，不逐个图形读取坐标，也不展开完整层级。
             iterator = kdb.RecursiveShapeIterator(layout, native_cell, index, native_box, True)
             # 必须在原生迭代器侧限制图形类型。未过滤的 ROI 迭代器可能让 Text 进入
-            # Region.count()，但 Region 的 Polygon 遍历又会忽略 Text，造成计数不一致。
+            # 原生区域计数，但其多边形遍历又会忽略文本，造成计数不一致。
             # 在这里过滤既保证语义一致，也避免为过滤类型增加 Python 逐图形循环。
             iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
             if self.preserve_properties:
@@ -51,7 +51,7 @@ class ShapeQuery:
             regions[layer] = kdb.Region(iterator)
             if diagnostics:
                 diagnostic_map[layer] = self._collect_shape_stats(layout, native_cell, index, native_box)
-        stats = MaterializationStats(perf_counter() - started, diagnostic_map)
+        stats = MaterializationStats(perf_counter() - started, diagnostic_map) if diagnostics else None
         return RegionBatch(regions, self.box, self.cell, stats)
 
     @staticmethod

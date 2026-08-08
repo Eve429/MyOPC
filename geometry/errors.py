@@ -1,4 +1,4 @@
-"""Geometry 与 Patch 领域异常定义。"""
+"""几何与补丁领域异常定义。"""
 
 
 class GeometryError(RuntimeError):

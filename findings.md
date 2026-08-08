@@ -26,5 +26,14 @@
 - Source layout remains immutable; patch ownership is resolved in global DBU coordinates.
 
 ## Final Benchmark Baseline
-- Million logical-instance AREF: 25 ROI polygons, 0.116 ms median query+clip, 0.183 ms p95, 0.48 MB RSS delta, 12.03 ms file open.
-- 100,000-edge local grid: 426.20 ms one-time build, 0.0214 ms median indexed query versus 0.4436 ms brute scan, 20.73x speedup, exact results.
+- Million logical-instance AREF: 25 ROI polygons, 0.1126 ms median query+clip, 0.1294 ms p95, 0.54 MB RSS delta, 10.80 ms file open.
+- 100,000-edge local grid: 432.01 ms one-time build, 0.0207 ms median indexed query versus 0.3438 ms brute scan, 16.61x speedup, exact results.
+
+## Real Layout Smoke Test
+- Read-only validation of user-owned, untracked `TestReticle/gcd_45nm.gds` succeeded; the file was not added to Git.
+- Selected top Cell: `TOP`; DBU: 0.0001 um; Layer: 11/0.
+- Full top bbox: `[11400, 13150, 317300, 308850]` DBU.
+- Materialized 1,776 polygons with total area 28,594,652,500 DBU².
+- NumPy boundary conversion produced 21,590 vertices, 1,776 rings, and 21,590 closed edges.
+- Optional diagnostics agreed on 1,776 polygon-like objects and reported zero Text/Edge/other objects.
+- End-to-end direct CLI wall time measured by PowerShell was 461.001 ms, including interpreter and imports.

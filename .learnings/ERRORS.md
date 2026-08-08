@@ -1,5 +1,153 @@
 # Errors
 
+## [ERR-20260809-013] chinese_comment_prefix_scan
+
+**Logged**: 2026-08-09T04:45:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+中文注释扫描仍发现五条以英文 API 名称开头的行注释。
+
+### Error
+`KLayout`、`Python`、`Region.count()`、`DbuBox`、`Layout` 位于注释起始位置。
+
+### Context
+- 注释的语法和解释主体已经是中文，但用户要求所有注释使用中文。
+- 技术名词可以保留在句中，无需成为起句主语。
+
+### Suggested Fix
+用中文描述起句，把必要 API 名称放到句中。
+
+### Metadata
+- Reproducible: yes
+- Related Files: layout/query.py, layout/writer.py, geometry/spatial.py, tests/layout/test_generated_layout.py
+
+### Resolution
+- **Resolved**: 2026-08-09T04:45:00+08:00
+- **Notes**: 五条注释均已调整，并重新执行扫描。
+
+---
+
+## [ERR-20260809-012] temporary_directory_cleanup_policy
+
+**Logged**: 2026-08-09T04:40:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+仓库外直接入口复验脚本因包含动态临时目录的递归删除而在执行前被安全策略拒绝。
+
+### Error
+`rejected: blocked by policy`
+
+### Context
+- 失败发生在命令审批阶段，基准、扫描和入口测试均未开始执行。
+- 验证目标只要求从仓库外工作目录运行，不需要创建或删除临时目录。
+
+### Suggested Fix
+直接使用已有的仓库父目录作为工作目录，不执行任何清理命令。
+
+### Metadata
+- Reproducible: yes
+- Related Files: run_layout_geometry.py
+
+### Resolution
+- **Resolved**: 2026-08-09T04:40:00+08:00
+- **Notes**: 改用现有仓库外目录复验，避免不必要的文件系统操作。
+
+---
+
+## [ERR-20260809-011] formatter_style_mismatch
+
+**Logged**: 2026-08-09T04:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Ruff 规则检查通过，但格式检查要求把用户偏好的紧凑代码大幅展开。
+
+### Error
+`25 files would be reformatted`
+
+### Context
+- 用户明确偏好紧凑式代码格式。
+- Ruff 提出的不是语义或静态规则问题，只是其 Black 风格布局差异。
+
+### Suggested Fix
+保留手工紧凑排版，以 Ruff rule check、compileall 和测试作为质量门槛。
+
+### Metadata
+- Reproducible: yes
+- Related Files: layout, geometry, tests, benchmarks, run_layout_geometry.py
+
+### Resolution
+- **Resolved**: 2026-08-09T04:10:00+08:00
+- **Notes**: 不运行自动格式化；静态规则检查已全通过。
+
+---
+
+## [ERR-20260809-010] static_audit_findings
+
+**Logged**: 2026-08-09T03:55:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Ruff 静态审查返回 10 个维护性问题。
+
+### Error
+包括旧式 Mapping/Callable 导入、多余生成器与整数转换、未标注类常量、测试默认对象和嵌套上下文。
+
+### Context
+- 功能测试已经通过，这些问题属于最终简化与加固阶段。
+
+### Suggested Fix
+手工逐项简化并复查差异，不使用可能改变紧凑格式的自动修复。
+
+### Metadata
+- Reproducible: yes
+- Related Files: layout, geometry, tests, benchmarks, run_layout_geometry.py
+
+### Resolution
+- **Resolved**: 2026-08-09T03:55:00+08:00
+- **Notes**: 10 项均已手工修正，公共接口和行为不变。
+
+---
+
+## [ERR-20260809-009] missing_ruff_auditor
+
+**Logged**: 2026-08-09T03:45:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+最终静态审查命令无法运行，因为 myopc 环境尚未安装 Ruff。
+
+### Error
+`No module named ruff`
+
+### Context
+- Ruff 只用于开发期静态审查，不属于运行时依赖。
+
+### Suggested Fix
+将 Ruff 放入可选 dev 依赖并单独安装，不要求用户安装项目包。
+
+### Metadata
+- Reproducible: yes
+- Related Files: pyproject.toml
+
+### Resolution
+- **Resolved**: 2026-08-09T03:45:00+08:00
+- **Notes**: 已加入可选开发依赖，运行时依赖没有增加。
+
+---
+
 ## [ERR-20260809-008] cli_negative_box_parsing
 
 **Logged**: 2026-08-09T03:25:00+08:00

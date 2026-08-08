@@ -24,3 +24,10 @@
 - Added direct-run performance benchmark with strict acceptance gates.
 - Strict benchmark passed: million-instance ROI median 0.116 ms and 0.48 MB RSS delta; 100k-edge index queries were exact and 20.73x faster than brute-force bbox scans.
 - Removed the editable project installation and reran verification: 31 tests passed, 91% coverage, compileall passed, and external-working-directory CLI execution passed.
+- Final static audit initially found Ruff absent; added it only to optional development dependencies.
+- Ruff then found 10 maintainability findings; simplified all manually without changing public behavior or compact formatting.
+- Ruff rule checks pass; formatter was intentionally not applied because it expands the requested compact style.
+- Simplify/harden audit removed non-diagnostic timing allocation and replaced PatchSet's Python O(n²) conflict scan/per-add sorting with per-layer native Region ownership checks and accumulated results.
+- Post-audit verification passed: 31 tests, 91% combined `layout/geometry` coverage, Ruff rules, compileall, external-directory CLI execution, and strict benchmarks.
+- Read-only direct CLI validation of the untracked real file `gcd_45nm.gds` succeeded: 1,776 polygons, 21,590 vertices/edges, and 461.001 ms process wall time.
+- Added detailed Chinese development and test reports under `doc/`; all plan phases are complete.

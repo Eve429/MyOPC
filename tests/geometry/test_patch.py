@@ -1,4 +1,4 @@
-"""Ownership 与跨 core 几何 Patch 测试。"""
+"""所有权与跨核心区域的几何补丁测试。"""
 
 from pathlib import Path
 
@@ -37,7 +37,7 @@ def test_patch_conflicts_are_layer_aware_and_touching_is_allowed() -> None:
 
 @pytest.mark.parametrize("suffix", [".gds", ".oas"])
 def test_patch_writer_round_trip(suffix: str, tmp_path: Path) -> None:
-    """GDS/OASIS Patch 输出重新读取后必须与 ownership 几何完全相同。"""
+    """补丁输出重新读取后必须与所有权范围内的几何完全相同。"""
     layer = LayerSpec(17, 3)
     expected = kdb.Region(kdb.Box(-25, -10, 75, 40))
     patches = PatchSet()

@@ -7,9 +7,9 @@ import json
 import platform
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
-from typing import Callable
 
 # 该文件位于 benchmarks 子目录。直接执行时 Python 只把该子目录加入 sys.path，
 # 因此这里显式加入仓库根目录；这不是安装包，也不会修改当前 Python 环境。

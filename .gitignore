@@ -1,0 +1,12 @@
+# Python caches and local test artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local benchmark output; final human-readable results live in doc/.
+.benchmarks/

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myopc-layout-geometry"
+version = "0.1.0"
+description = "High-performance hierarchical layout and geometry foundation for OPC"
+requires-python = ">=3.12"
+dependencies = [
+    "klayout>=0.30.10,<0.31",
+    "numpy>=2.5,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "psutil>=7",
+    "pytest>=8,<10",
+    "pytest-cov>=5,<8",
+]
+
+[tool.setuptools.packages.find]
+include = ["layout*", "geometry*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["layout", "geometry"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]

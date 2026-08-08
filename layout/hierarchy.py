@@ -1,4 +1,4 @@
-"""Read-only hierarchy inspection; production paths never flatten the layout."""
+"""只读层级检查；正式计算路径不会在这里执行版图扁平化。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class CellInfo:
-    """Compact cell metadata suitable for diagnostics and planner inspection."""
+    """供诊断和后续 planner 使用的紧凑 Cell 元数据。"""
 
     ref: CellRef
     bbox: DbuBox | None
@@ -24,14 +24,14 @@ class CellInfo:
 
 @dataclass(frozen=True, slots=True)
 class HierarchySummary:
-    """Snapshot of layout hierarchy without copying any shapes."""
+    """不复制任何图形的版图层级快照。"""
 
     top_cells: tuple[CellRef, ...]
     cells: tuple[CellInfo, ...]
 
 
 def build_hierarchy_summary(db: LayoutDB) -> HierarchySummary:
-    """Inspect cells and instance records while leaving shape storage untouched."""
+    """读取 Cell 与实例记录，同时保持底层图形存储完全不动。"""
     db._assert_open()
     layout = db._native_layout
     infos: list[CellInfo] = []

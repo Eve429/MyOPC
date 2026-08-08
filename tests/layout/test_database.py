@@ -1,4 +1,4 @@
-"""Regression tests for single-load layout ownership and hierarchy metadata."""
+"""版图单次加载、所有权和层级元数据回归测试。"""
 
 from pathlib import Path
 
@@ -17,7 +17,7 @@ from layout import (
 
 
 def test_open_simple_and_inspect_hierarchy(reticle_dir: Path) -> None:
-    """The simple fixture exposes stable DBU, top, layer, bbox, and child metadata."""
+    """simple 版图应稳定给出 DBU、顶层 Cell、Layer、bbox 和子 Cell 信息。"""
     with LayoutDB.open(reticle_dir / "simple.gds") as db:
         assert db.dbu_um == pytest.approx(0.001)
         assert db.top_cell.name == "TOP"
@@ -30,7 +30,7 @@ def test_open_simple_and_inspect_hierarchy(reticle_dir: Path) -> None:
 
 
 def test_multiple_top_requires_explicit_selection(reticle_dir: Path) -> None:
-    """A multi-top file must never select a mask silently by cell order."""
+    """多顶层版图不得依据 Cell 顺序静默选择掩模。"""
     with pytest.raises(AmbiguousTopCellError, match="cell1.*test|test.*cell1"):
         LayoutDB.open(reticle_dir / "test1.gds")
     with LayoutDB.open(reticle_dir / "test1.gds", top_cell="cell1") as db:
@@ -39,7 +39,7 @@ def test_multiple_top_requires_explicit_selection(reticle_dir: Path) -> None:
 
 
 def test_invalid_file_cell_and_layer_fail_clearly(reticle_dir: Path, tmp_path: Path) -> None:
-    """Malformed caller inputs expose domain exceptions instead of native tracebacks."""
+    """非法调用参数应抛出领域异常，而不是泄漏原生调用栈。"""
     with pytest.raises(LayoutOpenError):
         LayoutDB.open(tmp_path / "missing.gds")
     with pytest.raises(CellNotFoundError):
@@ -50,7 +50,7 @@ def test_invalid_file_cell_and_layer_fail_clearly(reticle_dir: Path, tmp_path: P
 
 
 def test_closed_database_invalidates_lazy_query(reticle_dir: Path) -> None:
-    """Queries hold metadata but cannot use a released native database."""
+    """查询可以保留元数据，但不得继续使用已经释放的原生数据库。"""
     db = LayoutDB.open(reticle_dir / "simple.gds")
     query = db.query([LayerSpec(1, 0)], DbuBox(-2500, -600, 500, 1600))
     db.close()

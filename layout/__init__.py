@@ -1,4 +1,4 @@
-"""Public high-performance hierarchical layout API."""
+"""面向 OPC 上层算法的高性能层级版图公共接口。"""
 
 from .database import LayoutDB
 from .errors import (
@@ -19,6 +19,7 @@ from .types import (
     MaterializationStats,
     RegionBatch,
 )
+from .writer import PatchWriter
 
 __all__ = [
     "AmbiguousTopCellError",
@@ -35,6 +36,7 @@ __all__ = [
     "LayoutError",
     "LayoutOpenError",
     "MaterializationStats",
+    "PatchWriter",
     "RegionBatch",
     "ShapeQuery",
 ]

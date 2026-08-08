@@ -1,25 +1,25 @@
-"""Layout-domain exceptions with stable, caller-friendly failure semantics."""
+"""版图模块异常定义，为调用方提供稳定且易识别的失败语义。"""
 
 
 class LayoutError(RuntimeError):
-    """Base class for layout database failures."""
+    """所有版图数据库异常的基类。"""
 
 
 class LayoutOpenError(LayoutError):
-    """Raised when an input layout cannot be opened or parsed."""
+    """输入版图无法打开或解析时抛出。"""
 
 
 class AmbiguousTopCellError(LayoutError):
-    """Raised when a layout has multiple top cells and none was selected."""
+    """版图存在多个顶层 Cell 且调用方未明确选择时抛出。"""
 
 
 class CellNotFoundError(LayoutError):
-    """Raised when a requested cell does not exist."""
+    """请求的 Cell 不存在时抛出。"""
 
 
 class LayerNotFoundError(LayoutError):
-    """Raised when a requested layer/datatype pair does not exist."""
+    """请求的 layer/datatype 组合不存在时抛出。"""
 
 
 class ClosedLayoutError(LayoutError):
-    """Raised when an operation targets an already closed LayoutDB."""
+    """继续使用已经关闭的 LayoutDB 时抛出。"""

@@ -1,4 +1,4 @@
-"""Integration tests for native hierarchical ROI materialization."""
+"""原生层级 ROI 物化集成测试。"""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ from layout import DbuBox, LayerSpec, LayoutDB
 
 
 def test_simple_materialization_ignores_text_and_reports_it_on_demand(reticle_dir: Path) -> None:
-    """Polygon-like shapes stay native while optional diagnostics classify text."""
+    """可转 Polygon 的图形保留在原生端，可选诊断能够识别 Text。"""
     layer = LayerSpec(1, 0)
     with LayoutDB.open(reticle_dir / "simple.gds") as db:
         box = db.bbox()
@@ -19,7 +19,7 @@ def test_simple_materialization_ignores_text_and_reports_it_on_demand(reticle_di
 
 
 def test_existing_fixture_counts_and_top_transforms(reticle_dir: Path) -> None:
-    """Recursive materialization applies SREF/AREF transforms into cell1 coordinates."""
+    """递归物化会把 SREF/AREF 变换统一应用到 cell1 坐标系。"""
     expected = {LayerSpec(1, 0): 13, LayerSpec(2, 0): 22, LayerSpec(3, 0): 1}
     with LayoutDB.open(reticle_dir / "test1.gds", top_cell="cell1") as db:
         box = db.bbox()
@@ -30,7 +30,7 @@ def test_existing_fixture_counts_and_top_transforms(reticle_dir: Path) -> None:
 
 
 def test_roi_query_does_not_return_distant_shapes(reticle_dir: Path) -> None:
-    """A small ROI uses KLayout's hierarchy-aware spatial restriction."""
+    """小 ROI 使用 KLayout 感知层级的空间限制，不返回远处图形。"""
     layer = LayerSpec(1, 0)
     with LayoutDB.open(reticle_dir / "JustPoly.gds") as db:
         left = db.query([layer], DbuBox(-1350, -50, -950, 350)).materialize()

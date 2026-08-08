@@ -24,3 +24,7 @@
 - KLayout Region converts boxes and paths to polygons and ignores text/edges.
 - Convert Region to compact NumPy contour/edge arrays only at the repeated-compute boundary.
 - Source layout remains immutable; patch ownership is resolved in global DBU coordinates.
+
+## Final Benchmark Baseline
+- Million logical-instance AREF: 25 ROI polygons, 0.116 ms median query+clip, 0.183 ms p95, 0.48 MB RSS delta, 12.03 ms file open.
+- 100,000-edge local grid: 426.20 ms one-time build, 0.0214 ms median indexed query versus 0.4436 ms brute scan, 20.73x speedup, exact results.

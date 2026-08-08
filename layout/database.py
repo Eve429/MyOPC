@@ -1,4 +1,4 @@
-"""Immutable, single-load owner of a hierarchical KLayout database."""
+"""层级 KLayout 数据库的单次加载、只读生命周期管理。"""
 
 from __future__ import annotations
 
@@ -21,10 +21,10 @@ from .types import CellRef, DbuBox, LayerSpec
 
 
 class LayoutDB:
-    """Own one read-only native layout for the lifetime of an OPC job."""
+    """在一次 OPC 任务生命周期内唯一持有只读原生版图。"""
 
     def __init__(self, layout: kdb.Layout, source_path: Path, top_cell: kdb.Cell) -> None:
-        """Initialize from an already parsed native layout."""
+        """根据已经解析完成的原生版图初始化对象。"""
         self._layout: kdb.Layout | None = layout
         self._source_path = source_path
         self._top_cell = CellRef(top_cell.name, top_cell.cell_index())
@@ -35,7 +35,7 @@ class LayoutDB:
 
     @classmethod
     def open(cls, path: str | Path, top_cell: str | None = None) -> Self:
-        """Parse GDS/OASIS once and select a deterministic top cell."""
+        """只解析一次 GDS/OASIS，并以确定规则选择顶层 Cell。"""
         source = Path(path).expanduser().resolve()
         if not source.is_file():
             raise LayoutOpenError(f"layout file does not exist: {source}")
@@ -58,73 +58,73 @@ class LayoutDB:
 
     @property
     def source_path(self) -> Path:
-        """Return the normalized source path."""
+        """返回规范化后的源文件路径。"""
         return self._source_path
 
     @property
     def dbu_um(self) -> float:
-        """Return micrometers per integer DBU for reporting/config conversion only."""
+        """返回每个整数 DBU 对应的微米值，仅供配置换算和报告使用。"""
         self._assert_open()
         return self._native_layout.dbu
 
     @property
     def top_cell(self) -> CellRef:
-        """Return the selected top cell reference."""
+        """返回已经选择的顶层 Cell 引用。"""
         self._assert_open()
         return self._top_cell
 
     @property
     def _native_layout(self) -> kdb.Layout:
-        """Expose the backend object only to sibling implementation modules."""
+        """仅向同级实现模块暴露底层对象，不作为公共算法接口。"""
         self._assert_open()
         assert self._layout is not None
         return self._layout
 
     def _assert_open(self) -> None:
-        """Fail fast when a stale database or query is used."""
+        """数据库关闭后立即失败，避免惰性查询继续访问失效对象。"""
         if self._layout is None:
             raise ClosedLayoutError("LayoutDB is closed")
 
     def _native_cell(self, cell: CellRef) -> kdb.Cell:
-        """Resolve a checked CellRef to its native object."""
+        """把已经校验的 CellRef 解析为原生 Cell 对象。"""
         native = self._native_layout.cell(cell.index)
         if native is None or native.name != cell.name:
             raise CellNotFoundError(f"stale or invalid cell reference: {cell.name}")
         return native
 
     def _native_layer_index(self, layer: LayerSpec) -> int:
-        """Resolve external layer/datatype without creating a new empty layer."""
+        """解析外部 layer/datatype，且不会因查询而创建新的空层。"""
         try:
             return self._layer_indexes[layer]
         except KeyError as exc:
             raise LayerNotFoundError(f"layer not found: {layer.layer}/{layer.datatype}") from exc
 
     def layers(self) -> tuple[LayerSpec, ...]:
-        """List all existing layers in deterministic order."""
+        """按确定顺序列出所有已有 Layer。"""
         self._assert_open()
         return tuple(sorted(self._layer_indexes))
 
     def cell(self, name: str) -> CellRef:
-        """Resolve a cell by exact name."""
+        """按照精确名称解析 Cell。"""
         native = self._native_layout.cell(name)
         if native is None:
             raise CellNotFoundError(f"cell not found: {name}")
         return CellRef(native.name, native.cell_index())
 
     def bbox(self, cell: CellRef | None = None) -> DbuBox | None:
-        """Return a cell's hierarchical bounding box, or None when it is empty."""
+        """返回 Cell 的层级包围盒；空 Cell 返回 None。"""
         native = self._native_cell(cell or self._top_cell)
         box = native.bbox()
         return None if box.empty() else DbuBox.from_native(box)
 
     def hierarchy_summary(self) -> HierarchySummary:
-        """Return read-only hierarchy metadata without materializing shapes."""
+        """返回只读层级元数据，不物化任何图形。"""
         return build_hierarchy_summary(self)
 
     def query(self, layers: tuple[LayerSpec | tuple[int, int], ...] | list[LayerSpec | tuple[int, int]],
               box: DbuBox, cell: CellRef | str | None = None,
               preserve_properties: bool = False) -> ShapeQuery:
-        """Create a lazy cell/layer/ROI query after validating small metadata."""
+        """校验少量元数据后创建惰性的 Cell/Layer/ROI 查询。"""
         self._assert_open()
         normalized = normalize_layers(layers)
         for layer in normalized:
@@ -134,15 +134,15 @@ class LayoutDB:
         return ShapeQuery(self, selected, normalized, box, preserve_properties)
 
     def close(self) -> None:
-        """Release the native layout; existing lazy queries then fail safely."""
+        """释放原生版图；已有惰性查询此后会安全失败。"""
         self._layout = None
         self._layer_indexes.clear()
 
     def __enter__(self) -> Self:
-        """Support job-scoped context management."""
+        """支持按 OPC 任务生命周期使用上下文管理器。"""
         self._assert_open()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-        """Release native memory when leaving a context."""
+        """离开上下文时释放原生版图内存。"""
         self.close()

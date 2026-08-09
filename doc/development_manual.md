@@ -1,5 +1,7 @@
 # MyOPC 开发手册
 
+配套的函数级调用图、数据生命周期和扩展接入点见 [MyOPC 函数调用关系与数据流](function_call_architecture.md)。
+
 ## 1. 目标与边界
 
 MyOPC 将版图读取、物理几何和 OPC 方法前端分层，使 MB-OPC、ILT 及后续方法共用高成本的版图查询、mask 规范化、core 网格与边界采样，同时不把特定求解器逻辑塞入公共层。

@@ -37,6 +37,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 16. Direct MB-OPC runner | complete | One root Python file validates all common and MB-OPC functions without installation |
 | 17. Manuals and reports | complete | Project development/test manuals plus MB-OPC development/test reports under doc |
 | 18. Performance and simplify audit | complete | Strict benchmarks, real-layout validation and removal of bug-driven/dead logic |
+| 19. Function call architecture document | complete | Mermaid call graphs, data contracts, extension boundaries and source navigation under doc |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.

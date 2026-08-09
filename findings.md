@@ -70,3 +70,15 @@
 - The deterministic 110,000-segment benchmark measured 43.4% persistent-array savings versus a conservative fully expanded representation. The remaining sorted-key order/token arrays are intentional: removing them to chase the provisional 50% target would force every update round to rebuild lookup state, conflicting with iteration speed priority; the strict regression floor is therefore 40%.
 - The corrected direct real-file flow prepares physical geometry while `LayoutDB` is open, then safely completes updates and artifacts after close. On `gcd_45nm` it used 12,675,300 persistent segment bytes, prepared in 282.89 ms and completed all artifacts in 2.951 s with zero reconstruction and stitch XOR.
 - Visual inspection of the five-case atlas confirmed readable normals, owner colors, holes and four-core boundaries; the 1200-pixel `gcd_45nm` overlay clearly separates the two owner domains while decimated labels/samples preserve the full mask topology.
+
+## Function Call Architecture Document
+- The runtime has three distinct call phases: database-scoped preparation, database-independent iteration/reconstruction, and optional diagnostics/artifact output.
+- `run_mbopc_frontend.run` is the orchestration root; `_prepare_input_problem` is only a CLI unit-conversion/grid adapter, while `prepare_problem` is the reusable library facade.
+- `prepare_problem` fans out to `normalize_physical_mask`, `fragment_edges`, `OwnershipPolicy.assign`, and `build_sample_template`, then returns the immutable reference container `MBOPCProblem`.
+- The iteration hot path is deliberately short: `merge_owner_updates` -> `SegmentBatch.lookup_keys`, followed by `SegmentBatch.materialize` -> `sample_lines`; no layout query, mask merge, contour extraction, edge fragmentation, hash construction or owner assignment repeats.
+- Reconstruction is method-specific: `reconstruct_region` -> `reconstruct_contours` -> `SegmentBatch.materialize`/`validate_contours` -> `contours_to_region`.
+- Output is a fan-out after reconstruction: `PatchSet.add/region`, `save_problem_npz`, `write_debug_gds`, `render_boundary_overlay`, and optional `run_geometry_suite`; none of these are required by a future solver loop.
+- The shared-method boundary is `layout` + `geometry` + `opc.common`; `opc.mbopc` depends downward on them, while shared layers never import `opc.mbopc`.
+- The delivered document contains 453 lines, nine Mermaid blocks and 19 verified relative source links; no link target is missing and all Markdown fences are balanced.
+- Mermaid CLI is not installed in the current environment, so validation is structural rather than a local SVG render; the diagrams use only standard `flowchart` syntax, quoted labels and subgraphs/arrows supported by common Markdown Mermaid renderers.
+- `.vscode/launch.json` has a concurrent user change adding an MB-OPC debug configuration; it is unrelated to this documentation task and must remain unstaged.

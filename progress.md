@@ -63,3 +63,6 @@
 - Corrected the real-file runner lifetime and verified `gcd_45nm.gds`: 223,553 segments, 12.09 MiB persistent arrays, 282.89 ms preparation, 2.951 s including all artifacts, zero reconstruction/stitch XOR.
 - Generated and visually inspected five annotated geometry cases plus the real-layout owner overlay under `doc/images/mbopc`; synchronized development/test manuals and feature reports.
 - Final overdesign audit removed redundant fragment arrays and found no remaining bug-only wrapper, compatibility branch or unused solver abstraction; `layout/` and `geometry/` remain untouched.
+- Started phase 19: build a code-aligned Chinese function-call architecture document without changing `layout/` or `geometry/`.
+- Added `doc/function_call_architecture.md` with layered dependencies, CLI/preparation/iteration/reconstruction/output call graphs, function tables, data lifetimes, solver/ILT extension points and the current topology-safety insertion point; linked it from the development manual.
+- Verified nine Mermaid blocks, balanced code fences and all 19 relative source links; confirmed no `layout/` or `geometry/` diff and preserved the user's concurrent `.vscode/launch.json` change.

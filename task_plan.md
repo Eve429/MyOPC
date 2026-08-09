@@ -40,7 +40,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 19. Function call architecture document | complete | Mermaid call graphs, data contracts, extension boundaries and source navigation under doc |
 | 20. OPC directory responsibility split | complete | Move-only split of shared input, edge input, iteration, lithography and evaluation directories |
 | 21. Physical tile-size CLI | complete | Fixed-nm cuts plus global canonical vector output and exact core-coverage validation |
-| 22. ICCAD13 lithography and evaluation | pending | Port the used Hopkins model assets plus EPE/L2/PVBand without global GPU tensors |
+| 22. ICCAD13 lithography and evaluation | complete | Exact used Hopkins assets/math plus vectorized EPE/L2/PVBand and direct CUDA runtime |
 | 23. Streaming simple MB-OPC iteration | pending | Synchronous owner-only tile batches with bounded CPU/GPU memory |
 | 24. Full-flow verification and reports | pending | Synthetic, simple.gds and full gcd_45nm validation, manuals, reports and audits |
 
@@ -98,6 +98,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | First 100 nm tile-size runner regression produced 29 DBU² stitch XOR on a 3×3 grid | 1 | Fixed cuts and parser passed; diagnosing demo displacement versus existing PatchSet behavior without modifying protected `geometry/` |
 | Two phase 22 documentation patches used inexact broad contexts | 2 | No file changed; switched to short per-file exact anchors |
 | First phase 21 final diff check found one trailing space | 1 | Removed the single whitespace character; functional tests and Ruff had already passed |
+| First NVRTC learning patch had a malformed multi-file hunk | 1 | No file changed; split source and planning updates into valid independent patches |
+| Direct environment Python could not locate NVRTC builtins | 1 | Added a Windows-only module DLL directory handle before importing PyTorch; `conda run` proved the installed CUDA package itself was valid |
+| First asset-integrity test used placeholder hashes | 1 | Replaced them with SHA-256 values computed from the copied OpenILT files; no production asset changed |
+| First phase 22 Ruff pass found three import-style findings | 1 | Rewrote only the import blocks manually; no formatter or behavior change |
 | First phase 22 planning patch used an inexact long-line context | 1 | No file changed; retried with short exact anchors instead of repeating the failed patch |
 
 ## Decisions

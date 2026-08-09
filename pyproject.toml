@@ -11,6 +11,7 @@ dependencies = [
     "klayout>=0.30.10,<0.31",
     "numpy>=2.5,<3",
     "pillow>=12,<13",
+    "torch>=2.4,<3",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +23,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["layout*", "geometry*", "opc*"]
+include = ["layout*", "geometry*", "opc*", "lithography*", "evaluation*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
@@ -30,7 +31,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["layout", "geometry", "opc"]
+source = ["layout", "geometry", "opc", "lithography", "evaluation"]
 
 [tool.coverage.report]
 show_missing = true

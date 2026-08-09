@@ -1,5 +1,62 @@
 # Errors
 
+## [ERR-20260809-029] placeholder_asset_hashes
+
+**Logged**: 2026-08-09T23:58:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+首轮资产完整性测试预填了未经计算的哈希，导致唯一测试失败。
+
+### Error
+`AssertionError: actual asset SHA-256 != expected`
+
+### Context
+- 四个生产资产均由 `Copy-Item` 正确复制，失败只在测试期望。
+- 同一命令已输出每个实际 SHA-256。
+
+### Suggested Fix
+二进制资产校验值必须先由工具计算再写入测试，不能使用占位字符串。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/lithography/test_iccad13.py
+
+---
+
+## [ERR-20260809-028] direct_python_nvrtc_dll_search
+
+**Logged**: 2026-08-09T23:50:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: config
+
+### Summary
+直接调用 `myopc/python.exe` 时 PyTorch CUDA 找不到已安装在环境 `bin` 下的 NVRTC builtins DLL。
+
+### Error
+`nvrtc: error: failed to open nvrtc-builtins64_124.dll`
+
+### Context
+- `conda run -n myopc` 的同一 CUDA 运算成功，证明 PyTorch/CUDA 包本身有效。
+- DLL 位于 `D:/app/miniforge/envs/myopc/bin`；直接启动不会自动加入该搜索目录。
+- 首次只调用 `os.add_dll_directory()` 后 PyTorch 能加载，但 NVRTC 内部仍按 `PATH` 查找 builtins；因此需要同时补充当前进程环境变量。
+
+### Suggested Fix
+在 Windows 的光刻模块导入 PyTorch 前，用 `os.add_dll_directory()` 注册当前环境 `bin` 并保留返回句柄；增加直接子进程回归。
+
+### Metadata
+- Reproducible: yes
+- Related Files: lithography/iccad13.py, tests/lithography/test_iccad13.py
+
+### Resolution
+- **Resolved**: 2026-08-10T00:05:00+08:00
+- **Notes**: Windows 导入 PyTorch 前同时注册环境 `bin` DLL 目录并补充当前进程 `PATH`；直接环境 Python 的 CUDA 子进程回归通过。
+
+---
+
 ## [ERR-20260809-027] physical_tile_multicore_stitch_xor
 
 **Logged**: 2026-08-09T22:30:00+08:00

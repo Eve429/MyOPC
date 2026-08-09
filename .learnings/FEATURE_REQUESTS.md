@@ -1,5 +1,30 @@
 # Feature Requests
 
+## [FEAT-20260809-002] mbopc_shared_frontend
+
+**Logged**: 2026-08-09T14:30:00+08:00
+**Priority**: high
+**Status**: in_progress
+**Area**: backend
+
+### Requested Capability
+开发可与 ILT 等方法共享物理 mask/core/采样基础的高性能 MB-OPC 前端，完成分段、归属、更新、重建、直接运行入口、多图形测试和标注图片。
+
+### User Context
+用户需要后续构建不同 OPC 方法，并通过一个主 Python 文件验证本次全部功能，同时获得开发手册、测试手册和详细图形测试文档。
+
+### Complexity Estimate
+complex
+
+### Suggested Implementation
+建立 `opc.common` 与 `opc.mbopc` 单向依赖，使用紧凑参数化 segment 数组、一次性缓存、稳定 key 和稀疏 core membership，并在完成后执行严格性能与简化审计。
+
+### Metadata
+- Frequency: recurring
+- Related Features: hierarchical_roi_query, planner_roi_png_render
+
+---
+
 ## [FEAT-20260809-001] planner_roi_png_render
 
 **Logged**: 2026-08-09T05:10:00+08:00

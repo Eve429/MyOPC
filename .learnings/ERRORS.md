@@ -1,5 +1,65 @@
 # Errors
 
+## [ERR-20260809-019] common_mask_edge_expectation
+
+**Logged**: 2026-08-09T14:50:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+公共物理 mask 测试把两个矩形组件的总外边数误写为 10。
+
+### Error
+`assert 8 == 10`
+
+### Context
+- 两个重叠矩形合并为一个四边矩形。
+- 仅角点接触的第三个矩形在 minimum-coherence 下独立保留，同样有四条边。
+
+### Suggested Fix
+把预期改为 8，并保留 Polygon 数量、面积和内部 cut-line 消失的独立断言。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/opc/test_common.py
+
+### Resolution
+- **Resolved**: 2026-08-09T14:51:00+08:00
+- **Notes**: 仅修正测试预期；生产几何逻辑不变。
+
+---
+
+## [ERR-20260809-018] multi_file_patch_hunk_format
+
+**Logged**: 2026-08-09T14:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+固化用户范围规则的多文件补丁因在 hunk 内直接开始下一文件而被整体拒绝。
+
+### Error
+`apply_patch verification failed: invalid hunk`
+
+### Context
+- 补丁没有写入任何部分内容。
+- 下一次按每个文件的完整 hunk 边界重新组织。
+
+### Suggested Fix
+每个 `Update File` 段都使用独立的 `@@` 上下文，不在未结束的 hunk 中切换文件。
+
+### Metadata
+- Reproducible: yes
+- Related Files: AGENTS.md, task_plan.md, progress.md
+
+### Resolution
+- **Resolved**: 2026-08-09T14:36:00+08:00
+- **Notes**: 使用独立 hunk 重写补丁。
+
+---
+
 ## [ERR-20260809-019] property_test_after_database_close
 
 **Logged**: 2026-08-09T06:45:00+08:00

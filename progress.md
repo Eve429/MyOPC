@@ -47,3 +47,10 @@
 - Confirmed `SProperties` was incorrectly filtering out untagged shapes when `preserve_properties=True`; started the focused semantic correction and mixed-property regression.
 - Corrected `preserve_properties` to call only `enable_properties()`; mixed plain/tagged GDS regression proves geometry count remains unchanged and `{7: "tagged"}` is retained.
 - Final property correction verification passed 44 tests with 92% coverage; `layout/query.py` coverage rose to 90%, and Ruff, compileall, and Chinese-comment checks passed.
+- User approved development of the high-performance shared OPC foundation and MB-OPC frontend.
+- Locked permanent project rules: post-bug simplification audit, detailed compact Chinese comments in every file/function/internal critical block, and synchronized development/test manuals.
+- Restored planning and learning context; phases 13-18 added and the OPC common foundation started.
+- Confirmed the compact parametric segment design on `gcd_45nm.gds`: 223,553 estimated segments, 10.37 MiB persistent arrays versus 25.72 MiB expanded arrays.
+- User added a hard boundary: existing `layout/` and `geometry/` must remain unchanged; any necessary modification requires stopping for explicit confirmation.
+- Added project AGENTS rules and the first `opc.common` milestone: physical mask normalization, keyhole recovery, rectilinear core grids and reusable vectorized line sampling.
+- Common targeted checks passed (4 tests and Ruff); full regression passed 48 tests, and Git confirmed no `layout/` or `geometry/` diff.

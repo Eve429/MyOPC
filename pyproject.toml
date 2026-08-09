@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["layout*", "geometry*"]
+include = ["layout*", "geometry*", "opc*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
@@ -30,7 +30,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["layout", "geometry"]
+source = ["layout", "geometry", "opc"]
 
 [tool.coverage.report]
 show_missing = true

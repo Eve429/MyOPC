@@ -1,5 +1,61 @@
 # Learnings
 
+## [LRN-20260809-005] correction
+
+**Logged**: 2026-08-09T14:35:00+08:00
+**Priority**: critical
+**Status**: promoted
+**Area**: backend
+
+### Summary
+MB-OPC 开发不得修改现有 layout 和 geometry；接口不足时必须先停下由用户确认。
+
+### Details
+新公共 OPC 层只能依赖已经存在的公开接口。即使最小改动看似合理，也不能把它作为普通实现步骤直接执行。
+
+### Suggested Action
+把边界写入 AGENTS.md 和任务计划；提交前用 Git 路径检查确认两个目录没有差异。
+
+### Metadata
+- Source: user_feedback
+- Related Files: AGENTS.md, layout, geometry
+- Tags: scope, preservation, approval
+- Pattern-Key: myopc.no_layout_geometry_changes_without_approval
+- Recurrence-Count: 1
+- First-Seen: 2026-08-09
+- Last-Seen: 2026-08-09
+- Promoted: AGENTS.md
+
+---
+
+## [LRN-20260809-004] correction
+
+**Logged**: 2026-08-09T14:30:00+08:00
+**Priority**: critical
+**Status**: promoted
+**Area**: backend
+
+### Summary
+项目永久要求在 bug 修复后清理遗留逻辑，并为所有文件、函数和关键函数内部路径提供详细紧凑的中文注释，同时同步维护开发与测试手册。
+
+### Details
+这些要求适用于后续全部功能，不是本次 MB-OPC 的临时验收项。注释必须解释坐标、性能、不变量和边界原因；bug 修复不能留下只为旧错误存在的函数、包装层或分支。
+
+### Suggested Action
+把规则写入 AGENTS.md，并在每次功能交付中执行 AST 注释扫描、回归测试、调用点搜索和手册同步检查。
+
+### Metadata
+- Source: user_feedback
+- Related Files: AGENTS.md, doc
+- Tags: comments, simplify, manuals, quality-gate
+- Pattern-Key: myopc.project_delivery_core_rules
+- Recurrence-Count: 1
+- First-Seen: 2026-08-09
+- Last-Seen: 2026-08-09
+- Promoted: AGENTS.md
+
+---
+
 ## [LRN-20260809-003] correction
 
 **Logged**: 2026-08-09T06:40:00+08:00

@@ -12,6 +12,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Treat source layouts as immutable and export geometry patches.
 - Test a single polygon crossing adjacent core boundaries.
 - Commit key milestones locally; never push.
+- Treat post-bug simplification, detailed compact Chinese comments, and synchronized development/test manuals as permanent project gates.
+- Reuse physical-mask, core/context and boundary-sampling infrastructure across MB-OPC, ILT and later methods without introducing unused solver abstractions.
+- Do not modify existing `layout/` or `geometry/`; stop for explicit user confirmation if their public interfaces prove insufficient.
 
 ## Phases
 | Phase | Status | Deliverable |
@@ -28,6 +31,12 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 10. Raster verification | complete | Unit/integration/performance/real-layout tests and report updates |
 | 11. Raster simplify audit | complete | Reviewed abstraction, hot-path allocations and error branches; removed duplicate CLI clipping and passed all gates |
 | 12. Property-preservation correction | complete | Preserve all selected geometry while importing attached Shape properties; mixed-property regression and all gates passed |
+| 13. OPC common foundation | in_progress | Physical mask normalization, core grid, shared sampling and annotated visualization |
+| 14. MB-OPC compact frontend | pending | Compact segments, stable keys, ownership, updates and reconstruction |
+| 15. Geometry verification atlas | pending | Generated multi-shape fixtures, annotated images and detailed geometry test document |
+| 16. Direct MB-OPC runner | pending | One root Python file validates all common and MB-OPC functions without installation |
+| 17. Manuals and reports | pending | Project development/test manuals plus MB-OPC development/test reports under doc |
+| 18. Performance and simplify audit | pending | Strict benchmarks, real-layout validation and removal of bug-driven/dead logic |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -41,6 +50,12 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Raster values equal exact polygon area coverage, including holes and partial boundary pixels.
 - Full `gcd_45nm.gds` Layer 11/0 bbox renders within the 64-million-pixel guard.
 - Rasterization uses bounded horizontal stripes and never loops over Polygon coordinates in Python.
+- Common and MB-OPC packages each reach at least 90% statement/branch coverage.
+- GDS hole bridge edges never become physical edges or movable segments.
+- Cross-core segments have one owner and synchronized halo updates; stitched output has zero XOR loss and zero positive-area overlap.
+- The compact real-layout segment representation uses at least 50% less persistent array memory than an expanded representation.
+- Every first-party Python module and function has Chinese documentation; performance/correctness blocks have detailed compact Chinese comments.
+- Development manual, test manual and feature reports match the delivered commands and APIs.
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -59,6 +74,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | Tracked `simple.gds` differed after verification | 2 | User confirmed it is their intentional edit; preserve it and exclude all `TestReticle` files from this feature commit |
 | Tests coupled exact baselines to mutable `simple.gds` | 1 | Move exact hierarchy/query/CLI assertions to deterministic generated GDS fixtures |
 | Planning completeness script reported 0/0 phases | 1 | Script does not parse the existing status table; manually verified all 11 phases complete |
+| Common mask test expected 10 rather than 8 exterior edges | 1 | Corrected the test: both merged and corner-touch components are rectangles with four physical edges |
+| Initial OPC Ruff check found import grouping and a constructed test default | 1 | Kept first-party imports together and moved LayerSpec construction into the helper body |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -71,3 +88,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Raster API: `render_layout_region(LayoutDB, DbuBox, LayerSpec, pixel_size_nm=5.0, output_path=None, show=False)` returns a top-up `uint8` array.
 - Raster semantics: white means full mask coverage, black means empty, gray means exact partial area coverage; one Layer per image.
 - Raster bounds: 64,000,000 output pixels and 1,000,000 temporary pixels per native stripe by default.
+- OPC package layout: `opc.common` contains method-neutral mask/window/sampling/visualization code; `opc.mbopc` contains only control-segment behavior.
+- Segment storage: retain edge ID and parametric intervals; materialize repeated endpoint/normal/parent arrays only on demand.
+- Iteration model: normalize, fragment, hash and index once; later iterations update a displacement vector and dirty polygon IDs.
+- Cross-core default: midpoint unique owner plus stable-key update synchronization; alternate coordination policies remain injectable but unimplemented.
+- Project-wide delivery rule: every bug fix gets a regression test followed by a dead-wrapper/branch/call-site audit.

@@ -54,3 +54,12 @@
 - Full real-layout raster succeeded for `gcd_45nm.gds` Layer 11/0 at 5 nm/pixel: 6,118 × 5,914 pixels, 4.663 seconds end-to-end, 149.36 MB peak process RSS, and a 78,464-byte PNG.
 - Visual inspection confirmed top-up orientation and a clear white-mask/black-background rendering across the complete layout.
 - The generated real-layout preview is an ignored test artifact at `.benchmarks/gcd_45nm_full_5nm.png`; source GDS and preview remain outside Git.
+
+## MB-OPC Frontend Design
+- OpenILT's useful ideas are corner-aware segmentation, fixed reference geometry, inner/outer sampling, maximum displacement, and core/halo separation; its list aliasing, repeated deep copies, pixel-probe normal inference, full-frame coupling and missing cross-tile identities are not suitable here.
+- A GDS hole round trip can expose a ten-point keyhole hull with a zero-width bridge. KLayout `Region.merged()` converts it back to one valid hull plus one hole, so normalization must occur before contour extraction.
+- `gcd_45nm.gds` currently contains 21,590 mathematical edges. The chosen 16/32 nm policy estimates 223,553 control segments.
+- A read-only NumPy prototype measured 10.37 MiB for compact edge-ID/parameter/key storage versus 25.72 MiB for persistent expanded endpoints/normals/parents, a 59.7% reduction; index construction took about 4.2 ms.
+- The largest Python-only speedups are one-time physical-boundary caching, edge-level metadata, lazy coordinate materialization, sorted stable-key lookup, sparse core membership and regular-grid point location.
+- Physical-mask normalization, rectilinear core grids, line sampling and annotated boundary visualization are reusable by ILT evaluation and later OPC methods; displacement/reconstruction remain MB-OPC-specific.
+- The common mask regression proved that minimum-coherence keeps corner-touch components separate, overlap cut-lines disappear, and a GDS keyhole becomes exactly one hull plus one hole with eight physical edges.

@@ -104,3 +104,23 @@
 - Coverage gate passes: 74 focused tests and 92% combined branch coverage across OPC/lithography/evaluation.
 - Full three-round `gcd_45nm` CUDA flow passed in 85.473 seconds with metrics bitwise-equivalent to the historical report, valid GDS/PNG/JSON, 271,544,320-byte GPU peak and no full-run NPZ.
 - 审阅交付文档后确认其仍描述已删除的稳定键/外部更新链和全流程 NPZ；开始按当前代码、测试与实测数据重写手册、调用关系和专项报告，同时保留历史设计审查文档不动。
+- 已重写开发手册和测试手册：数据契约、轮次屏障、跨 core 重建、ILT 复用边界、输出格式、性能基准和图形测试矩阵均与当前代码一致。
+- 已重写函数调用关系文档，明确每个主要函数的输入/输出、引用关系、轮次可见性和未来 ILT/新 OPC 方法的最小扩展边界。
+- 已同步重写前端、迭代和几何专项开发/测试文档，并新增本次架构精简开发报告与测试报告。
+- 已用当前 `opc.diagnostics` 重新生成 5 个带 owner/probe 标注的图形案例，并把本阶段真实 `gcd_45nm` 标注图同步到 `doc/images/mbopc/`；所有合成案例 XOR 为 0。
+- 已人工检查孔洞案例和真实整图标注图；同步修正计划中历史稳定键验收文字，阶段 27 仅待最终静态/回归审计和文档提交。
+- 最终静态审计通过：76 个 Python 文件中文 docstring 完整、13 份 Markdown 链接/围栏完整、生产函数均有调用点、删除 API 无生产引用、受保护目录无差异。
+- 最终 Ruff、compileall 与全仓库回归通过：118 tests passed in 19.29 s；待完成覆盖率复核、文档差异检查和本地文档提交。
+- 最终覆盖率复核通过：74 tests passed in 15.94 s，OPC/光刻/评价综合 statement/branch coverage 为 92%；阶段 27 功能与报告工作完成，进入本地文档提交。
+- 用户在文档提交前授权继续精简 `layout/`、`geometry/`；暂停原定文档提交，新增阶段 28，并开始基于真实调用点审计固定 backend、无状态 GeometryEngine 和仅测试/基准使用的 UniformGridIndex。
+- 已确定阶段 28 最小改法：物化时统一精确裁 ROI；删除无生产消费者的 GeometryEngine/UniformGridIndex、固定 backend 元数据及只服务索引的 edge bbox；同步删测试/基准旧分支并增加跨 ROI 精确物化回归。
+- 已实施 layout/geometry 减法并增加跨 ROI 图形精确物化回归；下一步先跑 layout/geometry/OPC 聚焦回归，重点确认属性保留、真实 ROI 和性能没有变化。
+- 首次聚焦回归发现普通 Region 相交会丢属性；改用 KLayout `NoPropertyConstraint` 原生批量裁剪并强化跨界属性回归。修复后 39 tests passed、Ruff passed。
+- 精简后的 Layout/Geometry 严格基准全部通过，百万实例 ROI 中位数 0.10435 ms，较旧 0.1058 ms 无退化；空间索引及其伪性能门槛已从基准删除。
+- 已重写 Layout/Geometry 开发与测试报告；专项 38 tests、91% coverage 通过。
+- 全仓库 Ruff、compileall 和 114 tests（15.74 s）通过；下一步复跑真实 `gcd_45nm` 前端/完整流程，验证精确物化对实版图数值无影响。
+- 真实 `gcd_45nm` 前端与三轮 CUDA 完整流程均复跑通过：几何计数/差异和逐轮优化指标与历史完全一致，GPU 峰值不变，总耗时 85.892 s。
+- 精简后再次执行 MB 前端严格基准，全部门槛通过；当前 prepare/materialize/reconstruct 为 125.64/12.45/427.83 ms，常驻内存节省 69.38%。
+- 最终调用审计删除无调用方的 `DbuBox.overlaps` 糖衣方法；保留作为明确公共交付能力的只读 `hierarchy_summary`，并记录其保留理由。
+- 阶段 28 最终 Ruff、compileall、114 项全仓库回归和 38 项 Layout/Geometry 覆盖率复核通过；综合覆盖率 91%。
+- 最终文档/docstring/删除符号/未调用函数/用户文件/diff 审计通过；阶段 28 完成，准备提交 Layout/Geometry 精简与全部同步报告。

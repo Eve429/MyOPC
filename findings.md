@@ -152,3 +152,30 @@
 - The full runner artifact schema now contains only summary JSON, result GDS and optional preview PNG; no NPZ path or file is produced.
 - 当前开发手册、测试手册、函数调用文档和两组专项报告仍保留稳定键、外部更新批次、可替换 owner 策略及全流程 NPZ 等旧描述，必须按实际代码整体同步，不能通过局部术语替换掩盖数据流变化。
 - `doc/design_review.md` 和 `CLAUDE.md` 均为已跟踪的历史/用户文档；本阶段不改写设计审查历史，也不让旧兼容说明扩大本次 OPC 实现范围。
+- 开发手册与测试手册已按当前数组下标身份、单一规则网格、固定参考同步迭代和诊断输出边界重写；其中明确记录 PVBand 上升，避免只展示改善指标。
+- 函数调用文档已按实际入口、输入构造、浅引用、同步轮次、探针、全局重建、诊断边界和扩展位置重建；旧专项报告仍是剩余的主要陈旧引用来源。
+- 五份既有 MB-OPC 专项文档已全部按当前实现重写，并新增架构精简开发/测试报告；稳定 key、外部更新和全流程 NPZ 只作为“已删除/不支持”历史对照出现。
+- 当前 `run_geometry_suite` 重新生成 5 个图形案例，全部零位移 XOR 为 0；segment 数分别为 56、70、39、78、48，图与 JSON 均来自精简后的同一诊断实现。
+- 人工查看孔洞与整张 `gcd_45nm` 图：孔洞内外 probe 方向、四 core 边界和左右 owner 分区正确，跨 core 轮廓连续；无显示层面的回归。
+- 最终静态审计覆盖 76 个第一方 Python 文件：中文模块/函数 docstring 零缺失；13 份 `doc/*.md` 无断链或不平衡代码围栏；生产模块没有零引用函数。
+- 删除符号搜索只命中两个刻意断言旧字段不存在的回归测试；Ruff、compileall 和全仓库 118 项测试最终复跑通过（19.29 s）。
+- 最终覆盖率复核为 74 项通过（15.94 s）、OPC/光刻/评价综合语句/分支覆盖率 92%，`opc.iteration.mbopc.solver` 本身为 92%。
+- 用户现已授权修改 `layout/`、`geometry/` 以继续精简；此前保留这些目录不是遗漏，而是遵守逐次确认边界。当前调用搜索显示 `UniformGridIndex` 只有测试/基准调用，`RegionBatch.backend` 永远固定为 `klayout`，`GeometryEngine` 是固定后端上的无状态包装，三者需要进一步逐项审计。
+- 历史设计评审同样把 `UniformGridIndex` 判为零生产调用方，把 `GeometryEngine` 的多后端理由判为不成立；当前完整流程已经稳定，满足其“真实工作流稳定后再退役”的前提。
+- `ShapeQuery.materialize()` 当前只用 ROI 限定候选，完整 runner 额外调用 `GeometryEngine.clip`，但 MB-OPC 直接消费者没有同一步骤；把精确 Region 相交统一到物化边界可以同时删除门面唯一生产调用并修复不同入口的 ROI 语义差异。
+- 阶段 28 已删除 `geometry/region.py`、`geometry/spatial.py`、固定 backend 字段/异常、edge bbox 属性及仅服务这些 API 的两份测试；direct runner 与层级基准改为消费精确物化结果。
+- 新回归用 100×100 DBU 图形查询内部 50×60 DBU ROI，要求物化 bbox 精确等于查询框且面积为 3,000 DBU²，直接覆盖此前不同入口裁剪语义不一致的问题。
+- KLayout 普通 Region `&` 会丢弃属性；本地 API 实验证实 `and_(clip, NoPropertyConstraint)` 保留左侧 Polygon 属性。属性模式现使用该原生批量约束，普通模式继续使用更直接的 `&`。
+- 属性回归现在让 ROI 同时截断普通/带属性两个图形，证明精确裁剪后数量一致且 tagged 属性仍准确；修复后 39 项 layout/geometry/OPC 聚焦测试与 Ruff 通过。
+- 精简后的严格 Layout/Geometry 基准通过：百万实例 ROI 精确物化中位数 0.10435 ms、P95 0.16723 ms、RSS 增量 0.484 MiB；2048² 栅格 499.59 ms、6.379 MiB、覆盖完全一致。
+- 活跃源码已无 `GeometryEngine`、`UniformGridIndex`、backend 标记或 edge bbox 调用；剩余陈旧引用仅在两份 Layout/Geometry 报告中，历史 `design_review.md` 作为当时审计证据保留不改。
+- Layout/Geometry 专项 38 项通过（1.49 s），综合 statement/branch coverage 91%；删除 5 项仅服务旧 API 的测试、新增 1 项生产 ROI 回归，不降低现有路径覆盖。
+- 全仓库最终静态/语法/回归初次复跑通过：Ruff、compileall、114 tests passed in 15.74 s。测试数由 118 净减 4，恰好对应删除 5 个旧门面/索引用例并新增 1 个 ROI 回归。
+- 阶段 28 真实 `gcd_45nm` 前端复跑保持 1,776 polygons、21,590 edges、223,553 segments、4,830,716 persistent bytes 和全部零面积差异；prepare 152.82 ms，总计 2.308 s。
+- 三轮 CUDA 完整复跑逐项指标再次完全一致：EPE 129645→74592→48348，L2 1038629.522→563335.522→440251.431，PVBand 115626.751→134540.869→147186.806，GPU 峰值 271,544,320 bytes；总计 85.892 s，结果合法且无 NPZ。
+- 阶段 28 最终 MB 前端严格基准仍全部通过：prepare 125.64 ms、materialize 12.45 ms、zero reconstruct 427.83 ms、persistent 2.441 MiB、内存节省 69.38%、XOR/unowned/strict failures 均为 0。
+- 最终引用审计另发现 `DbuBox.overlaps` 只是 `intersection(...) is not None` 的无调用方包装，已删除并让原测试直接断言 intersection 语义。
+- `LayoutDB.hierarchy_summary` 虽无内部生产调用，但它是早期明确交付的只读层级检查公共能力，且没有第二套实现或热路径常驻成本；保留它不是为假设后端建立的抽象。
+- 最终代码复跑通过：Ruff、compileall、全仓库 114 tests（16.03 s）；Layout/Geometry 38 tests（1.50 s）、综合 statement/branch coverage 91%。
+- 最终静态审计覆盖 72 个第一方 Python 文件和 13 份 Markdown：中文 docstring 零缺失、链接/围栏零错误、删除符号零生产引用、diff whitespace 零错误；用户 `CLAUDE.md`、历史 `design_review.md` 与 `TestReticle` 无差异。
+- 零内部生产引用只剩 `hierarchy_summary` 与 `DbuBox.intersection` 两个明确公共基础能力；前者提供只读层级快照，后者提供 planner DBU 框精确关系，均实现紧凑、无并列抽象且已有直接测试，因此有意保留。

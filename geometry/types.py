@@ -101,12 +101,6 @@ class EdgeBatch:
         """返回数学边数量。"""
         return len(self.starts)
 
-    @property
-    def bboxes(self) -> IntArray:
-        """向量化返回每条边的 [left,bottom,right,top] 包围盒。"""
-        return np.column_stack((np.minimum(self.starts, self.ends), np.maximum(self.starts, self.ends)))
-
-
 @dataclass(frozen=True, slots=True)
 class ValidationIssue:
     """一条顺序稳定、便于测试和报告的校验问题。"""

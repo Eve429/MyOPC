@@ -12,7 +12,7 @@ def test_dbu_box_geometry_and_numpy_integer_normalization() -> None:
     assert (box.width, box.height, box.area) == (20, 20, 400)
     assert box.expanded(5) == DbuBox(-15, -5, 15, 25)
     assert box.intersection(DbuBox(0, 10, 30, 40)) == DbuBox(0, 10, 10, 20)
-    assert not box.overlaps(DbuBox(10, 0, 20, 20))
+    assert box.intersection(DbuBox(10, 0, 20, 20)) is None
 
 
 @pytest.mark.parametrize("coords", [(0, 0, 0, 1), (0, 1, 1, 1), (2, 0, 1, 1)])

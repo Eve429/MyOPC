@@ -1,85 +1,108 @@
 # MyOPC 开发手册
 
-配套的函数级调用图、数据生命周期和扩展接入点见 [MyOPC 函数调用关系与数据流](function_call_architecture.md)。
+函数级入口、调用顺序和数据生命周期见 [MyOPC 函数调用关系与数据流](function_call_architecture.md)。
 
-## 1. 目标与边界
+## 1. 设计目标
 
-MyOPC 将版图读取、物理几何和 OPC 方法前端分层，使 MB-OPC、ILT 及后续方法共用高成本的版图查询、mask 规范化、core 网格与边界采样，同时不把特定求解器逻辑塞入公共层。
+MyOPC 面向整张 reticle 的流式 OPC：版图数据库只在输入阶段读取一次，物理边界只构造一次；迭代阶段按 core+halo 栅格化和批量执行光刻模型，不保存整张 reticle 的曝光张量；轮次结束后统一发布边段位移，最终只做一次全局矢量重建。
 
-项目当前使用 Python 3.12、KLayout 0.30.x、NumPy 与 PyTorch 2.5。项目本身不需要 `pip install`，直接运行根目录脚本即可使用；依赖只需存在于所选 Python 环境。
+项目可直接运行根目录 Python 文件，不需要 `pip install` 当前仓库。当前依赖方向是：
+
+```text
+layout -> geometry -> opc.input -> opc.iteration.mbopc
+                       |                    |
+                       +-> diagnostics      +-> lithography + evaluation
+```
+
+`layout/` 与 `geometry/` 默认是受保护基础，新增 OPC 功能不得擅自修改；本次精简是在用户明确授权后执行，并留下 ROI/属性/性能回归。
 
 ## 2. 目录职责
 
-| 路径 | 职责 | 可复用范围 |
-|---|---|---|
-| `layout/` | 层级版图加载、Layer/ROI 查询、诊断 | 所有 OPC 方法 |
-| `geometry/` | Region 运算、轮廓/边数组、Patch、栅格化 | 所有 OPC 方法 |
-| `opc/input/` | 物理 mask、core/context 和方法无关输入契约 | MB-OPC、ILT 及后续方法 |
-| `opc/input/edge/` | 边界采样、控制段、稳定 key、owner、位移载体和轮廓重建 | 边段型 OPC 方法 |
-| `opc/iteration/mbopc/` | simple MB-OPC 的同步 owner-only 流式迭代 | 当前边段方法 |
-| `lithography/` | 可独立替换的光刻模型；当前实现 ICCAD13 Hopkins 模型 | 各类 OPC/ILT 迭代 |
-| `evaluation/` | L2、PVBand 与 EPE 探针评价 | 验证与迭代停止条件 |
-| `run_mbopc_frontend.py` | 仅验证公共输入/重建前端 | 人工验证/调试 |
-| `run_mbopc.py` | 从 GDS/OASIS 直接运行完整 simple MB-OPC | 整图/ROI 验证与产物输出 |
-| `tests/opc/` | 功能、负向、集成、随机回归 | 自动验收 |
-| `benchmarks/` | 可重复性能门槛 | 性能防退化 |
+| 路径 | 当前职责 |
+|---|---|
+| `layout/` | 层级版图加载、Layer/ROI 查询 |
+| `geometry/` | Region、轮廓/边数组、栅格化、输出 patch |
+| `opc/input/` | 物理 mask、规则 core 网格等共享输入 |
+| `opc/input/edge/` | 边段切分、唯一 owner、探针坐标、全局矢量重建 |
+| `opc/iteration/mbopc/` | simple MB-OPC 的流式同步迭代 |
+| `lithography/` | 可独立替换的光刻模型；当前为 ICCAD13 Hopkins 模型 |
+| `evaluation/` | L2、PVBand、EPE 评价 |
+| `opc/diagnostics.py` | 显式请求才执行的 NPZ/GDS/PNG 与几何图集 |
+| `run_mbopc_frontend.py` | 不运行光刻的输入、分段、归属、重建验证器 |
+| `run_mbopc.py` | 完整 MB-OPC 主程序 |
 
-`layout/` 和 `geometry/` 是已稳定基础。当前开发不得修改这两个目录；如果新方法确实需要新能力，必须先停止开发并获得用户确认。
+诊断代码不属于输入模型，求解器不反向依赖某个输出格式。未来 ILT 可复用版图、Region 栅格、光刻和评价层，但不必依赖边段重建。
 
-## 3. MB-OPC 数据流
+## 3. 当前核心数据契约
 
-1. `LayoutDB` 保留层级，仅对 planner 给定 ROI 和 Layer 物化局部 `RegionBatch`。
-2. `normalize_physical_mask` 在副本上删除 Shape 属性、合并重叠、恢复孔洞，再一次提取轮廓和数学边。
-3. `fragment_edges` 按拐角短段和最大段长切分数学边，只常驻 edge ID、`t0/t1`、稳定 key 和查找索引。
-4. `MidpointOwnerPolicy` 使每段只有一个 owner，同时用 CSR 形式保存邻近 core 的 halo context membership。
-5. 同进程迭代按已对齐 owner segment index 直接写 `next_values`；外部更新通过稳定 key 和 `merge_owner_updates` 拒绝未知、越权、重复和超限提交。
-6. `SegmentBatch.materialize` 只在光学评估或输出前物化当前端点与法向；`sample_lines` 可复用输出缓冲区。
-7. `reconstruct_region` 在同边位移差处生成 jog，在拐角处使用解析 miter，失控时使用 bevel，最后返回有效整数 DBU Region。
-8. `rasterize_region_canvas` 只把当前 core+halo 栅格化；固定 target 以 uint8 LRU 缓存，当前 mask 由参考 tile 和邻近 Polygon 差分生成。
-9. `optimize` 按 batch 在 GPU/CPU 上运行光刻和评价。所有 tile 只读 `current`，owner 方向写入 `next_values`，整轮完成且拓扑检查通过后才统一发布。
-10. 每个 batch 结束后只保留标量指标和 segment 方向；完整曝光 tensor 释放。最终最佳位移只执行一次全局矢量重建，core 边界不裁最终 Polygon。
+### 3.1 `PhysicalMask`
 
-## 4. 主要公共 API
+保存规范化后的 `Region`、轮廓、数学边、查询框和 Layer。轮廓与数学边在输入阶段一次生成，后续只读。
 
-### 4.1 OPC 通用输入层
+### 3.2 `SegmentBatch`
 
-- `normalize_physical_mask(batch, layer) -> PhysicalMask`：生成方法无关的物理覆盖集合。
-- `RectilinearCoreGrid(x_cuts, y_cuts, halo_dbu)`：定义半开内部边界和闭合外边界的规则网格。
-- `build_sample_template(...)` / `sample_lines(...)`：为 MB-OPC 和 ILT 评估共用的切向/法向采样。
-- `render_boundary_overlay(...)`：输出 mask、owner、core、法向和采样点标注 PNG。
+只常驻求解所需字段：
 
-### 4.2 边段输入层
+- `contours`、`edges`：与 `PhysicalMask` 共享不可变数组引用，不复制数据；
+- `edge_normals`、`ring_segment_offsets`：边法向和每个 ring 的分段范围；
+- `edge_ids`、`t0`、`t1`：每段在固定参考数学边上的索引和参数区间。
 
-- `FragmentationConfig`：角段长、最大段长、最大位移和 miter 限制。
-- `prepare_problem(...) -> MBOPCProblem`：一次完成规范化、分段、owner 和采样模板。
-- `SegmentBatch.lookup_keys(keys)`：批量稳定查找，未知 key 返回 `-1`。
-- `merge_owner_updates(problem, updates, base_displacements=None)`：将各 core 更新合并到全局位移向量。
-- `reconstruct_contours` / `reconstruct_region`：从固定参考边界重建当前 mask。
-- `save_problem_npz` / `write_debug_gds`：输出纯数值调试数据和参考/重建 GDS。
+边段身份就是当前 problem 内的全局数组下标。已经删除无当前调用方的稳定 key、排序查找表、外部更新批次、持久化边长和边偏移表。`materialize(displacements)` 一次性用 NumPy 生成所有当前端点和法向；诊断需要长度时临时计算，不进入迭代常驻内存。
 
-### 4.3 光刻、评价与迭代层
+### 3.3 `OwnershipBatch`
 
-- `ICCAD13Lithography(...)`：加载 OpenILT ICCAD13 的 24 个 Hopkins 核，批量返回 nominal/maximum/minimum 连续光刻胶图。
-- `evaluate_process_window(...)`：只在 core ownership 像素累计 L2 与 PVBand，halo 只提供上下文。
-- `evaluate_edge_probes(...)`：验证 target 的 inner/outer 语义，输出有效性、歧义和 `-1/0/+1` 法向方向。
-- `SimpleMBOPCConfig`：定义轮次、步长衰减、位移/探针距离、像素、画布、batch 和 target 缓存上限。
-- `optimize(problem, model, config)`：返回最佳全局位移、逐轮指标、最佳轮次和停止原因。
+`owner_core_ids[i]` 是 segment `i` 的唯一写入者；CSR 形式的 membership 保存哪些 core 的 halo 需要只读该 segment。规则 `RectilinearCoreGrid` 采用内部半开、版图最大外边界闭合的归属规则，避免共享边界重复 owner 或最外沿无 owner。
 
-## 5. 扩展新 OPC 方法
+### 3.4 `MBOPCProblem`
 
-ILT 或新方法应优先依赖 `opc.input`。只有当方法确实操作独立边段时才依赖 `opc.input.edge`。替换输入构造时保留 `MBOPCProblem` 侧契约，替换迭代时只组合新的 `opc.iteration.<method>` 与模型/指标；不要把求解器、像素模型或损失函数放进归属层。ILT 可直接复用 `PhysicalMask`、core/context、`rasterize_region_canvas` 和 ICCAD13 模型，不必依赖 MB 控制段重建。
+聚合 `PhysicalMask`、`FragmentationConfig`、`SegmentBatch` 和 `OwnershipBatch`。它持有固定参考几何；每轮变化量只有与全局 segment 下标对齐的一维位移向量。
 
-扩展时遵守以下原则：
+## 4. 输入构造和重建
 
-- 源版图只读，输出使用 Patch 或独立 GDS/OASIS。
-- 不对整个层级版图 flatten，不在 Python 中长期保存 Polygon 对象列表。
-- 重复迭代前缓存物理边界和索引，迭代中使用 NumPy 批处理。
-- tile/halo 必须与像素晶格对齐，halo 必须覆盖模型有效半径和最大允许位移。
-- normal iteration 固定参考分段；只有显式 remesh 才允许重提边，并必须重建 key、owner 和优化器状态。
-- 不为未实现的求解器预先建立空抽象。
+`prepare_problem(batch, layer, config, grid)` 顺序执行：
 
-## 6. 代码与 Git 门槛
+1. `normalize_physical_mask` 合并重叠、清理属性并恢复合法孔洞；
+2. `fragment_edges` 按角段和最大段长向量化切分数学边；
+3. `build_ownership` 用规则网格批量计算唯一 owner 和 halo membership；
+4. 返回只读参考 problem，不预生成图片、文件或探针缓存。
 
-每个 Python 文件、类和函数都必须有中文注释或 docstring；函数内部对性能、所有权和拓扑正确性有影响的步骤必须紧凑但详细说明“为什么”。
+`edge_probe_points(starts, ends, normals, distance_dbu)` 是求解器和诊断共用的唯一探针坐标实现：以当前 segment 中点为基准，`inner = midpoint - normal * distance`，`outer = midpoint + normal * distance`。探针距离来自迭代配置，不与角段长度绑定。
 
-每个 bug 必须先有可复现回归，修复后检查是否引入了临时 wrapper、重复分支或无使用字段。关键里程碑本地 commit，未授权时不 push。
+`reconstruct_contours(problem, displacements)` 从固定参考边和位移生成 ring；相邻段位移不同时生成 jog，拐角优先解析 miter，超限时使用 bevel。`reconstruct_region` 再验证 ring 和孔洞关系并返回全局 Region。core 只分配计算和更新权，不裁剪最终矢量，因此跨多个 core 的斜边不会因多次整数裁剪出现 33/34 DBU 接缝差异。
+
+## 5. simple MB-OPC 迭代
+
+`optimize` 在 CPU 保存全局 `current`/`next_values` 位移；每个 batch 仅把当前 core+halo 的 mask、target 和 ownership 像素送到设备。处理流程为：
+
+1. 本轮所有 batch 只读同一个 `current`；
+2. 模型输出立即累计本 core 的 L2/PVBand/EPE 和 owner 更新，然后释放 tile tensor；
+3. halo 只提供光学上下文，不累计指标、不写边；
+4. 全部 batch 完成后验证全局候选轮廓；只有合法时才把 `next_values` 发布为下一轮 `current`；
+5. 保存最佳一维位移，结束后只做一次全局重建。
+
+因此“立即累计”只累计数值，不会提前移动参考边。跨 core 的同一边段只有一个 owner，其他 core 即使在 halo 中看到它也无写权限。
+
+拓扑保护会拒绝 ring 绕向翻转和 hole 逃逸。当前 v1 采用整轮回滚，避免发布局部损坏图形；没有为假设中的局部恢复预建接口。
+
+## 6. 光刻与评价替换
+
+`ICCAD13Lithography` 独立位于 `lithography/`，迭代只依赖其批量 nominal/maximum/minimum 输出。新模型应保持当前张量坐标、画布和设备语义，不把模型细节写回输入层。
+
+`evaluate_process_window` 只在 ownership 像素累计 L2/PVBand。`evaluate_edge_probes` 根据 target 的内外语义产生 `-1/0/+1` 法向移动方向；同一 probe 同时触发相反要求时记为 ambiguous 且不移动。更换迭代算法可以复用评价函数，也可以在独立方法目录实现新损失，但不能让公共输入依赖具体算法。
+
+## 7. 输出约定
+
+- `run_mbopc.py`：保存 `summary.json`、结果 GDS 和可选 PNG；不保存整轮 tensor，也不生成 NPZ。
+- `run_mbopc_frontend.py`：用于人工检查输入契约，保存 key-free、按全局 segment 下标对齐的格式 v2 NPZ，并可保存 GDS/PNG/JSON。
+- `opc.diagnostics`：只有调用者明确要求时才物化诊断长度、图片、GDS 或测试图集。
+
+NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久身份协议。显式 remesh 必须重新分段、重新建立 owner，并由调用者重建优化状态。
+
+## 8. 扩展原则
+
+- 新抽象必须有当前调用方；不创建空接口、注册器或无实现目录。
+- 替换输入构造和替换迭代是两个独立扩展点：前者产出实际方法需要的数据，后者消费数据并更新状态。
+- ILT 优先复用 `layout`、`geometry`、`PhysicalMask`、栅格、`lithography` 和 `evaluation`；不要为了复用而套用 MB 边段结构。
+- 保留层级与局部 ROI，跨 Python/KLayout 边界必须批处理；迭代数据要缓存，诊断默认关闭。
+- 每个 bug 必须有回归测试，修复后搜索并删除仅服务于旧错误的包装、变量和分支。
+- 关键节点只做本地 Git commit，未经明确授权不得 push。

@@ -1,109 +1,33 @@
-# Simple MB-OPC 迭代开发报告
+# simple MB-OPC 迭代开发报告
 
-## 1. 交付范围
+## 1. 模块边界
 
-本次交付把 OpenILT `opc/iccad13.py` 的实际 ICCAD13 Hopkins 光刻模型、L2/PVBand/EPE 评价和最简单的边段迭代迁入 MyOPC，并按整张 reticle 的有界内存目标重新组织。已交付：
+`opc/iteration/mbopc` 只负责具体迭代；输入由 `opc.input.edge.prepare_problem` 构造，光刻由 `lithography.ICCAD13Lithography` 提供，评价位于 `evaluation`。`run_mbopc.py` 只做单位换算、生命周期编排和最终输出。
 
-- 顶层 `lithography/`：ICCAD13 配置、24 核 focus/defocus 资产、剂量窗口和 MIT 许可证。
-- 顶层 `evaluation/`：ownership-only L2/PVBand 与批量 inner/outer EPE。
-- `opc/input/raster.py`：固定画布、左下坐标、原生面积覆盖栅格。
-- `opc/iteration/mbopc/`：同步 owner-only 流式迭代、最佳轮次、步长衰减、拓扑屏障。
-- 根入口 `run_mbopc.py`：无需安装项目，直接从 GDS/OASIS 运行并输出 JSON/NPZ/GDS/可选 PNG。
+该边界支持分别更换输入构造、OPC 更新方法、光刻模型或评价方法。ILT 可复用物理 mask、Region 栅格、光刻和评价，不需要被迫使用 MB 边段。
 
-未修改既有 `layout/` 和 `geometry/`。本次也没有实现完整 DRC、shot count、层级 cell variant 回写、不同 Polygon 间碰撞修复或 ILT 求解器，这些能力不能从当前结果中推断。
+## 2. 流式整图方案
 
-## 2. 架构与依赖
+CPU 常驻全局参考 problem 和一维 displacement。每个 batch 只生成 core+halo 的 current/target/ownership 图，在设备上运行模型后立即把 core 指标和 owner 方向累计到 CPU，并释放输出 tensor。target 使用有字节上限的 uint8 LRU。
 
-```mermaid
-flowchart LR
-    LAYOUT["layout"] --> GEOMETRY["geometry"] --> INPUT["opc.input"] --> EDGE["opc.input.edge"]
-    EDGE --> ITER["opc.iteration.mbopc"]
-    INPUT --> ITER
-    LITHO["lithography"] --> ITER
-    EVAL["evaluation"] --> ITER
-    ITER --> RUN["run_mbopc.py"]
-```
+每轮所有 batch 只读 `current`，写入 `next_values`；完成全部 batch 和全局拓扑验证后才发布。该同步屏障保证 core 处理顺序不改变结果，也避免边被某个早完成 batch 提前更新。
 
-输入构造和具体迭代分离：`prepare_problem()` 只建立固定参考边、分段、key、owner 和 context membership；`optimize()` 只消费这些数据，不重新查询层级版图或重新提边。未来替换 MB 输入构造或迭代策略时，可分别保持另一侧契约不变。ILT 可共用 `PhysicalMask`、core/context、固定画布栅格、光刻模型和评价，不需要依赖 MB 位移重建。
+最终从最佳全局 displacement 重建一次完整 Region。halo 从不写最终结果，core 也不裁剪最终 Polygon。
 
-## 3. 流式整图设计
+## 3. 评价与更新
 
-每一轮的状态为与全局 segment 对齐的 `current`/`next_values` 和紧凑 `ContourBatch`，而不是整张 reticle 像素 tensor。每个 batch 执行：
+L2/PVBand 只在 core ownership 像素统计。EPE probe 使用当前 segment 中点、解析外法向和 `epe_distance_dbu`；inner/outer target 语义无效、越界、落同像素或相互冲突时不移动。有效方向乘本轮步长后，再由 `FragmentationConfig.max_displacement_dbu` 统一限幅。
 
-1. 从 uint8 LRU 读取或生成固定 target tile。
-2. 根据 context membership 找出邻近 Polygon，只提取其 rings/vertices。
-3. 用 `target - reference_selected + current_selected` 生成当前局部 Region 并栅格化。
-4. 把当前 batch 的 target、mask、ownership mask 放到设备上。
-5. 运行 ICCAD13 nominal/max/min，累计 ownership 像素的 L2/PVBand。
-6. 对 owner segments 的固定参考中点执行 inner/outer EPE，得到 `-1/0/+1`。
-7. 按全局 owner segment index 直接 scatter 到 `next_values`，随后释放本 batch tensor。
+模型的画布和 print threshold 只由 `ICCAD13Config` 提供；位移上限只由 `FragmentationConfig` 提供，删除了迭代配置中的重复权威字段。
 
-CPU 常驻上界主要由参考 Region、紧凑 segment/owner 数组、两个位移向量、当前轮廓及受 `target_cache_bytes` 限制的 LRU 决定。GPU 常驻上界与 `batch_size × canvas² × Hopkins 中间量` 成正比，不随 reticle 总 tile 数增长。减小 `--batch-size` 只影响吞吐和峰值显存，不改变数学归属。
+## 4. 拓扑安全
 
-## 4. 同步更新与 core 语义
+候选轮次发布前检查每个 ring 的有向面积符号和 hull/hole 包含关系。矩形相对边交叉或外轮廓移动到孔内都会整轮回滚。当前没有增加未经验证的局部修补层；这是有明确测试的保守 v1 行为。
 
-core 是计算、指标和更新责任边界，不是最终几何裁剪边界。同轮所有 tile 只读 `current`，owner 方向写入 `next_values`；最后一个 tile 结束前不会发布任何边。跨多个 core 的图形和斜边仍只有一套全局参考 segment/位移，halo 只读，最终最佳状态只全局重建一次，因此不会出现 core0/core1 同时移动同一边或两侧分别取整后接不上的问题。
+## 5. 产物
 
-`best_displacements` 始终对应已经实际完成光刻评价的状态。最后一轮生成但尚未评价的候选不会作为最佳输出，避免报告指标与 GDS 不一致。
+完整入口写 `summary.json`、结果 GDS 和可选预览 PNG，不再写 NPZ。迭代期间不保留整张 reticle tensor、逐 tile 模型输出或中间 GDS。
 
-## 5. EPE 与歧义规则
+## 6. 简化审计
 
-- inner target 应为材料；nominal 未打印时方向 `+1`，沿材料到空区的外法向外移。
-- outer target 应为空区；nominal 已打印时方向 `-1`，沿外法向反向内移。
-- inner/outer 同时违规时两个动作冲突，方向保持 0 并计入 `ambiguous`。
-- 任一探针越界、两探针取整到同一像素、inner target 为空或 outer target 为材料时，探针无效且不移动。
-
-2 nm 中空壁配 8 nm 探针时，长边 inner 点越过窄壁进入 hole，因此被 target 语义排除。靠近拐角的极短段沿自身法向可能仍落入相邻垂直壁，它是局部有效而不是算法误判，测试没有把所有 corner segment 强制归为无效。
-
-## 6. 拓扑发布守卫
-
-开发中复现了两个公共重建仍会接受的危险候选：矩形左边移动到右边右侧、以及中空图案外轮廓缩入 hole 内部。KLayout 可以把这两者规范成某个非零面积合法 Region，因此仅检查 `has_valid_polygons()` 不够。
-
-solver 发布前新增 `_preserves_reference_topology()`：
-
-- ring/Polygon/hole 元数据必须与固定参考逐项一致。
-- 向量化比较每个 ring 的有向面积符号，拒绝对边穿越造成的绕向翻转。
-- 仅对含 hole 的 Polygon 调用原生包含检查，hole 任意面积落在 hull 外即拒绝。
-- 失败时整轮回滚，不提交部分 Polygon，也不生成补偿点或 bug 专用 wrapper。
-
-![拓扑守卫拒绝场景](images/mbopc_topology_guard.svg)
-
-当前守卫不替代完整 DRC：不同 Polygon 彼此重叠、最小间距/宽度、曲率和工艺规则仍需后续明确实现。
-
-## 7. 性能取舍
-
-- OpenILT 的光刻数学和实际使用资产保持一致，但移除了它的全图 tensor 假设和 256×256 `unpad` 错误。
-- target 用 uint8 缓存，相对 float32 降低 75% 常驻字节；缓存命中恢复到 `[0,1]`，有专门回归。
-- Polygon 局部提取使用有序 ID 的 `searchsorted` 和向量化区间展开，只处理当前 tile 选中的 rings/vertices；已删除每 tile 扫描全局轮廓的初版热点。
-- ownership mask 逐 batch 生成并释放，避免在数百万 tile 场景中为所有 core 常驻布尔画布。
-- v1 候选合法性采用整轮回滚，没有为了假设需求加入逐 Polygon 回退、注册器或空接口。
-
-## 8. 直接运行
-
-```powershell
-$python = 'D:\app\miniforge\envs\myopc\python.exe'
-& $python run_mbopc.py
-```
-
-整图示例：
-
-```powershell
-& $python run_mbopc.py TestReticle\gcd_45nm.gds `
-  --layer 11/0 --iterations 3 --batch-size 8 `
-  --output-dir .benchmarks\mbopc_gcd_full_3 --preview --json
-```
-
-完整参数和测试命令见 [测试手册](test_manual.md)，函数级数据流见 [调用关系文档](function_call_architecture.md)。
-
-## 9. 简化与差异审计
-
-- `layout/`、`geometry/` 内容差异为零。
-- 没有新增 registry、backend facade、空方法目录或无调用方抽象。
-- target 缓存归一化 bug 留有命中回归；旧错误路径没有遗留兼容分支。
-- 四向 context 校验 bug 留有独立调用回归；没有复制 `CoreSpec` 包装层。
-- 拓扑 bug 使用一个当前调用方的 solver 守卫解决，没有改变公共 geometry 语义。
-- 根入口与前端演示入口职责不同：前者运行真实优化，后者验证输入/重建，不合并为带模式分支的复杂脚本。
-- 三个可独立执行的根脚本各保留一个很小的 `parse_layer` 命令行边界函数；审计确认这是重复文本，但当前没有第三个库调用方需要共享 CLI 层。为消除几行解析而新增 `opc.cli` 抽象或改动既有入口属于过度设计，因此本次不做。
-- 用户的 GDS、VS Code 配置、注释和无关未跟踪文件均未进入功能提交。
-
-关键本地提交为 `a563449`（core 计算边界语义）、`6cf885a`（ICCAD13 与评价）和 `7485204`（流式迭代与根入口）；未推送远端。
+`QualityMetrics` 删除未使用的 `pixel_count`，避免额外 GPU 同步；`SimpleMBOPCConfig` 删除与模型/分段配置重复的 threshold 和位移字段；求解器删除仅验证自身构造结果的恒真检查。保留 canvas 是必要的，因为 tile 运算画布可小于模型支持的最大画布，求解器会验证兼容性。

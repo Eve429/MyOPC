@@ -58,10 +58,6 @@ class DbuBox:
         right, top = min(self.right, other.right), min(self.top, other.top)
         return None if left >= right or bottom >= top else DbuBox(left, bottom, right, top)
 
-    def overlaps(self, other: DbuBox) -> bool:
-        """仅当两个矩形存在正面积重叠时返回 True。"""
-        return self.intersection(other) is not None
-
     def to_native(self) -> kdb.Box:
         """仅在进入 KLayout 批处理边界时转换为原生 Box。"""
         return kdb.Box(self.left, self.bottom, self.right, self.top)
@@ -129,13 +125,10 @@ class RegionBatch:
     query_box: DbuBox
     cell: CellRef
     stats: MaterializationStats | None = None
-    backend: str = "klayout"
 
     def __post_init__(self) -> None:
         """只复制很小的 Layer 映射，实际 Region 数据继续留在 C++ 内存中。"""
         object.__setattr__(self, "regions", MappingProxyType(dict(self.regions)))
-        if self.backend != "klayout":
-            raise ValueError(f"unsupported region backend: {self.backend}")
 
     @property
     def layers(self) -> tuple[LayerSpec, ...]:

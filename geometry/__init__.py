@@ -3,16 +3,12 @@
 from .contour import contours_to_region, extract_contours
 from .edge import extract_edge_batches, extract_edges
 from .errors import (
-    BackendMismatchError,
-    CoordinateSystemError,
     GeometryError,
     PatchConflictError,
     RasterizationError,
 )
 from .patch import PatchSet
 from .raster import render_layout_region, render_region_batch
-from .region import GeometryEngine
-from .spatial import UniformGridIndex
 from .types import (
     ContourBatch,
     EdgeBatch,
@@ -23,17 +19,13 @@ from .types import (
 from .validate import validate_contours
 
 __all__ = [
-    "BackendMismatchError",
     "ContourBatch",
-    "CoordinateSystemError",
     "EdgeBatch",
-    "GeometryEngine",
     "GeometryError",
     "GeometryPatch",
     "PatchConflictError",
     "PatchSet",
     "RasterizationError",
-    "UniformGridIndex",
     "ValidationIssue",
     "ValidationReport",
     "contours_to_region",

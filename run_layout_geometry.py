@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from geometry import (
-    GeometryEngine,
     GeometryError,
     GeometryPatch,
     PatchSet,
@@ -71,10 +70,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("所选 top Cell 为空，无法生成默认查询框")
         if (args.png or args.show_image) and len(layers) != 1:
             raise ValueError("PNG 展示必须且只能选择一个 Layer")
-        # 先由层级索引筛出 bbox 可能相交的图形，再在 C++ Region 中做精确裁剪。
-        # 这两步分开是为了避免 Python 全版图遍历，同时正确处理跨 ROI 边界的图形。
-        queried = database.query(list(layers), query_box).materialize(args.diagnostics)
-        clipped = GeometryEngine().clip(queried, query_box)
+        # ShapeQuery 在 C++ 侧先用层级索引筛选候选，再以一次 Region 相交精确裁到
+        # planner ROI；所有消费者共享相同语义，根入口不再维护第二套裁剪门面。
+        batch = database.query(list(layers), query_box).materialize(args.diagnostics)
         result: dict[str, Any] = {
             "source": str(database.source_path),
             "top_cell": database.top_cell.name,
@@ -82,11 +80,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "box_dbu": [query_box.left, query_box.bottom, query_box.right, query_box.top],
             "layers": {},
         }
-        contour_batches = extract_contours(clipped) if args.arrays else {}
+        contour_batches = extract_contours(batch) if args.arrays else {}
         edge_batches = extract_edge_batches(contour_batches) if args.arrays else {}
-        for layer in clipped.layers:
+        for layer in batch.layers:
             key = f"{layer.layer}/{layer.datatype}"
-            region = clipped.region(layer)
+            region = batch.region(layer)
             layer_result: dict[str, Any] = {
                 "polygon_count": int(region.count()),
                 "area_dbu2": int(region.area()),
@@ -98,8 +96,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     ring_count=contour_batches[layer].ring_count,
                     edge_count=edge_batches[layer].edge_count,
                 )
-            if args.diagnostics and queried.stats is not None:
-                stats = queried.stats.shapes[layer]
+            if args.diagnostics and batch.stats is not None:
+                stats = batch.stats.shapes[layer]
                 layer_result["diagnostics"] = {
                     "polygon_like": stats.polygon_like,
                     "text": stats.text,
@@ -109,16 +107,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             result["layers"][key] = layer_result
         if args.output:
             patches = PatchSet()
-            for layer in clipped.layers:
+            for layer in batch.layers:
                 patches.add(GeometryPatch(
                     f"cli-{layer.layer}-{layer.datatype}", layer,
-                    clipped.region(layer), query_box))
+                    batch.region(layer), query_box))
             result["output"] = str(PatchWriter.write(
                 patches, args.output, database.dbu_um, top_name="OPC_PATCHES"))
         if args.png or args.show_image:
             layer = layers[0]
             pixels = render_region_batch(
-                clipped, layer, database.dbu_um, args.pixel_size_nm,
+                batch, layer, database.dbu_um, args.pixel_size_nm,
                 output_path=args.png, show=args.show_image,
                 max_pixels=args.max_image_pixels)
             result["image"] = {

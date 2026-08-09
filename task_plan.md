@@ -32,7 +32,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 11. Raster simplify audit | complete | Reviewed abstraction, hot-path allocations and error branches; removed duplicate CLI clipping and passed all gates |
 | 12. Property-preservation correction | complete | Preserve all selected geometry while importing attached Shape properties; mixed-property regression and all gates passed |
 | 13. OPC common foundation | complete | Physical mask normalization, core grid, shared sampling and annotated visualization |
-| 14. MB-OPC compact frontend | complete | Compact segments, stable keys, ownership, updates and reconstruction |
+| 14. MB-OPC compact frontend | complete | Compact segments, ownership, displacement state and reconstruction |
 | 15. Geometry verification atlas | complete | Generated multi-shape fixtures, annotated images and detailed geometry test document |
 | 16. Direct MB-OPC runner | complete | One root Python file validates all common and MB-OPC functions without installation |
 | 17. Manuals and reports | complete | Project development/test manuals plus MB-OPC development/test reports under doc |
@@ -45,7 +45,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 24. Full-flow verification and reports | complete | Synthetic, simple.gds and full gcd_45nm validation, manuals, reports and audits |
 | 25. OPC architecture subtraction | complete | Remove unused stable-key/update abstractions, simplify segment/probe/ownership contracts, and retain both direct runners |
 | 26. Diagnostics and artifact cleanup | complete | Move explicit diagnostics out of input construction and restrict NPZ output to the frontend verifier |
-| 27. Regression, performance and reports | in_progress | Full geometry/solver/CLI regressions, gcd_45nm comparison, audits, reports and local milestone commits |
+| 27. Regression, performance and reports | complete | Full geometry/solver/CLI regressions, gcd_45nm comparison, audits, reports and local milestone commits |
+| 28. Layout/geometry subtraction | complete | Removed user-authorized backend/index overdesign, unified exact ROI semantics, and passed regression/performance/full-flow gates |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -62,7 +63,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - OPC input and edge-input packages jointly reach at least 90% statement/branch coverage.
 - GDS hole bridge edges never become physical edges or movable segments.
 - Cross-core segments have one owner and synchronized halo updates; stitched output has zero XOR loss and zero positive-area overlap.
-- The compact segment representation uses at least 40% less persistent array memory than an expanded representation while retaining reusable sorted-key indices for iteration speed.
+- The compact segment representation uses at least 60% less persistent array memory than an expanded representation, without unused lookup state.
 - Every first-party Python module and function has Chinese documentation; performance/correctness blocks have detailed compact Chinese comments.
 - Development manual, test manual and feature reports match the delivered commands and APIs.
 - `SegmentBatch` contains only data used by current fragmentation, ownership, reconstruction or iteration paths; no stable-key lookup state remains.
@@ -114,6 +115,12 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | First phase 25 Ruff pass found two import groups and three unused config bindings | 1 | Fix imports manually and remove obsolete return/bindings instead of keeping dummy variables |
 | First Ruff-cleanup patch targeted unused bindings in the wrong test file | 1 | No file changed; split source/import/test fixes by exact file |
 | Second phase 25 Ruff pass found one extra first-party import separator | 1 | Remove the single blank line manually; keep formatter disabled |
+| PowerShell 下的 `rg` 函数清单命令使用了 Unix 风格目录通配符 | 1 | 改为传入明确目录让 `rg` 递归扫描；前一命令只读且未影响文件 |
+| 最终复合审计命令因“无删除符号命中”让 `rg` 返回 1 | 1 | 其他只读检查均已输出且通过；后续将无匹配视为预期结果并单独记录，不把它当作功能失败 |
+| 第二次调用审计把 Windows 不展开的 `README*` 作为 `rg` 路径 | 1 | 命令前半段文件读取有效；后续只传明确目录或使用 `--glob`，不再把 shell 通配符当路径 |
+| 后续删除符号搜索再次把 `run_*.py` 当成 Windows 路径 | 1 | 明确记录此重复命令错误；最终审计改为搜索仓库根目录并用 `--glob 'run_*.py'` 过滤 |
+| 基准调用点探查顺带读取两个不存在的猜测测试路径 | 1 | `rg` 已确认没有 benchmark API 测试调用；不再猜文件名，后续以 `rg --files` 的实际清单为准 |
+| 统一 ROI 相交首次复跑丢失带属性 Polygon 的属性 | 1 | 使用 KLayout `Region.and_(..., NoPropertyConstraint)` 在原生批量裁剪时继承左侧属性，并把属性回归改为同时跨 ROI 边界 |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -129,12 +136,14 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - OPC package layout is being refined into top-level `lithography` / `evaluation`, shared `opc.input`, edge-oriented `opc.input.edge`, and replaceable `opc.iteration.<method>` responsibilities.
 - CLI tiling keeps `RectilinearCoreGrid` DBU-only; physical nm-to-DBU conversion belongs in `run_mbopc_frontend.py`, with the final row/column clipped to the selected processing box.
 - Segment storage: retain edge ID and parametric intervals; materialize repeated endpoint/normal/parent arrays only on demand.
-- Iteration model: normalize, fragment, hash and index once; later iterations update a displacement vector and dirty polygon IDs.
-- Cross-core default: midpoint unique owner plus stable-key update synchronization; alternate coordination policies remain injectable but unimplemented.
+- Iteration model: normalize, fragment and assign owner once; later iterations update a displacement vector aligned with global segment indices.
+- Cross-core default: midpoint unique owner plus round-barrier synchronization; halo is read-only and no unused pluggable owner policy remains.
 - Project-wide delivery rule: every bug fix gets a regression test followed by a dead-wrapper/branch/call-site audit.
-- Final MB-OPC audit: removed redundant persistent fragment ordinal/count arrays; retained edge keys for stable diagnostics, ring offsets for topology reconstruction, and sorted key indices for iteration speed. Both runner lifecycle helpers have distinct tested responsibilities and no bug-only compatibility branch remains.
+- Final MB-OPC audit: retained ring offsets for topology reconstruction; removed stable keys, sorted lookup state, external update batches and persistent diagnostic fields. The two root runners cover full solving and explicit frontend verification without sharing a second update architecture.
 - Core boundaries partition computation, metric ownership and update authority; canonical vector output is reconstructed globally once and is never physically clipped by core boxes.
 - Simple MB-OPC uses synchronous `d_current/d_next`: completed GPU batches release tensors after accumulating scalars and staging owner updates, but no tile can observe `d_next` before the round barrier.
 - Current-process segment identity is the stable global index within one prepared problem. Cross-process keys, checkpoint recovery and distributed update submission are out of scope until a real consumer exists.
 - Production ownership accepts only `RectilinearCoreGrid`; a single core is represented by a 1x1 grid rather than a second explicit-core implementation.
 - The frontend verifier remains a separate root entry point; it demonstrates input/reconstruction diagnostics without maintaining an alternate update architecture.
+- The user has now explicitly authorized layout/geometry simplification; phase 28 may modify those directories, but only after call-site evidence and with regression/performance verification.
+- Phase 28 subtraction: delete the unused uniform edge index and its bbox-only support; delete fixed-backend metadata/checks; make ROI materialization itself exact; retire the unused GeometryEngine facade while retaining native KLayout batch semantics in active callers.

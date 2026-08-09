@@ -1,60 +1,40 @@
 # MB-OPC 前端开发报告
 
-## 1. 交付结论
+## 1. 交付范围
 
-本次已完成 MB-OPC 所需的物理边界提取、边段归属、跨 core context、稳定身份、采样、owner-only 位移更新、轮廓重建和调试产物。根目录 `run_mbopc_frontend.py` 可直接运行，不需要安装项目包。
+前端负责把一个 Layer/ROI 的物理 Region 转为可供边段 OPC 使用的固定参考 problem，包含规范化、边段切分、规则 core 归属、halo membership、按需物化、探针坐标和全局重建。它不包含具体光刻迭代，也不修改 `layout/`、`geometry/`。
 
-开发过程未修改 `layout/` 和 `geometry/`，也未修改用户文件 `gcd_45nm.png` 或源 GDS。
+## 2. 当前实现
 
-## 2. 架构决策
+- `PhysicalMask` 一次保存规范 Region、轮廓和数学边；
+- `SegmentBatch` 只保存共享参考几何、edge normals、ring offsets、edge IDs 和 `t0/t1`；
+- `OwnershipBatch` 保存唯一 owner 与 CSR halo membership；
+- `edge_probe_points` 由当前端点、法向和显式距离生成 inner/outer probe；
+- `reconstruct_region` 始终基于全局固定参考边和全局位移重建，不按 core 裁最终 Polygon；
+- `opc.diagnostics` 集中处理显式 NPZ/GDS/PNG/图集输出。
 
-### 2.1 可与 ILT 共用的能力
+前端验证器 `run_mbopc_frontend.py` 保留，方便不运行光刻时单独检查上述全部契约。其演示位移直接按全局 segment 下标写入，不模拟第二套更新协议。
 
-`opc.input` 保存物理 mask、core/context 描述和方法无关输入契约；`opc.input.edge` 保存边界采样模板和诊断可视化。ILT 可直接复用前者，只有采用边界表示时才依赖后者。
+## 3. 性能设计
 
-### 2.2 边段输入能力
+输入阶段跨 KLayout/NumPy 边界使用批处理。迭代常驻表示不复制每个 segment 的参考端点和法向，也不保存只供诊断的长度。`PhysicalMask` 和 `SegmentBatch` 的轮廓/边字段共享对象引用。
 
-`opc.input.edge` 包含控制段数据契约、分段策略、owner 策略、更新载体与重建。具体 MB-OPC 优化迭代将独立放入 `opc.iteration.mbopc`；当前目录为空，不用占位实现制造无调用抽象。
+本次减法删除稳定 key、排序查找表、外部更新批次、持久边长/边偏移、采样模板和可插拔 owner policy。这些对象在当前求解器中没有生产调用方，却占用内存并形成第二条更新路径。
 
-### 2.3 性能设计
+阶段 28 最终严格 110,000-segment 基准中，prepare 由历史 168.41 ms 降为 125.64 ms，materialize 由 17.04 ms 降为 12.45 ms，重建由 477.95 ms 降为 427.83 ms；常驻数组相对展开表示节省 69.38%。
 
-- 物理合并、轮廓和边只构建一次。
-- segment 常驻数据使用 NumPy 数组，不创建 Python Segment 对象列表。
-- 稳定 128-bit key 在构建阶段生成，排序 token 索引在多轮更新中复用。
-- 规则 core 归属按切线定位，halo 仅展开实际相邻 core，不构建 segment×core 布尔矩阵。
-- 端点、法向、长度和采样点在评估轮次按需批量物化。
+## 4. 边界归属和跨 core 图形
 
-## 3. 边界与分段语义
+segment 中点决定唯一 owner；规则网格内部边界采用半开区间，版图最大边界归最后一列/行。一个 segment 可以作为 context 出现在多个 halo 中，但只能被一个 owner 写。
 
-输入 Shape 属性不参与物理边界判定。重叠图形的内部 cut-line 被消除，GDS 孔洞为编码而引入的零宽桥不会成为可移动边。仅角点接触的两个分量保持独立。
+core 边界不用于最终矢量裁剪。斜边或长边跨多个 core 时，所有 tile 读取同一个全局位移状态，轮次结束后从同一固定参考边重建，因此不会因不同 Region 裁剪产生相邻点 33/34 DBU 的接缝差异。
 
-每条数学边优先保留两端拐角短段，中间部分均衡切分，任意正交或斜边长度都按欧氏距离限制。外轮廓和孔洞法向均指向“从材料离开”的方向。
+## 5. 诊断格式
 
-## 4. 归属与跨 core 协调
+前端 NPZ 的 `format_version=2`，字段全部按当前全局 segment 下标对齐，不含稳定 key。它是人工验证快照，不承诺跨 remesh 或跨版本恢复。显式 remesh 后必须重建 problem、owner 和优化状态。
 
-默认策略用 segment 中点确定唯一 owner。内部 core 共享线采用半开区间，稳定归右侧/上侧 core；整体最大边界仍归最后一列/行。一个段即使跨过 core 分界线也不被额外切断，但可同时出现在两个 halo context 中。只有 owner 能提交该 key 的绝对位移，其他 core 从全局位移向量读到同一结果。
+## 6. 架构复核结论
 
-## 5. 重建与精确性
+当前对象各自承担不同职责：`PhysicalMask` 表达规范物理覆盖，`SegmentBatch` 表达控制自由度，`OwnershipBatch` 表达计算/写权限，`MBOPCProblem` 只聚合一次构造的参考状态。两处几何字段是共享浅引用而非重复存储，保留它们能避免调用方拆装数据且没有实际内存倍增。
 
-同一数学边上位移相等的相邻段不输出内部分割点，避免斜边浮点参数点在 DBU 取整后产生毛刺。位移不同时输出两个端点形成 jog。数学拐角使用直线解析交点，平行或 miter 过长时退化为 bevel。输出前删除相邻重复点和闭合重复点，并经过轮廓与原生 Polygon 有效性检查。
-
-## 6. 产物与主程序
-
-`run_mbopc_frontend.py` 支持无参数合成验证或 GDS/OASIS 真实文件。真实文件在 `LayoutDB` 打开期间完成物理规范化和紧凑问题构建，然后关闭源数据库，后续更新与输出不依赖源文件。
-
-主程序会自动检查零位移 XOR、core ownership 覆盖/重叠和重建 Region 有效性，再以原子替换方式输出 JSON、NPZ、PNG 和 GDS。core 只划分计算责任，最终矢量结果保持全局重建，避免斜边与整数 DBU 切线相交时引入量化顶点。
-
-## 7. 简化与 bug 审计
-
-开发期间的两个关键修正均已留下回归：
-
-1. 非网格对齐斜边的零位移 XOR：通过删除无意义内部输出点修复，没有增加舍入补偿函数。
-2. 真实文件主程序的数据库生命周期：把准备放入现有上下文，没有添加隐式复制 wrapper。
-
-最终数据审计又删除了只重复 `t0/t1` 和 key 信息的 `fragment_indices` / `fragment_counts` 常驻数组。保留排序 key 顺序和 token，因为它们直接提高多轮更新速度。
-
-## 8. 里程碑
-
-- `9f99ffd feat(opc): add shared physical mask and core foundation`
-- `bc409f9 feat(mbopc): add compact boundary frontend`
-- 本报告、基准与最终审计将作为后续独立本地里程碑提交。
+没有保留无调用方的接口、注册器、兼容包装或异常分支；4 个旧模块删除后，诊断集中为 1 个模块，输入包只剩计算职责。

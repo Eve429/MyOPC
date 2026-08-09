@@ -44,6 +44,23 @@ def test_roi_query_does_not_return_distant_shapes(reticle_dir: Path) -> None:
         assert right.counts()[layer] == 1
 
 
+def test_roi_materialization_clips_cross_boundary_polygon(tmp_path: Path) -> None:
+    """物化结果必须精确裁到 ROI，而不只是筛出与 ROI 相交的完整图形。"""
+    source = tmp_path / "cross_boundary.gds"
+    native = kdb.Layout()
+    index = native.layer(kdb.LayerInfo(1, 0))
+    top = native.create_cell("TOP")
+    top.shapes(index).insert(kdb.Box(0, 0, 100, 100))
+    native.write(str(source))
+    layer, box = LayerSpec(1, 0), DbuBox(25, 20, 75, 80)
+    with LayoutDB.open(source) as database:
+        region = database.query([layer], box).materialize().region(layer)
+    # RecursiveShapeIterator 只负责层级候选筛选；公共物化边界必须再做一次原生
+    # Region 相交，使 MB-OPC、像素图和直接 CLI 无需各自补一套 ROI 裁剪规则。
+    assert region.bbox() == box.to_native()
+    assert region.area() == box.area
+
+
 def test_preserve_properties_keeps_plain_and_tagged_geometry(tmp_path: Path) -> None:
     """启用属性导入不能过滤普通图形，且必须保留带属性图形的键值。"""
     source = tmp_path / "properties.gds"
@@ -54,7 +71,8 @@ def test_preserve_properties_keeps_plain_and_tagged_geometry(tmp_path: Path) -> 
     tagged = top.shapes(index).insert(kdb.Box(20, 0, 30, 10))
     tagged.set_property(7, "tagged")
     native.write(str(source))
-    layer, box = LayerSpec(7, 0), DbuBox(-1, -1, 31, 11)
+    # ROI 同时截断普通图形和带属性图形，确保精确裁剪不会改变集合或丢掉属性。
+    layer, box = LayerSpec(7, 0), DbuBox(5, -1, 25, 11)
     with LayoutDB.open(source) as database:
         plain = database.query([layer], box).materialize().region(layer)
         preserved_batch = database.query(
@@ -63,6 +81,6 @@ def test_preserve_properties_keeps_plain_and_tagged_geometry(tmp_path: Path) -> 
         assert plain.count() == preserved.count() == 2
         assert all(not polygon.properties() for polygon in plain.each())
         properties = {polygon.bbox().to_s(): polygon.properties() for polygon in preserved.each()}
-        assert properties == {"(0,0;10,10)": {}, "(20,0;30,10)": {7: "tagged"}}
+        assert properties == {"(5,0;10,10)": {}, "(20,0;25,10)": {7: "tagged"}}
         assert preserved_batch.stats is not None
         assert preserved_batch.stats.shapes[layer].polygon_like == 2

@@ -38,6 +38,7 @@ RegionBatch（按 Layer 保存原生 Region）
 - `LayoutDB.query()`：只创建轻量查询描述，不立即物化坐标。
 - `ShapeQuery.materialize()`：每层一次原生递归查询，实例变换和 Region 构造均在 C++ 内完成。
 - 原生 `shape_flags` 只允许 Box、Path、Polygon 进入 mask Region；Text 和 Edge 不进入正常几何路径。
+- `preserve_properties=False` 保留全部目标几何但不导入 Shape 属性；设为 `True` 时仍保留相同几何集合，只额外调用 `enable_properties()` 导入已有属性。不得叠加 `SProperties`，因为该标志表示“只选择带属性的 Shape”。
 - 诊断默认关闭。只有显式指定 `diagnostics=True` 时，才进行额外遍历并分配计时、分类统计对象。
 - `RegionBatch` 只复制很小的 Layer 映射；Polygon 数据继续保留在原生内存中。
 

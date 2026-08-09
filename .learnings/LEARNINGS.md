@@ -1,5 +1,36 @@
 # Learnings
 
+## [LRN-20260809-003] correction
+
+**Logged**: 2026-08-09T06:40:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+KLayout 的 `Shapes.SProperties` 是“仅选择带属性 Shape”的过滤器，不是属性保留标志。
+
+### Details
+原实现把 `SProperties` 与 Box/Path/Polygon 类型做按位或，导致 `preserve_properties=True` 时没有属性的有效几何被静默丢弃。真正的“保留全部几何并导入已有属性”只需要在类型选择不变时调用 `RecursiveShapeIterator.enable_properties()`。
+
+### Suggested Action
+移除 `SProperties`，保留 `enable_properties()`，并用带属性和无属性图形混合的 GDS 同时验证数量、面积和属性键值。
+
+### Metadata
+- Source: user_feedback
+- Related Files: layout/query.py, tests/layout/test_query.py
+- Tags: klayout, properties, iterator, geometry-loss
+- Pattern-Key: klayout.sproperties_is_filter
+- Recurrence-Count: 1
+- First-Seen: 2026-08-09
+- Last-Seen: 2026-08-09
+
+### Resolution
+- **Resolved**: 2026-08-09T06:50:00+08:00
+- **Notes**: 已移除 `SProperties` 过滤器，仅按需启用属性导入；混合属性测试确认几何数量不变且键值正确保留。
+
+---
+
 ## [LRN-20260809-002] correction
 
 **Logged**: 2026-08-09T03:05:00+08:00

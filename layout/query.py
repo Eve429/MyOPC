@@ -46,7 +46,8 @@ class ShapeQuery:
             # 在这里过滤既保证语义一致，也避免为过滤类型增加 Python 逐图形循环。
             iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
             if self.preserve_properties:
-                iterator.shape_flags |= kdb.Shapes.SProperties
+                # 这里只启用属性导入，不叠加 SProperties。后者在 KLayout 中表示
+                # “只选择带属性的图形”，会错误丢弃同一 ROI 内没有属性的有效几何。
                 iterator.enable_properties()
             regions[layer] = kdb.Region(iterator)
             if diagnostics:

@@ -1,5 +1,35 @@
 # Errors
 
+## [ERR-20260809-019] property_test_after_database_close
+
+**Logged**: 2026-08-09T06:45:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+属性回归测试在关闭 LayoutDB 后才读取由层级迭代器构造的 Region，得到错误的零计数。
+
+### Error
+`assert plain.count() == preserved.count() == 2` 实际得到 0。
+
+### Context
+- 生产查询在数据库打开期间物化正确。
+- Region 仍可能引用原生层级数据，不能把关闭数据库后的访问作为属性语义验证。
+
+### Suggested Fix
+把 Region 数量和属性断言放在 `with LayoutDB.open(...)` 生命周期内。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/layout/test_query.py
+
+### Resolution
+- **Resolved**: 2026-08-09T06:45:00+08:00
+- **Notes**: 测试断言已移入数据库上下文，不改变生产实现。
+
+---
+
 ## [ERR-20260809-018] planning_checker_table_format
 
 **Logged**: 2026-08-09T06:20:00+08:00

@@ -27,6 +27,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 9. PNG display and CLI | complete | Callable render function, atomic PNG save, optional viewer, direct CLI options |
 | 10. Raster verification | complete | Unit/integration/performance/real-layout tests and report updates |
 | 11. Raster simplify audit | complete | Reviewed abstraction, hot-path allocations and error branches; removed duplicate CLI clipping and passed all gates |
+| 12. Property-preservation correction | complete | Preserve all selected geometry while importing attached Shape properties; mixed-property regression and all gates passed |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.

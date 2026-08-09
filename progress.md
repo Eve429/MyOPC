@@ -44,3 +44,6 @@
 - Final gates passed: 43 tests, 92% coverage, Ruff, compileall, Chinese-comment scan, external-directory PNG CLI without project installation, and all strict benchmarks.
 - Final strict raster benchmark: 2,048 × 2,048 in 482.84 ms with 4.32 MB RSS delta and exact coverage.
 - Manually confirmed all 11 plan phases complete because the optional checker does not parse the project's table-based status format.
+- Confirmed `SProperties` was incorrectly filtering out untagged shapes when `preserve_properties=True`; started the focused semantic correction and mixed-property regression.
+- Corrected `preserve_properties` to call only `enable_properties()`; mixed plain/tagged GDS regression proves geometry count remains unchanged and `{7: "tagged"}` is retained.
+- Final property correction verification passed 44 tests with 92% coverage; `layout/query.py` coverage rose to 90%, and Ruff, compileall, and Chinese-comment checks passed.

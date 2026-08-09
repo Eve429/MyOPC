@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import klayout.db as kdb
+
 from layout import DbuBox, LayerSpec, LayoutDB
 from tests.fixtures.layout_factory import write_advanced_layout
 
@@ -40,3 +42,27 @@ def test_roi_query_does_not_return_distant_shapes(reticle_dir: Path) -> None:
         right = db.query([layer], DbuBox(-950, -50, -550, 350)).materialize()
         assert left.counts()[layer] == 1
         assert right.counts()[layer] == 1
+
+
+def test_preserve_properties_keeps_plain_and_tagged_geometry(tmp_path: Path) -> None:
+    """启用属性导入不能过滤普通图形，且必须保留带属性图形的键值。"""
+    source = tmp_path / "properties.gds"
+    native = kdb.Layout()
+    index = native.layer(kdb.LayerInfo(7, 0))
+    top = native.create_cell("TOP")
+    top.shapes(index).insert(kdb.Box(0, 0, 10, 10))
+    tagged = top.shapes(index).insert(kdb.Box(20, 0, 30, 10))
+    tagged.set_property(7, "tagged")
+    native.write(str(source))
+    layer, box = LayerSpec(7, 0), DbuBox(-1, -1, 31, 11)
+    with LayoutDB.open(source) as database:
+        plain = database.query([layer], box).materialize().region(layer)
+        preserved_batch = database.query(
+            [layer], box, preserve_properties=True).materialize(diagnostics=True)
+        preserved = preserved_batch.region(layer)
+        assert plain.count() == preserved.count() == 2
+        assert all(not polygon.properties() for polygon in plain.each())
+        properties = {polygon.bbox().to_s(): polygon.properties() for polygon in preserved.each()}
+        assert properties == {"(0,0;10,10)": {}, "(20,0;30,10)": {7: "tagged"}}
+        assert preserved_batch.stats is not None
+        assert preserved_batch.stats.shapes[layer].polygon_like == 2

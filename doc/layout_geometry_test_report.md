@@ -2,7 +2,7 @@
 
 ## 1. 测试结论
 
-最终验证全部通过：43 个自动化测试通过，`layout/` 与 `geometry/` 合并语句/分支覆盖率为 92%，Ruff 静态规则检查、Python 字节码编译、仓库外工作目录直接执行、严格性能门槛均通过。Patch 和像素图测试都明确覆盖了“一个图形跨越两个 core 边界”的情况，左右结果无丢失、无正面积重叠。
+最终验证全部通过：44 个自动化测试通过，`layout/` 与 `geometry/` 合并语句/分支覆盖率为 92%，Ruff 静态规则检查、Python 字节码编译、仓库外工作目录直接执行、严格性能门槛均通过。Patch 和像素图测试都明确覆盖了“一个图形跨越两个 core 边界”的情况，左右结果无丢失、无正面积重叠。
 
 ## 2. 测试环境
 
@@ -30,6 +30,7 @@
 - 可选 diagnostics 对 polygon-like、Text、Edge、other 的分类。
 - R90、镜像、AREF 等层级变换后的坐标与 ROI 裁剪。
 - 属性保留开关和无诊断时 `stats is None`。
+- 混合普通/带属性图形在 `preserve_properties` 开关前后数量和几何不变；开启时仅带属性图形保留准确键值。
 
 ### 3.2 Geometry
 
@@ -157,7 +158,7 @@ D:\app\miniforge\envs\myopc\python.exe benchmarks\benchmark_layout_geometry.py -
 D:\app\miniforge\envs\myopc\python.exe -m pytest -q --cov=layout --cov=geometry --cov-report=term-missing
 ```
 
-结果：43 passed，合并覆盖率 92%，达到不低于 90% 的验收线；新增 `geometry/raster.py` 覆盖率为 98%。
+结果：44 passed，合并覆盖率 92%，达到不低于 90% 的验收线；`layout/query.py` 覆盖率为 90%，`geometry/raster.py` 覆盖率为 98%。
 
 其他检查：
 

@@ -43,6 +43,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 22. ICCAD13 lithography and evaluation | complete | Exact used Hopkins assets/math plus vectorized EPE/L2/PVBand and direct CUDA runtime |
 | 23. Streaming simple MB-OPC iteration | complete | Synchronous owner-only tile batches with bounded CPU/GPU memory |
 | 24. Full-flow verification and reports | complete | Synthetic, simple.gds and full gcd_45nm validation, manuals, reports and audits |
+| 25. OPC architecture subtraction | complete | Remove unused stable-key/update abstractions, simplify segment/probe/ownership contracts, and retain both direct runners |
+| 26. Diagnostics and artifact cleanup | complete | Move explicit diagnostics out of input construction and restrict NPZ output to the frontend verifier |
+| 27. Regression, performance and reports | in_progress | Full geometry/solver/CLI regressions, gcd_45nm comparison, audits, reports and local milestone commits |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -62,6 +65,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - The compact segment representation uses at least 40% less persistent array memory than an expanded representation while retaining reusable sorted-key indices for iteration speed.
 - Every first-party Python module and function has Chinese documentation; performance/correctness blocks have detailed compact Chinese comments.
 - Development manual, test manual and feature reports match the delivered commands and APIs.
+- `SegmentBatch` contains only data used by current fragmentation, ownership, reconstruction or iteration paths; no stable-key lookup state remains.
+- `run_mbopc_frontend.py` remains directly executable and saves the index-aligned diagnostic NPZ; `run_mbopc.py` no longer saves NPZ by default.
+- Solver previews use the same EPE probe distance and coordinate construction as the optimizer.
+- `layout/` and `geometry/` remain byte-for-byte untouched by phases 25-27.
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -103,6 +110,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | First asset-integrity test used placeholder hashes | 1 | Replaced them with SHA-256 values computed from the copied OpenILT files; no production asset changed |
 | First phase 22 Ruff pass found three import-style findings | 1 | Rewrote only the import blocks manually; no formatter or behavior change |
 | First phase 22 planning patch used an inexact long-line context | 1 | No file changed; retried with short exact anchors instead of repeating the failed patch |
+| Phase 25 multi-file test patch used an inexact geometry-matrix context | 1 | No file changed; inspect the exact file and apply short per-file anchors |
+| First phase 25 Ruff pass found two import groups and three unused config bindings | 1 | Fix imports manually and remove obsolete return/bindings instead of keeping dummy variables |
+| First Ruff-cleanup patch targeted unused bindings in the wrong test file | 1 | No file changed; split source/import/test fixes by exact file |
+| Second phase 25 Ruff pass found one extra first-party import separator | 1 | Remove the single blank line manually; keep formatter disabled |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -124,3 +135,6 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Final MB-OPC audit: removed redundant persistent fragment ordinal/count arrays; retained edge keys for stable diagnostics, ring offsets for topology reconstruction, and sorted key indices for iteration speed. Both runner lifecycle helpers have distinct tested responsibilities and no bug-only compatibility branch remains.
 - Core boundaries partition computation, metric ownership and update authority; canonical vector output is reconstructed globally once and is never physically clipped by core boxes.
 - Simple MB-OPC uses synchronous `d_current/d_next`: completed GPU batches release tensors after accumulating scalars and staging owner updates, but no tile can observe `d_next` before the round barrier.
+- Current-process segment identity is the stable global index within one prepared problem. Cross-process keys, checkpoint recovery and distributed update submission are out of scope until a real consumer exists.
+- Production ownership accepts only `RectilinearCoreGrid`; a single core is represented by a 1x1 grid rather than a second explicit-core implementation.
+- The frontend verifier remains a separate root entry point; it demonstrates input/reconstruction diagnostics without maintaining an alternate update architecture.

@@ -9,11 +9,10 @@ import torch
 
 @dataclass(frozen=True, slots=True)
 class QualityMetrics:
-    """保存 ownership 像素范围内的 L2、PVBand 和像素数量。"""
+    """保存 ownership 像素范围内的 L2 和 PVBand。"""
 
     l2: float
     pvband: float
-    pixel_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +58,8 @@ def evaluate_process_window(target: torch.Tensor, nominal: torch.Tensor,
     # 完成筛选，返回 CPU 的仅有两个标量和像素数，不会传回整张曝光图。
     l2 = torch.sum((nominal[selected] - target[selected]).square()).item()
     pvband = torch.sum((maximum[selected] - minimum[selected]).square()).item()
-    return QualityMetrics(float(l2), float(pvband), int(torch.count_nonzero(selected).item()))
+    # 求解器不使用像素数量，避免为无消费方增加一次 GPU→CPU 标量同步。
+    return QualityMetrics(float(l2), float(pvband))
 
 
 def evaluate_edge_probes(target: torch.Tensor, nominal: torch.Tensor,

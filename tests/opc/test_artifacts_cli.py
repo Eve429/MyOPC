@@ -8,6 +8,7 @@ import klayout.db as kdb
 import numpy as np
 import pytest
 
+import run_mbopc_frontend as frontend
 from run_mbopc_frontend import _axis_cuts_by_size, build_parser, run
 from tests.fixtures.layout_factory import write_advanced_layout
 
@@ -27,11 +28,33 @@ def test_direct_runner_writes_all_artifacts_and_validates_round_trips(tmp_path: 
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["counts"]["updated_segments"] == 2
     with np.load(tmp_path / "segments.npz", allow_pickle=False) as arrays:
-        assert len(arrays["segment_keys"]) == summary["counts"]["segments"]
-        assert arrays["format_version"].tolist() == [1]
+        assert len(arrays["segment_edge_ids"]) == summary["counts"]["segments"]
+        assert "segment_keys" not in arrays.files
+        assert arrays["format_version"].tolist() == [2]
     layout = kdb.Layout()
     layout.read(str(tmp_path / "reconstruction.gds"))
     assert sorted(cell.name for cell in layout.top_cells()) == ["RECONSTRUCTED", "REFERENCE"]
+
+
+def test_frontend_probe_distance_does_not_follow_corner_length(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """诊断探针必须使用显式 probe 距离，不能随分段 corner 长度改变。"""
+    captured: list[float] = []
+    original = frontend.edge_probe_points
+
+    def record_distance(starts: object, ends: object, normals: object,
+                        distance_dbu: float) -> tuple[np.ndarray, np.ndarray]:
+        """记录前端传给公共探针函数的 DBU 距离并保持原行为。"""
+        captured.append(distance_dbu)
+        return original(starts, ends, normals, distance_dbu)
+
+    monkeypatch.setattr(frontend, "edge_probe_points", record_distance)
+    args = build_parser().parse_args([
+        "--corner-nm", "7", "--probe-distance-nm", "3",
+        "--output-dir", str(tmp_path), "--skip-geometry-suite",
+    ])
+    run(args)
+    assert captured == [3.0]
 
 
 def test_runner_executes_from_external_working_directory_without_install(tmp_path: Path) -> None:

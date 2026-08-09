@@ -15,19 +15,19 @@ import numpy as np
 
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, LayoutError, RegionBatch
 from opc import OPCError
+from opc.diagnostics import (
+    render_boundary_overlay,
+    run_geometry_suite,
+    save_problem_npz,
+    write_debug_gds,
+)
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import (
     FragmentationConfig,
     MBOPCProblem,
-    SegmentUpdateBatch,
-    merge_owner_updates,
+    edge_probe_points,
     prepare_problem,
     reconstruct_region,
-    render_boundary_overlay,
-    run_geometry_suite,
-    sample_lines,
-    save_problem_npz,
-    write_debug_gds,
 )
 
 
@@ -61,6 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="允许的最大法向位移，默认 24 nm")
     parser.add_argument("--demo-displacement-nm", type=float, default=2.0,
                         help="每个 core 示范移动一段的绝对位移，默认 2 nm")
+    parser.add_argument("--probe-distance-nm", type=float, default=16.0,
+                        help="诊断图 inner/outer 探针距离，默认 16 nm")
     parser.add_argument("--output-dir", type=Path,
                         default=Path(".benchmarks/mbopc_frontend_demo"), help="验证产物目录")
     parser.add_argument("--json", action="store_true", help="只在终端输出 JSON 汇总")
@@ -127,8 +129,8 @@ def _load_database_batch(args: argparse.Namespace,
 
 
 def _prepare_input_problem(args: argparse.Namespace, batch: RegionBatch,
-                           layer: LayerSpec, dbu_um: float) -> tuple[
-                               MBOPCProblem, RectilinearCoreGrid, FragmentationConfig]:
+                           layer: LayerSpec,
+                           dbu_um: float) -> tuple[MBOPCProblem, RectilinearCoreGrid]:
     """按 CLI 物理尺寸构造 core 网格、分段配置和独立紧凑问题。"""
     dbu_nm = dbu_um * 1000.0
     # 网格数量模式保持原有均分语义；物理尺寸模式只在 CLI 边界做一次 nm→DBU
@@ -150,22 +152,24 @@ def _prepare_input_problem(args: argparse.Namespace, batch: RegionBatch,
         x_cuts, y_cuts, round(args.halo_nm / dbu_nm))
     config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
                                  args.max_displacement_nm / dbu_nm)
-    return prepare_problem(batch, layer, config, grid), grid, config
+    return prepare_problem(batch, layer, config, grid), grid
 
 
-def _demo_updates(problem: MBOPCProblem,
-                  displacement_dbu: float) -> list[SegmentUpdateBatch]:
-    """为每个有可拥有边段的 core 选择一段，构造确定性示范更新。"""
-    updates: list[SegmentUpdateBatch] = []
+def _demo_displacements(problem: MBOPCProblem,
+                        displacement_dbu: float) -> tuple[np.ndarray, np.ndarray]:
+    """为每个有 owner 边段的 core 选择一段并返回全局对齐位移及变化索引。"""
+    values = np.zeros(problem.segments.segment_count, dtype=np.float64)
+    changed: list[int] = []
     for core_index in range(len(problem.ownership.cores)):
         owned = np.flatnonzero(problem.ownership.owner_indices == core_index)
         if not len(owned):
             continue
         segment_index = int(owned[len(owned) // 2])
-        value = displacement_dbu if core_index % 2 == 0 else -displacement_dbu
-        updates.append(SegmentUpdateBatch(problem.segments.keys[[segment_index]],
-                                          np.array([core_index]), np.array([value])))
-    return updates
+        values[segment_index] = displacement_dbu if core_index % 2 == 0 else -displacement_dbu
+        changed.append(segment_index)
+    # 选择过程直接从 owner_indices 反查，因此不存在非 owner 写入；索引列表只用于
+    # 诊断计数，不参与重建。真实 solver 使用同样的全局对齐数组和轮次屏障。
+    return values, np.asarray(changed, dtype=np.int32)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -195,10 +199,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         batch, layer, dbu_um = _demo_batch()
         source = "synthetic"
         # 计时从前端问题构建前开始，不包含内置案例的构造时间。prepare 阶段会把
-        # RegionBatch 转为稳定轮廓、数学边、紧凑边段、采样模板和 core 归属表；
-        # 同时返回 grid（全局网格）和 config（重建约束），供后续校验与重建复用。
+        # RegionBatch 转为稳定轮廓、数学边、紧凑边段和 core 归属表；同时返回
+        # grid 供后续覆盖校验，重建约束已经由 problem 统一持有，不重复传递。
         started = perf_counter()
-        problem, grid, config = _prepare_input_problem(args, batch, layer, dbu_um)
+        problem, grid = _prepare_input_problem(args, batch, layer, dbu_um)
     else:
         # 传入真实版图时，将路径展开并绝对化，避免摘要依赖启动目录；此字符串
         # 仅用于记录，不参与几何计算。_load_database_batch 输出与演示分支一致。
@@ -212,42 +216,37 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             # 便于比较不同分段、采样和 core 配置本身的性能。
             started = perf_counter()
             # grid 网格，用切分点记录 x_cut [x0,x1,x2] y_cut [y1,y2]
-            # config包含一些默认设置，如分段大小
-            problem, grid, config = _prepare_input_problem(args, batch, layer, dbu_um)
+            # problem 包含分段与重建约束，grid 保存全局规则切线和 halo。
+            problem, grid = _prepare_input_problem(args, batch, layer, dbu_um)
 
     # 2. 固化准备阶段结束时间，并完成单位换算。dbu_um 的单位是 μm/DBU，乘
     #    1000 后得到 nm/DBU；演示位移除以该值即可得到几何内核使用的 DBU。
     prepared = perf_counter()
     dbu_nm = dbu_um * 1000.0
 
-    # 3. 构造一次模拟 OPC 更新。_demo_updates 从每个 core 的所有权边段中选取
-    #    演示目标，输入为紧凑问题和 DBU 位移量，输出为按 owner 分组的
-    #    SegmentUpdateBatch 列表；它只模拟优化器输出，不修改 problem 本身。
-    updates = _demo_updates(problem, args.demo_displacement_nm / dbu_nm)
+    # 3. 构造一次模拟 OPC 更新。输入是紧凑问题和 DBU 位移量，输出
+    #    displacements 是与全局 segment 索引严格对齐的绝对位移，changed 只记录
+    #    本次人工选择。更新直接由唯一 owner 索引产生，不建立第二套 key 通信协议。
+    displacements, changed = _demo_displacements(
+        problem, args.demo_displacement_nm / dbu_nm)
 
-    # 4. 合并各 core 的更新。该步骤校验 owner、边段键、重复写入和最大位移，
-    #    输出 update_result：displacements 是与全局边段索引严格对齐的位移数组，
-    #    changed_segment_indices 和 dirty_polygon_indices 分别指出改变的边段及多边形，
-    #    供后续增量算法定位需要重新计算的局部数据。
-    update_result = merge_owner_updates(problem, updates)
+    # 4. 将“参考边段 + 法向位移”物化为当前几何。输入位移数组不改变拓扑和
+    #    归属；输出 geometry 只包含热路径消费的 starts、ends、normals 当前值。
+    geometry = problem.segments.materialize(displacements)
 
-    # 5. 将“参考边段 + 法向位移”物化为当前几何。输入位移数组不改变拓扑和
-    #    归属；输出 geometry 包含浮点 starts、ends、normals、lengths 等当前值。
-    geometry = problem.segments.materialize(update_result.displacements)
+    # 5. 诊断探针围绕固定参考边界生成，距离由独立参数明确给出。inner 位于负
+    #    外法向（材料侧），outer 位于正外法向（空区侧）；完整求解器调用相同函数，
+    #    因此修改 corner 长度不会再悄悄改变预览所表达的 EPE 位置。
+    reference_geometry = problem.segments.materialize()
+    inner, outer = edge_probe_points(
+        reference_geometry.starts, reference_geometry.ends, reference_geometry.normals,
+        args.probe_distance_nm / dbu_nm)
 
-    # 6. 依据准备阶段缓存的 sample_template 在当前边段上生成采样点。输入是
-    #    移动后的首尾点、法向和不随迭代变化的模板；输出 samples 包含坐标、
-    #    对应边段索引、切向比例和法向偏移。这里只做坐标物化，几何合法性由
-    #    重建步骤检查；需要轮廓信息时可通过边段索引继续查询 problem.segments。
-    samples = sample_lines(geometry.starts, geometry.ends, geometry.normals,
-                           problem.sample_template)
-
-    # 7. 执行两次重建。reference 使用全零位移，理论上必须还原输入物理 mask；
+    # 6. 执行两次重建。reference 使用全零位移，理论上必须还原输入物理 mask；
     #    reconstructed 使用本轮合并位移，是后续 OPC、拼接与可视化的实际结果。
     #    两者均输入紧凑边段和重建配置，输出 KLayout Region。
-    reference = reconstruct_region(problem.segments,
-                                   np.zeros(problem.segments.segment_count), config)
-    reconstructed = reconstruct_region(problem.segments, update_result.displacements, config)
+    reference = reconstruct_region(problem, np.zeros(problem.segments.segment_count))
+    reconstructed = reconstruct_region(problem, displacements)
 
     # update_sample_reconstruct 阶段到此结束；此时间点之后属于验证和产物输出。
     rebuilt = perf_counter()
@@ -281,7 +280,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     # 11. 保存紧凑数值数据。输入为 problem 和本轮全局位移数组；输出 NPZ 包含
     #     公共边界、边段拓扑、core 归属及位移，可供其他 OPC 方法加载和分析。
-    npz_path = save_problem_npz(problem, update_result.displacements, output_dir / "segments.npz")
+    npz_path = save_problem_npz(problem, displacements, output_dir / "segments.npz")
 
     # 12. 保存调试版图。输入零位移参考 Region 与移动后 Region，两者使用相同
     #     layer/datatype、分别写入 REFERENCE 和 RECONSTRUCTED 顶层 Cell；dbu_um
@@ -294,7 +293,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     png_path = render_boundary_overlay(
         reconstructed, layer, batch.query_box, dbu_um, geometry.starts, geometry.ends,
         geometry.normals, output_dir / "overview.png", problem.ownership.owner_indices,
-        samples, problem.ownership.cores)
+        inner, outer, problem.ownership.cores)
 
     # 14. 默认运行额外的多图形几何回归套件并把图片写入子目录；传入
     #     --skip-geometry-suite 时返回 None，用于只测当前输入的快速运行模式。
@@ -321,9 +320,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "rings": problem.physical_mask.contours.ring_count,
             "mathematical_edges": problem.segments.edges.edge_count,
             "segments": problem.segments.segment_count,
-            "samples": len(samples.points), "cores": len(problem.ownership.cores),
+            "samples": len(inner) * 2, "cores": len(problem.ownership.cores),
             "memberships": len(problem.ownership.member_segment_indices),
-            "updated_segments": len(update_result.changed_segment_indices),
+            "updated_segments": len(changed),
         },
         "memory": {"segment_persistent_bytes": problem.segments.persistent_nbytes},
         "timing_seconds": {

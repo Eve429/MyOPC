@@ -123,3 +123,32 @@
 - Final-code full `gcd_45nm` validation processed 870 cores, 223,553 segments and 880,801 memberships in three rounds. EPE fell 129,645 → 74,592 → 48,348 and L2 fell 1,038,629.522 → 563,335.522 → 440,251.431; PVBand rose and is reported separately rather than hidden.
 - The final run took 84.708 seconds, peaked at 271,544,320 CUDA-allocated bytes on a 4 GiB GTX 1650, and wrote valid GDS/NPZ/JSON/PNG artifacts. This validates bounded streaming behavior but is not a maximum-batch claim for the target 24 GiB GPU.
 - Topology regressions proved plain reconstruction accepted both a rectangle whose left edge crossed the right edge and a hull moved inside its hole. The solver now rejects ring-orientation changes and hole escape before the round barrier; legal `gcd_45nm` results remained bitwise-identical in metrics.
+
+## OPC Architecture Subtraction Audit
+- The complete repository baseline is healthy: 119 tests passed in 19.26 seconds before phase 25 changes.
+- `problem.physical_mask.contours/edges` and `problem.segments.contours/edges` are immutable shared references rather than copied geometry arrays; retaining those aliases keeps the two domain objects self-contained without material memory cost.
+- Stable `edge_keys`, `segment keys`, `_key_order` and `_sorted_tokens` consume 7,499,136 bytes on `gcd_45nm`, 59.16% of the reported 12,675,300-byte `SegmentBatch` persistent storage.
+- The current streaming solver bypasses stable keys and `merge_owner_updates`; those paths are sustained only by the frontend demo, tests, benchmark and NPZ export. The user selected complete removal and current-process index identity.
+- `edge_segment_offsets` has no production consumer outside diagnostic export, and persistent `edge_lengths` only feeds materialized diagnostic lengths. Both can be derived only when explicitly requested.
+- `BoundarySampleTemplate` is stored on every problem although the solver computes EPE probes independently. Its default normal offset comes from `corner_length`, while the solver uses `epe_distance`; separate values make the preview disagree with actual evaluation.
+- The user selected regular `RectilinearCoreGrid` ownership only and requested that `run_mbopc_frontend.py` remain as a separate direct verifier.
+- NPZ remains only in the explicitly invoked frontend verifier, becomes index-aligned without keys, and is no longer emitted by the full solver entry point.
+- `UniformGridIndex` and the replaceable-backend claims around `GeometryEngine` remain separate protected-directory audit findings; phases 25-27 must not change `layout/` or `geometry/`.
+- `SegmentGeometry.lengths` and `segment_indices` were allocated on every full materialization although reconstruction consumes only starts/ends/normals; diagnostic maximum lengths can be derived from `np.linalg.norm(ends-starts)` only when requested.
+- The three edge-input files `artifacts.py`, `visualize.py` and `verification.py` are all explicit diagnostic lifecycle code. Consolidating them under `opc/diagnostics.py` removes output/test responsibilities from input construction without inventing a new directory.
+- Full `run_mbopc.py` tests currently assert a default NPZ; this must be deliberately updated so only its GDS/JSON remain mandatory, while the retained frontend verifier checks NPZ format version 2 without key arrays.
+- After core source/test migration, the only remaining Python references to removed key/length APIs are in `benchmarks/benchmark_mbopc_frontend.py`; documentation references are intentionally deferred to the synchronized report phase.
+- `opc.diagnostics` now owns every explicit artifact and geometry-atlas caller. `opc.input.edge` no longer imports or exports diagnostics, preserving one-way dependency and avoiding an import cycle.
+- The post-migration Python call-site search finds no remaining use of stable keys, external update batches, template sampling, selective materialization, persistent edge offsets/lengths, or the old reconstruction signature.
+- The source diff currently deletes four obsolete edge-input modules, adds one diagnostics module and leaves all protected `layout/`/`geometry/` files untouched.
+- Post-refactor full regression passes 118 tests in 15.31 seconds; the count changed because tests dedicated only to deleted APIs were removed while new alias/probe regressions were added.
+- The strict 5,000-shape/110,000-segment benchmark passes: 120.11 ms prepare, 11.84 ms materialize, 441.61 ms zero reconstruction, 2.441 MiB persistent segment arrays and 69.38% saving versus expanded storage.
+- The historical same-scale benchmark was 168.41 ms prepare, 17.04 ms materialize, 477.95 ms reconstruction and 43.43% saving, so the subtraction improves every measured hot-path time while substantially lowering persistent storage.
+- Real `gcd_45nm` frontend preparation remains exact with 223,553 segments: persistent arrays fell from 12,675,300 to 4,830,716 bytes (61.89% reduction), prepare took 161.12 ms, total diagnostic run 2.357 s and zero-displacement XOR remained zero.
+- Visual inspection of the regenerated whole-layout overlay confirms complete red/cyan owner partitioning at the vertical core boundary, continuous cross-core geometry, readable labels and paired cyan-inner/red-outer probe markers.
+- Focused coverage verification passes 74 tests with 92% combined statement/branch coverage for `opc`, `lithography` and `evaluation`.
+- Three-round full `gcd_45nm` CUDA results are numerically identical to the pre-refactor baseline: EPE 129,645→74,592→48,348, L2 1,038,629.522→563,335.522→440,251.431 and peak allocation 271,544,320 bytes.
+- Full-flow total time is 85.473 seconds versus the historical 84.708 seconds (0.90% difference, normal run variance); frontend preparation is 0.249 seconds and persistent segment arrays are 4,830,716 bytes.
+- The full runner artifact schema now contains only summary JSON, result GDS and optional preview PNG; no NPZ path or file is produced.
+- 当前开发手册、测试手册、函数调用文档和两组专项报告仍保留稳定键、外部更新批次、可替换 owner 策略及全流程 NPZ 等旧描述，必须按实际代码整体同步，不能通过局部术语替换掩盖数据流变化。
+- `doc/design_review.md` 和 `CLAUDE.md` 均为已跟踪的历史/用户文档；本阶段不改写设计审查历史，也不让旧兼容说明扩大本次 OPC 实现范围。

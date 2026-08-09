@@ -1,28 +1,15 @@
-"""为控制边段分配唯一 owner，并构造稀疏 halo context membership。"""
+"""在规则 core 网格上分配唯一 owner，并构造稀疏 halo membership。"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol
-
 import numpy as np
 
-from opc.errors import OwnershipError
-from opc.input import CoreSpec, RectilinearCoreGrid
+from opc.input import RectilinearCoreGrid
 
 from .types import OwnershipBatch, SegmentBatch
 
 
-class OwnershipPolicy(Protocol):
-    """允许后续替换跨 core 协调方法的最小归属策略接口。"""
-
-    def assign(self, segments: SegmentBatch,
-               cores: RectilinearCoreGrid | Sequence[CoreSpec]) -> OwnershipBatch:
-        """返回每段唯一 owner 和所有 context membership。"""
-        ...
-
-
-def _grid_membership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> OwnershipBatch:
+def build_ownership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> OwnershipBatch:
     """利用网格切线直接展开每段覆盖的有限 core 范围。"""
     geometry = segments.materialize()
     midpoints = (geometry.starts + geometry.ends) * 0.5
@@ -59,64 +46,3 @@ def _grid_membership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> Owner
     core_offsets[0] = 0
     np.cumsum(np.bincount(sorted_cores, minlength=grid.core_count), out=core_offsets[1:])
     return OwnershipBatch(grid.cores(), owners, core_offsets, members[order])
-
-
-def _validate_explicit_cores(cores: tuple[CoreSpec, ...]) -> None:
-    """拒绝重复 ID 和有正面积重叠的显式 ownership box。"""
-    if not cores:
-        raise OwnershipError("at least one core is required")
-    if len({core.core_id for core in cores}) != len(cores):
-        raise OwnershipError("core IDs must be unique")
-    # 显式列表用于不规则的少量局部 core；规则大网格应使用 RectilinearCoreGrid。
-    # 这里的 O(C²) 只发生在准备阶段，并换取明确拒绝歧义 ownership 的错误信息。
-    for left_index, left in enumerate(cores):
-        for right in cores[left_index + 1:]:
-            if left.ownership_box.overlaps(right.ownership_box):
-                raise OwnershipError(f"core ownership boxes overlap: {left.core_id}, {right.core_id}")
-
-
-def _explicit_membership(segments: SegmentBatch,
-                         cores: tuple[CoreSpec, ...]) -> OwnershipBatch:
-    """为少量不规则 core 使用分块向量筛选构造归属。"""
-    _validate_explicit_cores(cores)
-    geometry = segments.materialize()
-    midpoints = (geometry.starts + geometry.ends) * 0.5
-    owners = np.full(segments.segment_count, -1, dtype=np.int32)
-    memberships: list[np.ndarray] = []
-    left = np.minimum(geometry.starts[:, 0], geometry.ends[:, 0])
-    right = np.maximum(geometry.starts[:, 0], geometry.ends[:, 0])
-    bottom = np.minimum(geometry.starts[:, 1], geometry.ends[:, 1])
-    top = np.maximum(geometry.starts[:, 1], geometry.ends[:, 1])
-    for core_index, core in enumerate(cores):
-        box = core.ownership_box
-        owned = ((midpoints[:, 0] >= box.left) & (midpoints[:, 0] < box.right) &
-                 (midpoints[:, 1] >= box.bottom) & (midpoints[:, 1] < box.top))
-        owners[owned] = core_index
-        context = core.context_box
-        memberships.append(np.flatnonzero(
-            (left <= context.right) & (right >= context.left) &
-            (bottom <= context.top) & (top >= context.bottom)).astype(np.int32))
-    # 只有整体最右/最上外沿会在半开规则后无 owner；按输入 core 的稳定顺序对闭区间
-    # 候选补一次归属，内部边界已经由右侧/上侧 core 接管，不会进入此兜底。
-    for core_index, core in enumerate(cores):
-        box = core.ownership_box
-        fallback = ((owners < 0) & (midpoints[:, 0] >= box.left) &
-                    (midpoints[:, 0] <= box.right) & (midpoints[:, 1] >= box.bottom) &
-                    (midpoints[:, 1] <= box.top))
-        owners[fallback] = core_index
-    core_offsets = np.empty(len(cores) + 1, dtype=np.int64)
-    core_offsets[0] = 0
-    np.cumsum([len(indices) for indices in memberships], out=core_offsets[1:])
-    members = np.concatenate(memberships) if memberships else np.empty(0, dtype=np.int32)
-    return OwnershipBatch(cores, owners, core_offsets, members)
-
-
-class MidpointOwnerPolicy:
-    """整段不切断、由中点所在 core 唯一决策的默认策略。"""
-
-    def assign(self, segments: SegmentBatch,
-               cores: RectilinearCoreGrid | Sequence[CoreSpec]) -> OwnershipBatch:
-        """按 core 表示选择规则网格快速路径或显式局部路径。"""
-        if isinstance(cores, RectilinearCoreGrid):
-            return _grid_membership(segments, cores)
-        return _explicit_membership(segments, tuple(cores))

@@ -17,15 +17,13 @@ import torch
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 from lithography import ICCAD13Lithography
 from opc import OPCError
+from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import (
     FragmentationConfig,
+    edge_probe_points,
     prepare_problem,
     reconstruct_region,
-    render_boundary_overlay,
-    sample_lines,
-    save_problem_npz,
-    write_debug_gds,
 )
 from opc.iteration.mbopc import SimpleMBOPCConfig, optimize
 
@@ -160,7 +158,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
             args.max_displacement_nm / dbu_nm)
         # 层级遍历只在 materialize 时发生一次；prepare_problem 批量生成全局参考边、
-        # 稳定 segment key 和 owner/context CSR，之后每轮不会重新读取源版图。
+        # 参数化 segment 和 owner/context CSR，之后每轮不会重新读取源版图。
         problem = prepare_problem(batch, layer, fragmentation, grid)
     prepared = perf_counter()
 
@@ -168,12 +166,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     iteration = SimpleMBOPCConfig(
         iterations=args.iterations, initial_step_dbu=args.step_nm / dbu_nm,
         decay_every=args.decay_every,
-        max_displacement_dbu=args.max_displacement_nm / dbu_nm,
         epe_distance_dbu=args.epe_distance_nm / dbu_nm,
         pixel_dbu=pixel_dbu, canvas=model.config.canvas,
         batch_size=args.batch_size,
-        target_cache_bytes=args.target_cache_mb * 1024 * 1024,
-        print_threshold=model.config.print_threshold)
+        target_cache_bytes=args.target_cache_mb * 1024 * 1024)
     if model.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(model.device)
     # optimize 对所有 batch 只读同一 current，并把 owner 方向暂存到 next；只有整轮
@@ -185,23 +181,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     # 最佳状态在所有 tile 完成后只做一次全局矢量重建。core 从不裁最终 Polygon，
     # 所以跨 core 与斜边不会产生两套取整端点；halo 也从不回写。
-    reconstructed = reconstruct_region(
-        problem.segments, optimized.best_displacements, fragmentation)
+    reconstructed = reconstruct_region(problem, optimized.best_displacements)
     reference = problem.physical_mask.region
-    npz_path = save_problem_npz(
-        problem, optimized.best_displacements, output_dir / "mbopc_result.npz")
     gds_path = write_debug_gds(
         reference, reconstructed, output_dir / "mbopc_result.gds",
         dbu_um, layer.layer, layer.datatype)
     preview_path: Path | None = None
     if args.preview:
         geometry = problem.segments.materialize(optimized.best_displacements)
-        samples = sample_lines(
-            geometry.starts, geometry.ends, geometry.normals, problem.sample_template)
+        reference_geometry = problem.segments.materialize()
+        inner, outer = edge_probe_points(
+            reference_geometry.starts, reference_geometry.ends,
+            reference_geometry.normals, iteration.epe_distance_dbu)
         preview_path = render_boundary_overlay(
             reconstructed, layer, box, dbu_um, geometry.starts, geometry.ends,
             geometry.normals, output_dir / "mbopc_result.png",
-            problem.ownership.owner_indices, samples, problem.ownership.cores)
+            problem.ownership.owner_indices, inner, outer, problem.ownership.cores)
     finished = perf_counter()
     gpu_peak = (int(torch.cuda.max_memory_allocated(model.device))
                 if model.device.type == "cuda" else 0)
@@ -232,7 +227,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                            "total": finished - started},
         "verification": {"reconstructed_valid": bool(reconstructed.has_valid_polygons())},
         "artifacts": {"summary": str(output_dir / "summary.json"),
-                      "npz": str(npz_path), "gds": str(gds_path),
+                      "gds": str(gds_path),
                       "preview": None if preview_path is None else str(preview_path)},
     }
     _atomic_json(output_dir / "summary.json", result)

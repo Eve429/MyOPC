@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import klayout.db as kdb
 import numpy as np
 import pytest
@@ -26,9 +28,10 @@ from .test_common import _batch
 class _RecordingZeroModel:
     """记录每个流式 batch 的 mask，并返回全零曝光图制造稳定 inner 违规。"""
 
-    def __init__(self) -> None:
+    def __init__(self, canvas: int = 256) -> None:
         """在 CPU 上创建空输入记录，避免测试依赖 CUDA。"""
         self.device = torch.device("cpu")
+        self.config = SimpleNamespace(canvas=canvas, print_threshold=0.499)
         self.inputs: list[np.ndarray] = []
 
     def __call__(self, mask: torch.Tensor) -> LithographyResult:
@@ -50,7 +53,7 @@ def _solver_config(iterations: int = 2, cache_bytes: int = 1 << 20) -> SimpleMBO
     """返回适合小型 CPU 回归用例的确定性迭代参数。"""
     return SimpleMBOPCConfig(
         iterations=iterations, initial_step_dbu=2.0, decay_every=2,
-        max_displacement_dbu=8.0, epe_distance_dbu=3.0, pixel_dbu=1,
+        epe_distance_dbu=3.0, pixel_dbu=1,
         canvas=96, batch_size=1, target_cache_bytes=cache_bytes)
 
 
@@ -140,8 +143,7 @@ def test_topology_guard_rejects_opposite_edge_crossing_and_hull_inside_hole() ->
     left = ((rectangle_geometry.starts[:, 0] == 0) &
             (rectangle_geometry.ends[:, 0] == 0))
     rectangle_values[left] = -30.0
-    crossed = reconstruct_contours(
-        rectangle_problem.segments, rectangle_values, rectangle_config)
+    crossed = reconstruct_contours(rectangle_problem, rectangle_values)
     assert not _preserves_reference_topology(
         rectangle_problem.segments.contours, crossed)
 
@@ -152,8 +154,7 @@ def test_topology_guard_rejects_opposite_edge_crossing_and_hull_inside_hole() ->
     hollow_values = np.zeros(hollow_problem.segments.segment_count)
     segment_holes = hollow_problem.segments.edges.is_hole[hollow_problem.segments.edge_ids]
     hollow_values[~segment_holes] = -25.0
-    inverted = reconstruct_contours(
-        hollow_problem.segments, hollow_values, hollow_config)
+    inverted = reconstruct_contours(hollow_problem, hollow_values)
     assert not _preserves_reference_topology(hollow_problem.segments.contours, inverted)
 
 
@@ -166,7 +167,7 @@ def test_two_dbu_hollow_wall_invalid_long_edge_probes_are_not_published() -> Non
     problem = prepare_problem(_batch(region), _batch(region).layers[0], config, grid)
     iteration = SimpleMBOPCConfig(
         iterations=2, initial_step_dbu=1.0, decay_every=1,
-        max_displacement_dbu=2.0, epe_distance_dbu=8.0, pixel_dbu=1,
+        epe_distance_dbu=8.0, pixel_dbu=1,
         canvas=256, batch_size=1)
     result = optimize(problem, _RecordingZeroModel(), iteration)
     # 长边内探针已经越过 2 DBU 窄壁进入孔洞，因 target_inner=False 被排除；靠
@@ -183,7 +184,7 @@ def test_actual_iccad13_model_completes_one_streaming_round() -> None:
     problem = prepare_problem(_batch(region), _batch(region).layers[0], config, grid)
     iteration = SimpleMBOPCConfig(
         iterations=1, initial_step_dbu=2.0, decay_every=1,
-        max_displacement_dbu=8.0, epe_distance_dbu=8.0, pixel_dbu=1,
+        epe_distance_dbu=8.0, pixel_dbu=1,
         canvas=256, batch_size=1, target_cache_bytes=0)
     result = optimize(problem, ICCAD13Lithography(device="cpu"), iteration)
     assert len(result.records) == 1
@@ -195,26 +196,24 @@ def test_actual_iccad13_model_completes_one_streaming_round() -> None:
 @pytest.mark.parametrize("overrides", [
     {"iterations": 0}, {"pixel_dbu": 0}, {"target_cache_bytes": -1},
     {"initial_step_dbu": float("nan")}, {"epe_distance_dbu": 0.0},
-    {"print_threshold": 1.0},
 ])
 def test_iteration_config_rejects_invalid_limits(overrides: dict[str, object]) -> None:
     """空轮次、非法内存上限和非有限/越界浮点参数必须在运行前拒绝。"""
     values: dict[str, object] = {
         "iterations": 1, "initial_step_dbu": 1.0, "decay_every": 1,
-        "max_displacement_dbu": 2.0, "epe_distance_dbu": 1.0,
-        "pixel_dbu": 1,
+        "epe_distance_dbu": 1.0, "pixel_dbu": 1,
     }
     values.update(overrides)
     with pytest.raises(ValueError):
         SimpleMBOPCConfig(**values)
 
 
-def test_optimize_rejects_displacement_and_canvas_outside_frontend_contract() -> None:
-    """求解位移超过前端上限或 context 超出画布时不得开始模型计算。"""
+def test_optimize_rejects_canvas_outside_model_or_context_contract() -> None:
+    """tile canvas 超过模型上限或装不下 context 时不得开始计算。"""
     problem, _ = _rectangle_problem()
-    with pytest.raises(ValueError, match="最大位移"):
-        optimize(problem, _RecordingZeroModel(), SimpleMBOPCConfig(
-            1, 1.0, 1, 9.0, 3.0, 1, canvas=96, batch_size=1))
+    with pytest.raises(ValueError, match="不能超过光刻模型"):
+        optimize(problem, _RecordingZeroModel(canvas=64), SimpleMBOPCConfig(
+            1, 1.0, 1, 3.0, 1, canvas=96, batch_size=1))
     with pytest.raises(ValueError, match="超过固定光刻画布"):
         optimize(problem, _RecordingZeroModel(), SimpleMBOPCConfig(
-            1, 1.0, 1, 8.0, 3.0, 1, canvas=32, batch_size=1))
+            1, 1.0, 1, 3.0, 1, canvas=32, batch_size=1))

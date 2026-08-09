@@ -26,7 +26,7 @@ def _write_single_layer_layout(path: Path) -> Path:
 
 def test_direct_mbopc_runner_works_outside_repository_and_writes_results(
         project_root: Path, tmp_path: Path) -> None:
-    """从仓库外直接执行根脚本，应完成真实模型一轮并写出 JSON、NPZ 和 GDS。"""
+    """从仓库外直接执行根脚本，应完成真实模型一轮并写出 JSON 和 GDS。"""
     source = _write_single_layer_layout(tmp_path / "single.gds")
     output = tmp_path / "result"
     command = [
@@ -44,7 +44,7 @@ def test_direct_mbopc_runner_works_outside_repository_and_writes_results(
     assert len(result["optimization"]["records"]) == 1
     assert result["verification"]["reconstructed_valid"] is True
     assert Path(result["artifacts"]["summary"]).is_file()
-    assert Path(result["artifacts"]["npz"]).is_file()
+    assert "npz" not in result["artifacts"]
     gds_path = Path(result["artifacts"]["gds"])
     assert gds_path.is_file()
     layout = kdb.Layout()

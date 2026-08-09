@@ -8,7 +8,7 @@ import numpy as np
 
 from layout import CellRef, DbuBox, LayerSpec, RegionBatch
 from opc.input import RectilinearCoreGrid, normalize_physical_mask
-from opc.input.edge import build_sample_template, sample_lines
+from opc.input.edge import edge_probe_points
 
 
 def _batch(region: kdb.Region, layer: LayerSpec | None = None) -> RegionBatch:
@@ -61,16 +61,11 @@ def test_rectilinear_grid_uses_half_open_internal_and_closed_outer_boundaries() 
     assert cores[0].context_box == DbuBox(-10, -10, 60, 50)
 
 
-def test_sample_template_materializes_tangent_and_normal_offsets_into_reused_buffer() -> None:
-    """通用采样应按稳定顺序生成点，并允许复用调用方内存。"""
+def test_edge_probe_points_follow_midpoint_and_outward_normal() -> None:
+    """inner/outer 探针应位于边段中点的负/正外法向两侧。"""
     starts = np.array([[0, 0], [10, 0]], dtype=np.float64)
     ends = np.array([[10, 0], [10, 10]], dtype=np.float64)
     normals = np.array([[0, 1], [-1, 0]], dtype=np.float64)
-    template = build_sample_template(2, (0.25, 0.75), (-2.0, 2.0))
-    output = np.empty((8, 2), dtype=np.float64)
-    samples = sample_lines(starts, ends, normals, template, output)
-    assert samples.points is output
-    assert samples.points.tolist() == [
-        [2.5, -2.0], [2.5, 2.0], [7.5, -2.0], [7.5, 2.0],
-        [12.0, 2.5], [8.0, 2.5], [12.0, 7.5], [8.0, 7.5],
-    ]
+    inner, outer = edge_probe_points(starts, ends, normals, 2.0)
+    assert inner.tolist() == [[5.0, -2.0], [12.0, 5.0]]
+    assert outer.tolist() == [[5.0, 2.0], [8.0, 5.0]]

@@ -8,12 +8,11 @@ import pytest
 from PIL import Image
 
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, RegionBatch
+from opc.diagnostics import build_geometry_cases, run_geometry_suite
 from opc.input.edge import (
     FragmentationConfig,
-    build_geometry_cases,
     prepare_problem,
     reconstruct_region,
-    run_geometry_suite,
 )
 from tests.fixtures.layout_factory import write_advanced_layout
 
@@ -31,10 +30,10 @@ def test_deterministic_geometry_cases_are_exact_and_bounded(name: str) -> None:
     problem = prepare_problem(_batch(build_geometry_cases()[name], layer), layer,
                               FragmentationConfig(8, 25, 12))
     zero = np.zeros(problem.segments.segment_count)
-    rebuilt = reconstruct_region(problem.segments, zero, problem.config)
+    rebuilt = reconstruct_region(problem, zero)
     assert (rebuilt ^ problem.physical_mask.region).area() == 0
-    assert problem.segments.materialize().lengths.max() <= 25 + 1e-12
-    assert len(np.unique(problem.segments.keys, axis=0)) == problem.segments.segment_count
+    geometry = problem.segments.materialize()
+    assert np.linalg.norm(geometry.ends - geometry.starts, axis=1).max() <= 25 + 1e-12
     np.testing.assert_allclose(np.linalg.norm(problem.segments.edge_normals, axis=1), 1.0)
 
 
@@ -50,8 +49,7 @@ def test_seeded_manhattan_unions_keep_exact_physical_boundary() -> None:
             region.insert(kdb.Box(int(left), int(bottom), int(left + width),
                                   int(bottom + height)))
         problem = prepare_problem(_batch(region, layer), layer, config)
-        rebuilt = reconstruct_region(problem.segments,
-                                     np.zeros(problem.segments.segment_count), config)
+        rebuilt = reconstruct_region(problem, np.zeros(problem.segments.segment_count))
         assert (rebuilt ^ problem.physical_mask.region).area() == 0
 
 
@@ -76,7 +74,6 @@ def test_hierarchy_path_array_rotation_and_mirror_reach_mbopc(tmp_path: Path) ->
         # Region 仍由打开的 KLayout 数据库持有时完成规范化；问题对象
         # 随后只依赖自己的 Region 副本和 NumPy 紧凑数组，可脱离源文件复用。
         problem = prepare_problem(batch, layer, FragmentationConfig(5, 20, 8))
-    rebuilt = reconstruct_region(problem.segments,
-                                 np.zeros(problem.segments.segment_count), problem.config)
+    rebuilt = reconstruct_region(problem, np.zeros(problem.segments.segment_count))
     assert problem.physical_mask.contours.polygon_count > 1
     assert (rebuilt ^ problem.physical_mask.region).area() == 0

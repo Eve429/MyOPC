@@ -13,7 +13,7 @@ from evaluation import evaluate_edge_probes, evaluate_process_window
 from geometry import ContourBatch, contours_to_region
 from lithography import ICCAD13Lithography
 from opc.errors import ReconstructionError
-from opc.input.edge import MBOPCProblem, reconstruct_contours
+from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_contours
 from opc.input.raster import ownership_canvas, rasterize_region_canvas
 
 from .types import IterationRecord, SimpleMBOPCConfig, SimpleMBOPCResult
@@ -188,8 +188,8 @@ def _preserves_reference_topology(reference: ContourBatch,
 def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
              config: SimpleMBOPCConfig) -> SimpleMBOPCResult:
     """以 tile batch 评价当前状态，并在轮次屏障后统一发布 owner 更新。"""
-    if config.max_displacement_dbu > problem.config.max_displacement_dbu + 1e-12:
-        raise ValueError("求解器最大位移不能超过前端重建配置")
+    if config.canvas > model.config.canvas:
+        raise ValueError("求解器 tile canvas 不能超过光刻模型 canvas")
     cores = problem.ownership.cores
     for core in cores:
         required_width = (core.context_box.width + config.pixel_dbu - 1) // config.pixel_dbu
@@ -201,7 +201,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
     reference_geometry = problem.segments.materialize()
     cache = _TargetCache(config.target_cache_bytes)
     current = np.zeros(problem.segments.segment_count, dtype=np.float64)
-    current_contours = reconstruct_contours(problem.segments, current, problem.config)
+    current_contours = reconstruct_contours(problem, current)
     # 参考 ring 绕向在普通迭代中永不变化，只计算一次；候选每轮只生成自身面积，
     # 避免对整张 reticle 的固定顶点重复做叉积归约。
     reference_topology_areas = _ring_signed_areas2(problem.segments.contours)
@@ -249,19 +249,14 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
                 indices = owners[core_index]
                 if not len(indices):
                     continue
-                geometry_indices = reference_geometry.segment_indices[indices]
-                if not np.array_equal(geometry_indices, indices):
-                    raise RuntimeError("参考几何索引与 segment 全局顺序不一致")
-                midpoints = (reference_geometry.starts[indices] +
-                             reference_geometry.ends[indices]) * 0.5
-                normals = reference_geometry.normals[indices]
+                inner, outer = edge_probe_points(
+                    reference_geometry.starts[indices], reference_geometry.ends[indices],
+                    reference_geometry.normals[indices], config.epe_distance_dbu)
                 context = cores[core_index].context_box
                 origin = np.array([context.left, context.bottom], dtype=np.float64)
                 probe_batches.append(np.full(len(indices), local_index, dtype=np.int64))
-                probe_inner.append((midpoints - normals * config.epe_distance_dbu - origin) /
-                                   config.pixel_dbu)
-                probe_outer.append((midpoints + normals * config.epe_distance_dbu - origin) /
-                                   config.pixel_dbu)
+                probe_inner.append((inner - origin) / config.pixel_dbu)
+                probe_outer.append((outer - origin) / config.pixel_dbu)
                 probe_segments.append(indices)
             if probe_segments:
                 with torch.no_grad():
@@ -270,7 +265,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
                         torch.as_tensor(np.concatenate(probe_batches), device=model.device),
                         torch.as_tensor(np.concatenate(probe_inner), device=model.device),
                         torch.as_tensor(np.concatenate(probe_outer), device=model.device),
-                        config.print_threshold)
+                        model.config.print_threshold)
                 segments = np.concatenate(probe_segments)
                 if np.any(written[segments]):
                     raise RuntimeError("一个 segment 在同一轮被多个 core 重复写入")
@@ -278,7 +273,8 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
                 directions = epe.directions.detach().cpu().numpy().astype(np.float64)
                 next_values[segments] = np.clip(
                     current[segments] + directions * step,
-                    -config.max_displacement_dbu, config.max_displacement_dbu)
+                    -problem.config.max_displacement_dbu,
+                    problem.config.max_displacement_dbu)
                 total_epe += epe.violation_count
                 total_valid += int(torch.count_nonzero(epe.valid).item())
                 total_ambiguous += int(torch.count_nonzero(epe.ambiguous).item())
@@ -294,8 +290,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
         rejected = 0
         if iteration < config.iterations - 1 and moved:
             try:
-                candidate_contours = reconstruct_contours(
-                    problem.segments, next_values, problem.config)
+                candidate_contours = reconstruct_contours(problem, next_values)
                 if not _preserves_reference_topology(
                         problem.segments.contours, candidate_contours,
                         reference_topology_areas):

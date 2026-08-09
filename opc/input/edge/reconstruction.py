@@ -8,7 +8,7 @@ import numpy as np
 from geometry import ContourBatch, contours_to_region, validate_contours
 from opc.errors import ReconstructionError
 
-from .types import FragmentationConfig, SegmentBatch
+from .types import FragmentationConfig, MBOPCProblem, SegmentBatch
 
 
 def _validated_displacements(segments: SegmentBatch, displacements: object,
@@ -24,9 +24,9 @@ def _validated_displacements(segments: SegmentBatch, displacements: object,
     return values
 
 
-def reconstruct_contours(segments: SegmentBatch, displacements: object,
-                         config: FragmentationConfig) -> ContourBatch:
+def reconstruct_contours(problem: MBOPCProblem, displacements: object) -> ContourBatch:
     """批量计算 junction，并重建保留 polygon/hole 拓扑的整数轮廓。"""
+    segments, config = problem.segments, problem.config
     values = _validated_displacements(segments, displacements, config)
     geometry = segments.materialize(values)
     count = segments.segment_count
@@ -103,10 +103,9 @@ def reconstruct_contours(segments: SegmentBatch, displacements: object,
     return contours
 
 
-def reconstruct_region(segments: SegmentBatch, displacements: object,
-                       config: FragmentationConfig) -> kdb.Region:
+def reconstruct_region(problem: MBOPCProblem, displacements: object) -> kdb.Region:
     """把重建轮廓转换为 KLayout Region，并拒绝原生无效 Polygon。"""
-    region = contours_to_region(reconstruct_contours(segments, displacements, config))
+    region = contours_to_region(reconstruct_contours(problem, displacements))
     if not region.has_valid_polygons():
         raise ReconstructionError("reconstructed region contains invalid polygons")
     return region

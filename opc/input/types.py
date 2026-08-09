@@ -1,4 +1,4 @@
-"""OPC 方法共享的 core 网格与边界采样批量数据契约。"""
+"""OPC 方法共享的规则 core 网格数据契约。"""
 
 from __future__ import annotations
 
@@ -119,50 +119,3 @@ class RectilinearCoreGrid:
         owners = np.full(len(coords), -1, dtype=np.int32)
         owners[valid] = (rows[valid] * self.column_count + columns[valid]).astype(np.int32)
         return owners
-
-
-@dataclass(frozen=True, slots=True)
-class BoundarySampleTemplate:
-    """不含实际坐标、可在多轮优化中复用的边界采样模板。"""
-
-    line_indices: Int32Array
-    tangent_positions: FloatArray
-    normal_offsets: FloatArray
-
-    def __post_init__(self) -> None:
-        """统一模板数组并验证切向位置位于闭区间内。"""
-        indices = _vector(self.line_indices, np.dtype(np.int32), "line_indices")
-        tangents = _vector(self.tangent_positions, np.dtype(np.float64), "tangent_positions")
-        offsets = _vector(self.normal_offsets, np.dtype(np.float64), "normal_offsets")
-        if len(indices) != len(tangents) or len(indices) != len(offsets):
-            raise ValueError("sample template vectors must have equal length")
-        if np.any(indices < 0) or np.any((tangents < 0.0) | (tangents > 1.0)):
-            raise ValueError("sample indices and tangent positions are invalid")
-        if not np.all(np.isfinite(tangents)) or not np.all(np.isfinite(offsets)):
-            raise ValueError("sample template values must be finite")
-        object.__setattr__(self, "line_indices", indices)
-        object.__setattr__(self, "tangent_positions", tangents)
-        object.__setattr__(self, "normal_offsets", offsets)
-
-
-@dataclass(frozen=True, slots=True)
-class BoundarySampleBatch:
-    """一次物化得到的实际边界采样坐标及其模板元数据。"""
-
-    points: FloatArray
-    line_indices: Int32Array
-    tangent_positions: FloatArray
-    normal_offsets: FloatArray
-
-    def __post_init__(self) -> None:
-        """保证采样坐标与三个元数据向量严格对齐。"""
-        points = _points(self.points, "points")
-        indices = _vector(self.line_indices, np.dtype(np.int32), "line_indices")
-        tangents = _vector(self.tangent_positions, np.dtype(np.float64), "tangent_positions")
-        offsets = _vector(self.normal_offsets, np.dtype(np.float64), "normal_offsets")
-        if any(len(array) != len(points) for array in (indices, tangents, offsets)):
-            raise ValueError("sample metadata must match point count")
-        object.__setattr__(self, "points", points)
-        object.__setattr__(self, "line_indices", indices)
-        object.__setattr__(self, "tangent_positions", tangents)
-        object.__setattr__(self, "normal_offsets", offsets)

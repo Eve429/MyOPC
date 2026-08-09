@@ -84,3 +84,23 @@
 - Completed final verification: 119 repository tests passed; 75 OPC/lithography/evaluation tests reached 92% combined statement/branch coverage; Ruff, compileall, diff check, Chinese docstrings, Markdown links/fences and protected-directory checks passed.
 - Re-ran final code on full `gcd_45nm`: three rounds produced EPE 129,645 → 74,592 → 48,348, valid outputs, 271,544,320-byte CUDA peak and 84.708-second total runtime on the 4 GiB GTX 1650.
 - Synchronized development/test manuals, function-call architecture, dedicated iteration development/test reports and two SVG result diagrams; phases 23 and 24 are complete.
+- Started phase 25 after the user approved the architecture subtraction plan.
+- Locked simplification decisions: delete the stable-key/external-update chain, accept only `RectilinearCoreGrid`, retain `run_mbopc_frontend.py`, and keep index-aligned NPZ only in that frontend verifier.
+- Re-ran the pre-change full baseline with the canonical interpreter: 119 tests passed in 19.26 seconds.
+- Confirmed the implementation scope excludes all changes to `layout/` and `geometry/` and preserves unrelated worktree files.
+- Removed the boundary template/batch contracts and replaced them with one midpoint EPE probe function shared by solver and diagnostics.
+- Reduced `SegmentBatch` to normals, ring offsets, edge IDs and parametric intervals; removed persistent key, lookup, edge-length and edge-offset state plus selective materialization outputs.
+- Removed the external stable-key update module and collapsed ownership to the single vectorized `RectilinearCoreGrid` path.
+- Changed reconstruction to consume `MBOPCProblem` directly and removed duplicate solver displacement/threshold authorities.
+- Consolidated NPZ/GDS/PNG/geometry-suite code into `opc/diagnostics.py` and removed three diagnostic files from `opc/input/edge`.
+- Updated both root runners: the frontend remains and writes a key-free version-2 NPZ; the full solver no longer emits NPZ and its preview uses the exact configured EPE distance.
+- First focused regression after the contract migration passed: 67 OPC/evaluation tests in 11.56 seconds.
+- Added explicit regressions for shared-reference geometry storage and for probe distance remaining independent from corner fragmentation length.
+- Completed phases 25-26 source migration. Focused verification now passes 68 OPC/evaluation tests in 9.26 seconds; scoped Ruff and compileall both pass.
+- Full repository regression passes 118 tests in 15.31 seconds.
+- Strict synthetic benchmark passes all gates with 69.38% compact-memory saving; prepare/materialize/reconstruct all improved versus the recorded pre-refactor baseline.
+- Real `gcd_45nm` frontend verification passed with 4,830,716 persistent bytes, 161.12 ms preparation, zero reconstruction XOR and valid GDS/NPZ/PNG/JSON artifacts.
+- Visually inspected the regenerated `gcd_45nm` overlay; owner colors, probes and cross-core continuity are correct.
+- Coverage gate passes: 74 focused tests and 92% combined branch coverage across OPC/lithography/evaluation.
+- Full three-round `gcd_45nm` CUDA flow passed in 85.473 seconds with metrics bitwise-equivalent to the historical report, valid GDS/PNG/JSON, 271,544,320-byte GPU peak and no full-run NPZ.
+- 审阅交付文档后确认其仍描述已删除的稳定键/外部更新链和全流程 NPZ；开始按当前代码、测试与实测数据重写手册、调用关系和专项报告，同时保留历史设计审查文档不动。

@@ -2,36 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import numpy as np
 
 from layout import LayerSpec, RegionBatch
-from opc.input import (
-    CoreSpec,
-    RectilinearCoreGrid,
-    normalize_physical_mask,
-)
+from opc.input import RectilinearCoreGrid, normalize_physical_mask
 
 from .fragmentation import fragment_edges
-from .ownership import MidpointOwnerPolicy, OwnershipPolicy
-from .sampling import build_sample_template
+from .ownership import build_ownership
 from .types import FragmentationConfig, MBOPCProblem
 
 
 def prepare_problem(batch: RegionBatch, layer: LayerSpec, config: FragmentationConfig,
-                    cores: RectilinearCoreGrid | Sequence[CoreSpec] | None = None,
-                    tangent_positions: Sequence[float] = (0.5,),
-                    normal_offsets: Sequence[float] | None = None,
-                    ownership_policy: OwnershipPolicy | None = None) -> MBOPCProblem:
+                    grid: RectilinearCoreGrid | None = None) -> MBOPCProblem:
     """一次性准备可供多轮 MB-OPC 复用的完整前端问题。"""
     physical = normalize_physical_mask(batch, layer)
     segments = fragment_edges(physical, config)
-    if cores is None:
-        core = CoreSpec("core0", batch.query_box, batch.query_box)
-        cores = (core,)
-    policy = ownership_policy or MidpointOwnerPolicy()
-    ownership = policy.assign(segments, cores)
-    offsets = (-config.corner_length_dbu, config.corner_length_dbu)
-    template = build_sample_template(
-        segments.segment_count, tangent_positions,
-        offsets if normal_offsets is None else normal_offsets)
-    return MBOPCProblem(physical, config, segments, ownership, template)
+    if grid is None:
+        box = batch.query_box
+        # 单 core 仍走与整张 reticle 完全相同的规则网格代码，避免第二套显式 core
+        # 校验和边界语义。两条切线只分配常数级数组，不影响真实多 core 路径。
+        grid = RectilinearCoreGrid(
+            np.array([box.left, box.right], dtype=np.int64),
+            np.array([box.bottom, box.top], dtype=np.int64))
+    return MBOPCProblem(physical, config, segments, build_ownership(segments, grid))

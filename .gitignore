@@ -10,3 +10,4 @@ dist/
 
 # 本地基准测试中间结果；最终可读报告统一放入 doc/。
 .benchmarks/
+output/

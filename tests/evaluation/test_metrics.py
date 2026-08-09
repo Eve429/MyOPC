@@ -19,7 +19,6 @@ def test_process_metrics_only_accumulate_owned_pixels() -> None:
     ownership = torch.zeros_like(target, dtype=torch.bool)
     ownership[:, :, :2] = True
     metrics = evaluate_process_window(target, nominal, maximum, minimum, ownership)
-    assert metrics.pixel_count == 6
     assert metrics.l2 == pytest.approx(0.25)
     assert metrics.pvband == pytest.approx(0.25)
 

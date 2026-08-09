@@ -43,15 +43,15 @@ def _synthetic_batch(shape_count: int) -> tuple[RegionBatch, LayerSpec]:
 
 
 def _expanded_representation_bytes(segment_count: int) -> int:
-    """估算每段持久化完整几何、父字段、key 与查找索引的内存。"""
+    """估算每段持久化完整几何和父字段的内存。"""
     # 对照方案为每段保存 starts/ends(32 B)、normal(16 B)、length(8 B)、
-    # polygon/ring/edge 索引(12 B)、ordinal/count(8 B)、128-bit key(16 B)和
-    # key 查找顺序/token(16 B)。不计 Python 对象开销，因此是保守上限。
-    return segment_count * (32 + 16 + 8 + 12 + 8 + 16 + 16)
+    # polygon/ring/edge 索引(12 B)和 ordinal/count(8 B)。不计 Python
+    # 对象开销，因此仅用于比较参数化常驻数组与完全展开表示的数量级。
+    return segment_count * (32 + 16 + 8 + 12 + 8)
 
 
 def run_benchmark(shape_count: int = 5_000) -> dict[str, object]:
-    """测量准备、查 key、按需物化、零位移重建及稀疏归属。"""
+    """测量准备、坐标物化、零位移重建和稀疏归属。"""
     batch, layer = _synthetic_batch(shape_count)
     x = np.linspace(batch.query_box.left, batch.query_box.right, 9, dtype=np.int64)
     y = np.linspace(batch.query_box.bottom, batch.query_box.top, 9, dtype=np.int64)
@@ -64,17 +64,11 @@ def run_benchmark(shape_count: int = 5_000) -> dict[str, object]:
     prepare_seconds = perf_counter() - started
     rss_after_prepare = process.memory_info().rss
     segments = problem.segments
-    generator = np.random.default_rng(20260809)
-    lookup_count = min(50_000, segments.segment_count)
-    requested = generator.integers(0, segments.segment_count, size=lookup_count)
-    started = perf_counter()
-    located = segments.lookup_keys(segments.keys[requested])
-    lookup_seconds = perf_counter() - started
     started = perf_counter()
     geometry = segments.materialize()
     materialize_seconds = perf_counter() - started
     started = perf_counter()
-    reconstructed = reconstruct_region(segments, np.zeros(segments.segment_count), config)
+    reconstructed = reconstruct_region(problem, np.zeros(segments.segment_count))
     reconstruct_seconds = perf_counter() - started
     xor_area = int((reconstructed ^ problem.physical_mask.region).area())
     expanded_bytes = _expanded_representation_bytes(segments.segment_count)
@@ -92,11 +86,9 @@ def run_benchmark(shape_count: int = 5_000) -> dict[str, object]:
             "segments": segments.segment_count,
             "cores": len(problem.ownership.cores),
             "memberships": len(problem.ownership.member_segment_indices),
-            "lookup_keys": lookup_count,
         },
         "timing_ms": {
             "prepare": prepare_seconds * 1000.0,
-            "lookup": lookup_seconds * 1000.0,
             "materialize": materialize_seconds * 1000.0,
             "zero_reconstruct": reconstruct_seconds * 1000.0,
         },
@@ -107,9 +99,9 @@ def run_benchmark(shape_count: int = 5_000) -> dict[str, object]:
             "prepare_rss_delta_mib": max(0.0, rss_after_prepare - rss_before) / (1024.0 ** 2),
         },
         "verification": {
-            "lookup_exact": bool(np.array_equal(located, requested.astype(np.int32))),
             "zero_displacement_xor_area": xor_area,
-            "maximum_segment_length_dbu": float(geometry.lengths.max(initial=0.0)),
+            "maximum_segment_length_dbu": float(
+                np.linalg.norm(geometry.ends - geometry.starts, axis=1).max(initial=0.0)),
             "unowned_segments": int(np.count_nonzero(problem.ownership.owner_indices < 0)),
         },
     }
@@ -122,18 +114,16 @@ def strict_failures(result: dict[str, object]) -> list[str]:
     failures: list[str] = []
     if verification["zero_displacement_xor_area"]:
         failures.append("零位移重建 XOR 面积非零")
-    if not verification["lookup_exact"] or verification["unowned_segments"]:
-        failures.append("稳定 key 查找或 owner 完整性失败")
+    if verification["unowned_segments"]:
+        failures.append("owner 完整性失败")
     if verification["maximum_segment_length_dbu"] > 20.0 + 1e-12:
         failures.append("控制段长度超过配置上限")
-    # 保留排序 key 顺序和 token 可以让每轮更新直接 searchsorted，不重建
-    # Python dict 或排序。因此以 40% 作为内存防退化门槛，优先保障迭代速度。
-    if memory["compact_saving_ratio"] < 0.4:
-        failures.append("紧凑常驻数组相对完全展开表示节省不足 40%")
+    if memory["compact_saving_ratio"] < 0.6:
+        failures.append("紧凑常驻数组相对完全展开表示节省不足 60%")
     if timing["prepare"] > 5_000.0 or timing["zero_reconstruct"] > 5_000.0:
         failures.append("准备或零位移重建超过 5 秒")
-    if timing["lookup"] > 500.0 or timing["materialize"] > 1_000.0:
-        failures.append("批量 key 查找或坐标物化超过性能门槛")
+    if timing["materialize"] > 1_000.0:
+        failures.append("坐标物化超过性能门槛")
     if counts["memberships"] > counts["segments"] * 9:
         failures.append("稀疏 halo membership 膨胀超过每段 9 个 core")
     return failures

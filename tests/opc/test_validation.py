@@ -6,20 +6,12 @@ import klayout.db as kdb
 import numpy as np
 import pytest
 
-from layout import DbuBox
-from opc.errors import OwnershipError, ReconstructionError
-from opc.input import CoreSpec
+from opc.diagnostics import render_boundary_overlay, save_problem_npz, write_debug_gds
+from opc.errors import ReconstructionError
 from opc.input.edge import (
     FragmentationConfig,
-    MidpointOwnerPolicy,
-    SegmentUpdateBatch,
-    build_sample_template,
-    merge_owner_updates,
+    edge_probe_points,
     reconstruct_region,
-    render_boundary_overlay,
-    sample_lines,
-    save_problem_npz,
-    write_debug_gds,
 )
 
 from .test_ownership_reconstruct import _rectangle_problem
@@ -36,62 +28,22 @@ def test_fragmentation_config_rejects_invalid_values(arguments: tuple, error: ty
         FragmentationConfig(*arguments)
 
 
-def test_sampling_rejects_malformed_templates_lines_and_buffers() -> None:
-    """采样入口必须阻止广播、越界索引和错误复用缓冲区。"""
-    with pytest.raises(ValueError, match="line_count"):
-        build_sample_template(-1)
-    with pytest.raises(ValueError, match="non-empty"):
-        build_sample_template(1, (), (0,))
+def test_probe_sampling_rejects_malformed_lines_and_distance() -> None:
+    """探针入口必须阻止形状广播以及非正、非有限距离。"""
     starts = np.array([[0.0, 0.0]])
-    template = build_sample_template(2)
-    with pytest.raises(ValueError, match="unknown line"):
-        sample_lines(np.vstack((starts, starts)), np.vstack((starts, starts)),
-                     np.vstack((starts, starts)), build_sample_template(3))
     with pytest.raises(ValueError, match="equal shape"):
-        sample_lines([0, 0], starts, starts, template)
-    with pytest.raises(ValueError, match="out must"):
-        sample_lines(np.vstack((starts, starts)), np.vstack((starts, starts)),
-                     np.vstack((starts, starts)), template, np.empty((2, 2), dtype=np.float32))
+        edge_probe_points([0, 0], starts, starts, 1.0)
+    for distance in (0.0, -1.0, float("nan")):
+        with pytest.raises(ValueError, match="distance_dbu"):
+            edge_probe_points(starts, starts, starts, distance)
 
 
-def test_owner_update_rejects_unknown_duplicate_range_and_bad_base() -> None:
-    """更新汇聚必须拒绝未知 key、重复写入、越界 core 和超限位移。"""
+def test_ownership_membership_rejects_bad_core_index() -> None:
+    """规则网格必须为全部边段分配 owner，并拒绝越界 membership 查询。"""
     problem, _ = _rectangle_problem()
-    index, key = 0, problem.segments.keys[[0]]
-    owner = int(problem.ownership.owner_indices[index])
-    unknown = key.copy()
-    unknown[0, 0] ^= np.uint64(0xFFFF)
-    cases = [
-        SegmentUpdateBatch(unknown, np.array([owner]), np.array([1.0])),
-        SegmentUpdateBatch(key, np.array([99]), np.array([1.0])),
-        SegmentUpdateBatch(np.repeat(key, 2, axis=0), np.array([owner, owner]),
-                           np.array([1.0, 2.0])),
-        SegmentUpdateBatch(key, np.array([owner]),
-                           np.array([problem.config.max_displacement_dbu + 1])),
-    ]
-    for update in cases:
-        with pytest.raises(OwnershipError):
-            merge_owner_updates(problem, [update])
-    with pytest.raises(ValueError, match="base_displacements"):
-        merge_owner_updates(problem, [], np.array([np.nan]))
-    unchanged = merge_owner_updates(problem, [])
-    assert not len(unchanged.changed_segment_indices)
-
-
-def test_explicit_core_validation_and_membership_bounds() -> None:
-    """显式 core 列表必须非空、不重叠，并对访问索引严格检查。"""
-    problem, _ = _rectangle_problem()
-    policy = MidpointOwnerPolicy()
-    with pytest.raises(OwnershipError, match="at least one"):
-        policy.assign(problem.segments, ())
-    left = CoreSpec("left", DbuBox(0, 0, 60, 60), DbuBox(-5, -5, 65, 65))
-    right = CoreSpec("right", DbuBox(50, 0, 100, 60), DbuBox(45, -5, 105, 65))
-    with pytest.raises(OwnershipError, match="overlap"):
-        policy.assign(problem.segments, (left, right))
-    explicit = policy.assign(problem.segments, (
-        CoreSpec("all", DbuBox(0, 0, 100, 60), DbuBox(-10, -10, 110, 70)),))
+    assert np.all(problem.ownership.owner_indices >= 0)
     with pytest.raises(IndexError, match="core index"):
-        explicit.segments_for_core(1)
+        problem.ownership.segments_for_core(len(problem.ownership.cores))
 
 
 def test_reconstruction_and_artifacts_reject_invalid_vectors_and_paths(tmp_path: Path) -> None:
@@ -99,14 +51,14 @@ def test_reconstruction_and_artifacts_reject_invalid_vectors_and_paths(tmp_path:
     problem, config = _rectangle_problem()
     count = problem.segments.segment_count
     with pytest.raises(ValueError, match="segment count"):
-        reconstruct_region(problem.segments, np.zeros(count - 1), config)
+        reconstruct_region(problem, np.zeros(count - 1))
     invalid = np.zeros(count)
     invalid[0] = np.nan
     with pytest.raises(ReconstructionError, match="finite"):
-        reconstruct_region(problem.segments, invalid, config)
+        reconstruct_region(problem, invalid)
     invalid[0] = config.max_displacement_dbu + 1
     with pytest.raises(ReconstructionError, match="maximum"):
-        reconstruct_region(problem.segments, invalid, config)
+        reconstruct_region(problem, invalid)
     with pytest.raises(ValueError, match="displacements"):
         save_problem_npz(problem, np.zeros(count - 1), tmp_path / "bad.npz")
     with pytest.raises(ValueError, match=".gds"):
@@ -130,16 +82,10 @@ def test_visualization_rejects_bad_arrays_owners_and_limits(tmp_path: Path) -> N
                                 geometry.normals, tmp_path / "bad.png", max_dimension=10)
 
 
-def test_segment_materialization_and_update_batch_validate_shapes() -> None:
-    """紧凑 segment 批次必须在数组进入热路径前拒绝越界与形状错误。"""
+def test_segment_materialization_validates_displacement_vector() -> None:
+    """紧凑 segment 批次必须在热路径前拒绝错长和非有限位移。"""
     problem, _ = _rectangle_problem()
-    with pytest.raises(IndexError, match="out of range"):
-        problem.segments.materialize(indices=[problem.segments.segment_count])
+    with pytest.raises(ValueError, match="finite"):
+        problem.segments.materialize(np.zeros(problem.segments.segment_count - 1))
     with pytest.raises(ValueError, match="finite"):
         problem.segments.materialize(np.full(problem.segments.segment_count, np.nan))
-    with pytest.raises(ValueError, match="shape"):
-        problem.segments.lookup_keys(np.array([1, 2], dtype=np.uint64))
-    with pytest.raises(ValueError, match="equal length"):
-        SegmentUpdateBatch(problem.segments.keys[:2], np.array([0]), np.array([0.0]))
-    with pytest.raises(ValueError, match="finite"):
-        SegmentUpdateBatch(problem.segments.keys[:1], np.array([0]), np.array([np.nan]))

@@ -11,14 +11,28 @@ from .types import OwnershipBatch, SegmentBatch
 
 def build_ownership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> OwnershipBatch:
     """利用网格切线直接展开每段覆盖的有限 core 范围。"""
-    geometry = segments.materialize()
-    midpoints = (geometry.starts + geometry.ends) * 0.5
+    # ownership 只需要参考端点，不使用迭代阶段才需要的外法向。这里直接由数学边和
+    # 参数区间批量生成端点，避免 materialize 额外复制 Sx2 normals 和构造临时对象；
+    # 全部数组仍按全局 segment 顺序对齐，因此 owner 与 CSR membership 语义不变。
+    edge_ids = segments.edge_ids
+    edge_starts = segments.edges.starts[edge_ids].astype(np.float64)
+    vectors = (segments.edges.ends[edge_ids] - segments.edges.starts[edge_ids]).astype(
+        np.float64)
+    starts = edge_starts + vectors * segments.t0[:, None]
+    ends = edge_starts + vectors * segments.t1[:, None]
+    # 端点生成后立即释放两张 Sx2 中间表；否则 Python 局部引用会一直保留到 CSR
+    # 构造结束，使峰值内存反而高于旧 materialize 路径。
+    del edge_starts, vectors
+    midpoints = (starts + ends) * 0.5
     owners = grid.locate_points(midpoints)
     halo = grid.halo_dbu
-    left = np.minimum(geometry.starts[:, 0], geometry.ends[:, 0]) - halo
-    right = np.maximum(geometry.starts[:, 0], geometry.ends[:, 0]) + halo
-    bottom = np.minimum(geometry.starts[:, 1], geometry.ends[:, 1]) - halo
-    top = np.maximum(geometry.starts[:, 1], geometry.ends[:, 1]) + halo
+    left = np.minimum(starts[:, 0], ends[:, 0]) - halo
+    right = np.maximum(starts[:, 0], ends[:, 0]) + halo
+    bottom = np.minimum(starts[:, 1], ends[:, 1]) - halo
+    top = np.maximum(starts[:, 1], ends[:, 1]) + halo
+    # 后续只依赖 owner 和四条 bbox 边界，尽早释放三张 Sx2 数组，把准备阶段峰值
+    # 限制在 CSR 展开本身，而不是让几何临时量与 membership 临时量重叠常驻。
+    del starts, ends, midpoints
     # 目标 core 的 ownership box 与扩展后的 segment bbox 接触即可成为 context。
     # 对 x/y 分别定位首尾候选，再展开每段通常很小的二维 core 范围；复杂度取决于
     # 实际 halo 邻居数量，不随全局 core 总数乘法增长，也不会建立 S×C 矩阵。

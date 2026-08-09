@@ -13,7 +13,10 @@ from lithography import ICCAD13Lithography, LithographyResult
 from opc.errors import ReconstructionError
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import FragmentationConfig, prepare_problem
+from opc.input.raster import rasterize_region_canvas
 from opc.iteration.mbopc.solver import (
+    _current_tile,
+    _polygon_ids_for_core,
     _preserves_reference_topology,
     _subset_contours,
     _target_tile,
@@ -107,27 +110,64 @@ def test_all_batches_read_same_state_before_barrier_and_owner_moves_once() -> No
     assert result.records[0].rejected_segments == 0
 
 
+def test_zero_state_skips_global_and_local_contour_reconstruction(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """单轮零位移求解应共享参考轮廓，并跳过局部轮廓和 Region 差分构造。"""
+    from opc.iteration.mbopc import solver
+
+    problem, _ = _rectangle_problem()
+
+    def reject_reconstruction(*args: object, **kwargs: object) -> None:
+        """零位移热路径若触发全局或局部重建则立即失败。"""
+        raise AssertionError("零位移状态不应重建轮廓或 Region")
+
+    monkeypatch.setattr(solver, "reconstruct_contours", reject_reconstruction)
+    monkeypatch.setattr(solver, "contours_to_region", reject_reconstruction)
+    result = solver.optimize(problem, _RecordingZeroModel(), _solver_config(iterations=1))
+    assert len(result.records) == 1
+
+
+def test_zero_local_tile_preserves_unquantized_reference_raster() -> None:
+    """局部零位移快路必须保留原 current mask 覆盖率，不得偷换成 uint8 target。"""
+    problem, _ = _rectangle_problem()
+    # 参考矩形从 5 DBU 起始，4 DBU 像素会产生 1/16 等分数覆盖；这些值通常不能
+    # 被 uint8/255 精确表达，因此可以真实区分 current raster 与缓存 target。
+    config = SimpleMBOPCConfig(
+        iterations=1, initial_step_dbu=2.0, decay_every=1,
+        epe_distance_dbu=3.0, pixel_dbu=4,
+        canvas=96, batch_size=1, target_cache_bytes=1 << 20)
+    core_index = 0
+    context = problem.ownership.cores[core_index].context_box
+    expected = rasterize_region_canvas(
+        problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
+    target = _target_tile(problem, core_index, config, _TargetCache(1 << 20))
+    actual = _current_tile(
+        problem, problem.segments.contours,
+        np.zeros(problem.segments.segment_count), core_index,
+        _polygon_ids_for_core(problem, core_index), target, config)
+    assert not np.array_equal(target, expected)
+    assert np.array_equal(actual, expected)
+
+
 def test_reconstruction_failure_rolls_back_whole_round(monkeypatch: pytest.MonkeyPatch) -> None:
     """候选轮廓非法时整轮必须回滚，不能留下半个 Polygon 的局部位移。"""
     from opc.iteration.mbopc import solver
 
     problem, _ = _rectangle_problem()
-    original = solver.reconstruct_contours
     calls = 0
 
     def fail_candidate(*args: object, **kwargs: object):
-        """允许初始零位移重建，并让第一次候选发布稳定复现失败。"""
+        """让第一次候选发布稳定复现失败；零位移初态不得调用本函数。"""
         nonlocal calls
         calls += 1
-        if calls > 1:
-            raise ReconstructionError("测试候选非法")
-        return original(*args, **kwargs)
+        raise ReconstructionError("测试候选非法")
 
     monkeypatch.setattr(solver, "reconstruct_contours", fail_candidate)
     result = solver.optimize(problem, _RecordingZeroModel(), _solver_config())
     assert result.stop_reason == "no_legal_update"
     assert result.records[0].rejected_segments == problem.segments.segment_count
     assert np.count_nonzero(result.best_displacements) == 0
+    assert calls == 1
 
 
 def test_topology_guard_rejects_opposite_edge_crossing_and_hull_inside_hole() -> None:

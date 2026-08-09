@@ -115,13 +115,22 @@ def _target_tile(problem: MBOPCProblem, core_index: int,
     return compact.astype(np.float32) / 255.0
 
 
-def _current_tile(problem: MBOPCProblem, contours: ContourBatch, core_index: int,
+def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
+                  displacements: np.ndarray, core_index: int,
                   polygon_ids: np.ndarray, target: np.ndarray,
                   config: SimpleMBOPCConfig) -> np.ndarray:
     """用参考 tile 加邻近 Polygon 差分生成当前 mask，不创建完整 reticle Region。"""
     if not len(polygon_ids):
         return target.copy()
     context = problem.ownership.cores[core_index].context_box
+    members = problem.ownership.segments_for_core(core_index)
+    if not np.count_nonzero(displacements[members]):
+        # 当前 core 能看到的 ownership/halo segment 全为精确零位移时，局部图形在数学
+        # 上就是参考 Region。直接栅格化参考 Region 可跳过两次轮廓子集物化和三次
+        # KLayout Region 布尔运算。这里不能直接返回 target：target 为节省缓存内存已
+        # 量化到 uint8，原路径的 current mask 则保持浮点覆盖率，混用会改变评价结果。
+        return rasterize_region_canvas(
+            problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
     reference = contours_to_region(_subset_contours(problem.segments.contours, polygon_ids))
     current = contours_to_region(_subset_contours(contours, polygon_ids))
     local_target = problem.physical_mask.region & kdb.Region(context.to_native())
@@ -201,7 +210,9 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
     reference_geometry = problem.segments.materialize()
     cache = _TargetCache(config.target_cache_bytes)
     current = np.zeros(problem.segments.segment_count, dtype=np.float64)
-    current_contours = reconstruct_contours(problem, current)
+    # 零位移初态与 prepare_problem 保存的参考轮廓完全相同，直接共享只读 ContourBatch
+    # 即可，避免求解开始前对整张 reticle 再做一次 O(vertex+segment) 全局重建。
+    current_contours = problem.segments.contours
     # 参考 ring 绕向在普通迭代中永不变化，只计算一次；候选每轮只生成自身面积，
     # 避免对整张 reticle 的固定顶点重复做叉积归约。
     reference_topology_areas = _ring_signed_areas2(problem.segments.contours)
@@ -226,7 +237,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
                 target = _target_tile(problem, core_index, config, cache)
                 targets.append(target)
                 masks.append(_current_tile(
-                    problem, current_contours, core_index, polygon_ids[core_index],
+                    problem, current_contours, current, core_index, polygon_ids[core_index],
                     target, config))
                 core = cores[core_index]
                 ownership_masks.append(ownership_canvas(

@@ -2,11 +2,14 @@
 
 import klayout.db as kdb
 import numpy as np
+import pytest
 
 from layout import LayerSpec
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import (
     FragmentationConfig,
+    SegmentBatch,
+    build_ownership,
     prepare_problem,
     reconstruct_region,
 )
@@ -36,6 +39,24 @@ def test_cross_core_segment_has_one_owner_and_both_context_memberships() -> None
     for segment_index in crossing:
         assert int(problem.ownership.owner_indices[segment_index]) in (0, 1)
         assert int(segment_index) in left & right
+
+
+def test_ownership_does_not_materialize_unused_segment_normals(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """ownership 准备不得物化只供迭代使用的逐段法向，且结果必须保持一致。"""
+    problem, _ = _rectangle_problem()
+    expected = problem.ownership
+    grid = RectilinearCoreGrid(np.array([0, 53, 100]), np.array([0, 60]), 10)
+
+    def reject_materialization(*args: object, **kwargs: object) -> None:
+        """只要 ownership 误走完整几何物化路径就立即暴露回归。"""
+        raise AssertionError("ownership 不应调用 SegmentBatch.materialize")
+
+    monkeypatch.setattr(SegmentBatch, "materialize", reject_materialization)
+    actual = build_ownership(problem.segments, grid)
+    assert np.array_equal(actual.owner_indices, expected.owner_indices)
+    assert np.array_equal(actual.core_offsets, expected.core_offsets)
+    assert np.array_equal(actual.member_segment_indices, expected.member_segment_indices)
 
 
 def test_owner_index_update_synchronizes_all_context_views() -> None:

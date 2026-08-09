@@ -1,0 +1,17 @@
+ {
+      "version": "0.2.0",
+      "configurations": [
+          {
+              "name": "调试 run_layout_geometry",
+              "type": "debugpy",
+              "request": "launch",
+              "program": "${workspaceFolder}/run_layout_geometry.py",
+              "cwd": "${workspaceFolder}",
+              "console": "integratedTerminal",
+              "justMyCode": true,
+              "args": [
+                  "TestReticle\\simple.gds",
+              ]
+          }
+      ]
+  }

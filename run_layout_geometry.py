@@ -62,7 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """执行一次单文件、单 ROI 的完整 Layout 到 Geometry 数据流。"""
+    # 打开gds文件
     with LayoutDB.open(args.layout, top_cell=args.top) as database:
+        # 设置参数layers以及查询范围
         layers = tuple(args.layers) if args.layers else database.layers()
         query_box = DbuBox(*args.box) if args.box else database.bbox()
         if query_box is None:
@@ -116,7 +118,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if args.png or args.show_image:
             layer = layers[0]
             pixels = render_region_batch(
-                queried, layer, database.dbu_um, args.pixel_size_nm,
+                clipped, layer, database.dbu_um, args.pixel_size_nm,
                 output_path=args.png, show=args.show_image,
                 max_pixels=args.max_image_pixels)
             result["image"] = {

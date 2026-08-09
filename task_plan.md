@@ -38,6 +38,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 17. Manuals and reports | complete | Project development/test manuals plus MB-OPC development/test reports under doc |
 | 18. Performance and simplify audit | complete | Strict benchmarks, real-layout validation and removal of bug-driven/dead logic |
 | 19. Function call architecture document | complete | Mermaid call graphs, data contracts, extension boundaries and source navigation under doc |
+| 20. OPC directory responsibility split | complete | Move-only split of shared input, edge input, iteration, lithography and evaluation directories |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -51,7 +52,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Raster values equal exact polygon area coverage, including holes and partial boundary pixels.
 - Full `gcd_45nm.gds` Layer 11/0 bbox renders within the 64-million-pixel guard.
 - Rasterization uses bounded horizontal stripes and never loops over Polygon coordinates in Python.
-- Common and MB-OPC packages each reach at least 90% statement/branch coverage.
+- OPC input and edge-input packages jointly reach at least 90% statement/branch coverage.
 - GDS hole bridge edges never become physical edges or movable segments.
 - Cross-core segments have one owner and synchronized halo updates; stitched output has zero XOR loss and zero positive-area overlap.
 - The compact segment representation uses at least 40% less persistent array memory than an expanded representation while retaining reusable sorted-key indices for iteration speed.
@@ -86,6 +87,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | Repository-wide Ruff also scanned a pre-existing KLayout notebook | 1 | Kept the user notebook unchanged and used the scoped first-party Python gate; its two SIM113 findings are unrelated to this feature |
 | First MB-OPC strict benchmark missed the provisional 50% memory gate | 1 | Kept the reusable sorted-key index because update speed is the primary requirement; set a documented 40% regression floor after measuring 43.4% savings instead of deleting the hot-path index |
 | Real runner used an invalid `top` keyword and closed LayoutDB before preparation | 1 | Replaced the loader with a database-scoped query/prepare flow and added a hierarchical real-file runner regression; no copy wrapper or layout change was introduced |
+| `git mv` could not create `.git/index.lock` in the managed sandbox | 1 | No file moved; switched to workspace-local `Move-Item` and left Git rename detection for the authorized commit stage |
+| First post-move Ruff pass found two import-order issues and two omitted runner symbols | 1 | Reordered the imports manually and added the moved sampling/visualization exports to the existing runner import block |
+| Old-directory cleanup also targeted an already absent `opc/mbopc` directory | 1 | PowerShell emitted non-terminating path errors; verified both old directories are absent and both old import specs resolve to `None` |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -98,7 +102,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Raster API: `render_layout_region(LayoutDB, DbuBox, LayerSpec, pixel_size_nm=5.0, output_path=None, show=False)` returns a top-up `uint8` array.
 - Raster semantics: white means full mask coverage, black means empty, gray means exact partial area coverage; one Layer per image.
 - Raster bounds: 64,000,000 output pixels and 1,000,000 temporary pixels per native stripe by default.
-- OPC package layout: `opc.common` contains method-neutral mask/window/sampling/visualization code; `opc.mbopc` contains only control-segment behavior.
+- OPC package layout is being refined into top-level `lithography` / `evaluation`, shared `opc.input`, edge-oriented `opc.input.edge`, and replaceable `opc.iteration.<method>` responsibilities.
 - Segment storage: retain edge ID and parametric intervals; materialize repeated endpoint/normal/parent arrays only on demand.
 - Iteration model: normalize, fragment, hash and index once; later iterations update a displacement vector and dirty polygon IDs.
 - Cross-core default: midpoint unique owner plus stable-key update synchronization; alternate coordination policies remain injectable but unimplemented.

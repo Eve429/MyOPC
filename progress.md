@@ -52,7 +52,7 @@
 - Restored planning and learning context; phases 13-18 added and the OPC common foundation started.
 - Confirmed the compact parametric segment design on `gcd_45nm.gds`: 223,553 estimated segments, 10.37 MiB persistent arrays versus 25.72 MiB expanded arrays.
 - User added a hard boundary: existing `layout/` and `geometry/` must remain unchanged; any necessary modification requires stopping for explicit confirmation.
-- Added project AGENTS rules and the first `opc.common` milestone: physical mask normalization, keyhole recovery, rectilinear core grids and reusable vectorized line sampling.
+- Added the shared OPC input milestone (now `opc.input`): physical mask normalization, keyhole recovery, rectilinear core grids and reusable vectorized line sampling.
 - Common targeted checks passed (4 tests and Ruff); full regression passed 48 tests, and Git confirmed no `layout/` or `geometry/` diff.
 - Implemented compact MB-OPC fragmentation, analytic outward normals, 128-bit stable IDs, midpoint ownership, sparse halo membership, owner-only updates and jog/miter/bevel reconstruction.
 - Thirteen OPC tests and Ruff pass. Real `gcd_45nm` preparation completed in 290.01 ms with 13.79 MiB persistent segment arrays; full zero-displacement reconstruction took 960.54 ms and had XOR area zero.
@@ -66,3 +66,6 @@
 - Started phase 19: build a code-aligned Chinese function-call architecture document without changing `layout/` or `geometry/`.
 - Added `doc/function_call_architecture.md` with layered dependencies, CLI/preparation/iteration/reconstruction/output call graphs, function tables, data lifetimes, solver/ILT extension points and the current topology-safety insertion point; linked it from the development manual.
 - Verified nine Mermaid blocks, balanced code fences and all 19 relative source links; confirmed no `layout/` or `geometry/` diff and preserved the user's concurrent `.vscode/launch.json` change.
+- Started phase 20: split the current OPC input construction from future iteration methods using directory creation and file moves only; no new source or placeholder file will be introduced.
+- Completed phase 20: moved 14 existing Python files into `opc.input` / `opc.input.edge`, created the empty future iteration/lithography/evaluation directories, and updated imports plus existing manuals/reports.
+- Directory regression passed 37 OPC tests at 93% coverage and all 81 repository tests; Ruff, compileall, AST logic-equivalence, stale-import, protected-directory and Markdown-link audits also passed.

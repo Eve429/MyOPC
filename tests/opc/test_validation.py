@@ -7,19 +7,17 @@ import numpy as np
 import pytest
 
 from layout import DbuBox
-from opc.common import (
-    CoreSpec,
-    build_sample_template,
-    render_boundary_overlay,
-    sample_lines,
-)
 from opc.errors import OwnershipError, ReconstructionError
-from opc.mbopc import (
+from opc.input import CoreSpec
+from opc.input.edge import (
     FragmentationConfig,
     MidpointOwnerPolicy,
     SegmentUpdateBatch,
+    build_sample_template,
     merge_owner_updates,
     reconstruct_region,
+    render_boundary_overlay,
+    sample_lines,
     save_problem_npz,
     write_debug_gds,
 )

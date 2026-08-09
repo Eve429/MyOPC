@@ -11,11 +11,13 @@ import klayout.db as kdb
 import numpy as np
 
 from layout import CellRef, DbuBox, LayerSpec, RegionBatch
-from opc.common import RectilinearCoreGrid, render_boundary_overlay, sample_lines
+from opc.input import RectilinearCoreGrid
 
-from .frontend import prepare_problem
-from .reconstruct import reconstruct_region
+from .builder import prepare_problem
+from .reconstruction import reconstruct_region
+from .sampling import sample_lines
 from .types import FragmentationConfig
+from .visualize import render_boundary_overlay
 
 
 def build_geometry_cases() -> dict[str, kdb.Region]:

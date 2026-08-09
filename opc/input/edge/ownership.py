@@ -7,8 +7,8 @@ from typing import Protocol
 
 import numpy as np
 
-from opc.common import CoreSpec, RectilinearCoreGrid
 from opc.errors import OwnershipError
+from opc.input import CoreSpec, RectilinearCoreGrid
 
 from .types import OwnershipBatch, SegmentBatch
 

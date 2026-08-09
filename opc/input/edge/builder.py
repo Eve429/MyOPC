@@ -5,15 +5,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from layout import LayerSpec, RegionBatch
-from opc.common import (
+from opc.input import (
     CoreSpec,
     RectilinearCoreGrid,
-    build_sample_template,
     normalize_physical_mask,
 )
 
-from .fragment import fragment_edges
+from .fragmentation import fragment_edges
 from .ownership import MidpointOwnerPolicy, OwnershipPolicy
+from .sampling import build_sample_template
 from .types import FragmentationConfig, MBOPCProblem
 
 

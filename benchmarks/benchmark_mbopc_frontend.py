@@ -21,8 +21,8 @@ import numpy as np
 import psutil
 
 from layout import CellRef, DbuBox, LayerSpec, RegionBatch
-from opc.common import RectilinearCoreGrid
-from opc.mbopc import FragmentationConfig, prepare_problem, reconstruct_region
+from opc.input import RectilinearCoreGrid
+from opc.input.edge import FragmentationConfig, prepare_problem, reconstruct_region
 
 
 def _synthetic_batch(shape_count: int) -> tuple[RegionBatch, LayerSpec]:

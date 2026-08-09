@@ -10,11 +10,11 @@
 
 ### 2.1 可与 ILT 共用的能力
 
-`opc.common` 保存物理 mask、core/context 描述、边界采样模板和诊断可视化。ILT 可以直接复用这些能力，不依赖 MB-OPC 的分段位移和重建。
+`opc.input` 保存物理 mask、core/context 描述和方法无关输入契约；`opc.input.edge` 保存边界采样模板和诊断可视化。ILT 可直接复用前者，只有采用边界表示时才依赖后者。
 
-### 2.2 MB-OPC 专用能力
+### 2.2 边段输入能力
 
-`opc.mbopc` 仅包含控制段数据契约、分段策略、owner 策略、更新合并与重建。当前只定义了最小 `OwnershipPolicy` 协议，没有预建未使用的 solver/backend 层。
+`opc.input.edge` 包含控制段数据契约、分段策略、owner 策略、更新载体与重建。具体 MB-OPC 优化迭代将独立放入 `opc.iteration.mbopc`；当前目录为空，不用占位实现制造无调用抽象。
 
 ### 2.3 性能设计
 

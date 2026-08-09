@@ -78,7 +78,16 @@
 - The iteration hot path is deliberately short: `merge_owner_updates` -> `SegmentBatch.lookup_keys`, followed by `SegmentBatch.materialize` -> `sample_lines`; no layout query, mask merge, contour extraction, edge fragmentation, hash construction or owner assignment repeats.
 - Reconstruction is method-specific: `reconstruct_region` -> `reconstruct_contours` -> `SegmentBatch.materialize`/`validate_contours` -> `contours_to_region`.
 - Output is a fan-out after reconstruction: `PatchSet.add/region`, `save_problem_npz`, `write_debug_gds`, `render_boundary_overlay`, and optional `run_geometry_suite`; none of these are required by a future solver loop.
-- The shared-method boundary is `layout` + `geometry` + `opc.common`; `opc.mbopc` depends downward on them, while shared layers never import `opc.mbopc`.
+- The shared-method boundary is `layout` + `geometry` + `opc.input`; edge-oriented construction lives in `opc.input.edge`, while future concrete iteration methods depend downward from `opc.iteration.<method>`.
 - The delivered document contains 453 lines, nine Mermaid blocks and 19 verified relative source links; no link target is missing and all Markdown fences are balanced.
 - Mermaid CLI is not installed in the current environment, so validation is structural rather than a local SVG render; the diagrams use only standard `flowchart` syntax, quoted labels and subgraphs/arrows supported by common Markdown Mermaid renderers.
 - `.vscode/launch.json` has a concurrent user change adding an MB-OPC debug configuration; it is unrelated to this documentation task and must remain unstaged.
+
+## OPC Directory Responsibility Split
+- The repository has no concrete iterative solver yet: the former `opc.mbopc` files construct edge-oriented input, assign ownership, carry updates, reconstruct contours and emit diagnostics.
+- The move-only target is therefore `opc.input` for method-neutral input data and `opc.input.edge` for edge-segment input mechanics; future solvers belong under `opc.iteration.<method>`.
+- `lithography/`, `evaluation/`, `opc/iteration/` and `opc/iteration/mbopc/` may be created as empty physical directories, but Git cannot retain them until a real implementation file is added; adding placeholder files would violate the user's no-new-file constraint.
+- The user-owned `.vscode/launch.json` change and untracked `gcd_45nm.png` must remain untouched and unstaged; `layout/` and `geometry/` must have no content diff.
+- Post-move verification passed: 37 OPC tests at 93% combined statement/branch coverage, 81 full-repository tests, scoped Ruff and compileall.
+- AST comparison of the 12 non-initializer production modules found zero logic mismatch after removing imports and module docstrings; the two initializers only changed exports and names.
+- Both obsolete import specs (`opc.common`, `opc.mbopc`) now resolve to `None`; all 19 source links in the call-architecture document resolve after the move.

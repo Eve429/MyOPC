@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, RegionBatch
-from opc.mbopc import (
+from opc.input.edge import (
     FragmentationConfig,
     build_geometry_cases,
     prepare_problem,

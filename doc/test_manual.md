@@ -89,3 +89,15 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 ## 7. 新增测试规则
 
 新图形逻辑至少同时检查零位移 XOR 为 0、segment key 唯一、段长不超配置、法向为单位向量且 owner 唯一。任何 bug 修复必须留下最小回归用例，不得只用一个大 GDS 做人工观察。
+
+## 8. 目录重构回归
+
+移动 OPC 文件后必须执行以下检查：
+
+- `import opc.input`、`import opc.input.edge` 和根目录主程序导入成功。
+- `opc.common`、`opc.mbopc` 不再可导入，避免旧路径被缓存目录误保留。
+- Ruff、compileall、37 项 OPC 专项测试和 81 项全仓库测试全部通过。
+- `layout/`、`geometry/` 没有内容差异，函数体 AST 对比没有算法差异。
+- 函数调用文档中的相对源码链接全部存在。
+
+本次移动后的实测结果为：OPC 37 项通过、综合语句/分支覆盖率 93%，全仓库 81 项通过。

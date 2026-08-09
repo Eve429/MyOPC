@@ -6,7 +6,7 @@
 - 注释放在紧凑逻辑块之前，解释原因和约束，不逐行复述语法；保持项目现有紧凑式排版，不运行会大幅展开代码的自动格式化。
 
 ## 架构与性能
-- 依赖方向保持为 `layout -> geometry -> opc.common -> opc.<method>`，通用层不得反向依赖具体 OPC 方法。
+- 依赖方向保持为 `layout -> geometry -> opc.input -> opc.input.edge`；`opc.iteration.<method>` 可依赖输入层、顶层 `lithography` 和 `evaluation`，这些基础层不得反向依赖具体迭代方法。
 - 未经用户逐次确认，不得修改现有 `layout/` 和 `geometry/`；如果新功能无法仅通过公共接口实现，必须先停止并说明必要性、影响和最小改法。
 - 保留层级和局部 ROI；批量跨越 Python/KLayout 边界，避免逐 polygon、逐 edge 或逐 segment 的解释器热循环。
 - 重复迭代的数据必须缓存；诊断、PNG、GDS 和完整几何物化只在明确请求时执行。

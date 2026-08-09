@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 from geometry import render_region_batch
 from layout import CellRef, DbuBox, LayerSpec, RegionBatch
 
-from .types import BoundarySampleBatch, CoreSpec
+from ..types import BoundarySampleBatch, CoreSpec
 
 _OWNER_COLORS = (
     (255, 87, 87), (68, 204, 255), (255, 196, 64), (126, 226, 126),

@@ -7,12 +7,8 @@ import klayout.db as kdb
 import numpy as np
 
 from layout import CellRef, DbuBox, LayerSpec, RegionBatch
-from opc.common import (
-    RectilinearCoreGrid,
-    build_sample_template,
-    normalize_physical_mask,
-    sample_lines,
-)
+from opc.input import RectilinearCoreGrid, normalize_physical_mask
+from opc.input.edge import build_sample_template, sample_lines
 
 
 def _batch(region: kdb.Region, layer: LayerSpec | None = None) -> RegionBatch:

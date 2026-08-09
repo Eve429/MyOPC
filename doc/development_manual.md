@@ -14,8 +14,11 @@ MyOPC 将版图读取、物理几何和 OPC 方法前端分层，使 MB-OPC、IL
 |---|---|---|
 | `layout/` | 层级版图加载、Layer/ROI 查询、诊断 | 所有 OPC 方法 |
 | `geometry/` | Region 运算、轮廓/边数组、Patch、栅格化 | 所有 OPC 方法 |
-| `opc/common/` | 物理 mask、core/context、边界采样、标注图 | MB-OPC、ILT 及后续方法 |
-| `opc/mbopc/` | 控制段、稳定 key、owner、位移更新、轮廓重建 | MB-OPC |
+| `opc/input/` | 物理 mask、core/context 和方法无关输入契约 | MB-OPC、ILT 及后续方法 |
+| `opc/input/edge/` | 边界采样、控制段、稳定 key、owner、位移载体和轮廓重建 | 边段型 OPC 方法 |
+| `opc/iteration/<method>/` | 可独立替换的具体优化迭代；当前目录为空 | MB-OPC、ILT 等各自实现 |
+| `lithography/` | 可独立替换的光刻模型；当前目录为空 | 各类 OPC/ILT 迭代 |
+| `evaluation/` | 可独立替换的评估指标；当前目录为空 | 验证与迭代停止条件 |
 | `run_mbopc_frontend.py` | 无安装主入口和产物输出 | 人工验证/调试 |
 | `tests/opc/` | 功能、负向、集成、随机回归 | 自动验收 |
 | `benchmarks/` | 可重复性能门槛 | 性能防退化 |
@@ -34,14 +37,14 @@ MyOPC 将版图读取、物理几何和 OPC 方法前端分层，使 MB-OPC、IL
 
 ## 4. 主要公共 API
 
-### 4.1 OPC 公共层
+### 4.1 OPC 通用输入层
 
 - `normalize_physical_mask(batch, layer) -> PhysicalMask`：生成方法无关的物理覆盖集合。
 - `RectilinearCoreGrid(x_cuts, y_cuts, halo_dbu)`：定义半开内部边界和闭合外边界的规则网格。
 - `build_sample_template(...)` / `sample_lines(...)`：为 MB-OPC 和 ILT 评估共用的切向/法向采样。
 - `render_boundary_overlay(...)`：输出 mask、owner、core、法向和采样点标注 PNG。
 
-### 4.2 MB-OPC 层
+### 4.2 边段输入层
 
 - `FragmentationConfig`：角段长、最大段长、最大位移和 miter 限制。
 - `prepare_problem(...) -> MBOPCProblem`：一次完成规范化、分段、owner 和采样模板。
@@ -52,7 +55,7 @@ MyOPC 将版图读取、物理几何和 OPC 方法前端分层，使 MB-OPC、IL
 
 ## 5. 扩展新 OPC 方法
 
-ILT 或新方法应优先依赖 `opc.common`。只有当方法确实操作独立边段时才依赖 `opc.mbopc`。新 owner 规则只需实现 `OwnershipPolicy.assign`，不应把求解器、像素模型或损失函数放进归属层。
+ILT 或新方法应优先依赖 `opc.input`。只有当方法确实操作独立边段时才依赖 `opc.input.edge`。具体优化循环放入 `opc.iteration.<method>`，光刻模型和评估分别放入顶层 `lithography`、`evaluation`。新 owner 规则只需实现 `OwnershipPolicy.assign`，不应把求解器、像素模型或损失函数放进归属层。
 
 扩展时遵守以下原则：
 

@@ -7,7 +7,7 @@ from numbers import Integral
 
 import numpy as np
 
-from .types import BoundarySampleBatch, BoundarySampleTemplate
+from ..types import BoundarySampleBatch, BoundarySampleTemplate
 
 
 def build_sample_template(line_count: int, tangent_positions: Sequence[float] = (0.5,),

@@ -9,8 +9,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from geometry import ContourBatch, EdgeBatch
-from opc.common import BoundarySampleTemplate, CoreSpec, PhysicalMask
 from opc.errors import OPCError
+from opc.input import BoundarySampleTemplate, CoreSpec, PhysicalMask
 
 IntArray = NDArray[np.int64]
 Int32Array = NDArray[np.int32]

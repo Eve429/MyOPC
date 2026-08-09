@@ -5,9 +5,9 @@ import numpy as np
 import pytest
 
 from layout import LayerSpec
-from opc.common import RectilinearCoreGrid
 from opc.errors import OwnershipError
-from opc.mbopc import (
+from opc.input import RectilinearCoreGrid
+from opc.input.edge import (
     FragmentationConfig,
     SegmentUpdateBatch,
     merge_owner_updates,

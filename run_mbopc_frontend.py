@@ -16,15 +16,17 @@ import numpy as np
 from geometry import GeometryPatch, PatchSet
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, LayoutError, RegionBatch
 from opc import OPCError
-from opc.common import RectilinearCoreGrid, render_boundary_overlay, sample_lines
-from opc.mbopc import (
+from opc.input import RectilinearCoreGrid
+from opc.input.edge import (
     FragmentationConfig,
     MBOPCProblem,
     SegmentUpdateBatch,
     merge_owner_updates,
     prepare_problem,
     reconstruct_region,
+    render_boundary_overlay,
     run_geometry_suite,
+    sample_lines,
     save_problem_npz,
     write_debug_gds,
 )

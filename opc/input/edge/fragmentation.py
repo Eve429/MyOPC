@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from opc.common import PhysicalMask
+from opc.input import PhysicalMask
 
 from .types import FragmentationConfig, SegmentBatch
 

@@ -4,8 +4,8 @@ import klayout.db as kdb
 import numpy as np
 
 from layout import LayerSpec
-from opc.common import normalize_physical_mask
-from opc.mbopc import FragmentationConfig, fragment_edges
+from opc.input import normalize_physical_mask
+from opc.input.edge import FragmentationConfig, fragment_edges
 
 from .test_common import _batch
 

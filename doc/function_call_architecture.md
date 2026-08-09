@@ -6,7 +6,7 @@
 
 1. 从 `run_mbopc_frontend.py` 开始，一次完整运行会调用哪些函数？
 2. 哪些函数每个任务只执行一次，哪些函数会在 OPC 优化迭代中重复执行？
-3. `layout`、`geometry`、`opc.common` 和 `opc.mbopc` 之间通过什么数据对象衔接？
+3. `layout`、`geometry`、`opc.input` 和 `opc.input.edge` 之间通过什么数据对象衔接？
 4. 未来增加 ILT、光学模型、MB-OPC solver 或拓扑安全检查时，应该接在哪一层？
 
 图中实线箭头表示“直接调用”，虚线箭头表示“主要数据传递”或“可选调用”。
@@ -16,8 +16,11 @@
 ```mermaid
 flowchart TB
     CLI["run_mbopc_frontend.py<br/>参数解析与流程编排"]
-    MB["opc.mbopc<br/>分段、归属、更新、重建"]
-    COMMON["opc.common<br/>物理 mask、core、采样、标注"]
+    MB["opc.input.edge<br/>分段、归属、更新载体、重建"]
+    COMMON["opc.input<br/>物理 mask、core、通用输入契约"]
+    ITERATION["opc.iteration.&lt;method&gt;<br/>未来具体优化迭代"]
+    LITHOGRAPHY["lithography<br/>未来光刻模型"]
+    EVALUATION["evaluation<br/>未来评估指标"]
     GEOMETRY["geometry<br/>Region、轮廓、边、Patch、栅格"]
     LAYOUT["layout<br/>GDS/OASIS、层级、ROI、Layer"]
     KLAYOUT["KLayout C++ API"]
@@ -37,14 +40,19 @@ flowchart TB
     GEOMETRY --> KLAYOUT
     MB --> NUMPY
     COMMON --> NUMPY
+    ITERATION -.-> MB
+    ITERATION -.-> COMMON
+    ITERATION -.-> LITHOGRAPHY
+    ITERATION -.-> EVALUATION
 ```
 
 这是单向依赖：
 
 - `layout` 不知道任何 OPC 方法。
 - `geometry` 只依赖 `layout` 的坐标、Layer 和批次契约。
-- `opc.common` 可供 MB-OPC、ILT 和后续方法共用，不导入 `opc.mbopc`。
-- `opc.mbopc` 向下复用公共层，不把自己的位移/重建规则泄漏到 `geometry`。
+- `opc.input` 可供 MB-OPC、ILT 和后续方法共用，不导入边段输入或具体迭代方法。
+- `opc.input.edge` 向下复用通用输入层，不把自己的位移/重建规则泄漏到 `geometry`。
+- `opc.iteration.<method>` 可独立更换，并组合顶层 `lithography` 与 `evaluation`；三个目录当前均不含实现文件。
 - CLI 是流程编排者，不是 solver 公共 API。库调用方应从 `prepare_problem` 开始。
 
 ## 3. 一次完整主程序调用
@@ -401,7 +409,7 @@ for iteration in range(max_iterations):
 final_region = reconstruct_region(problem.segments, displacements, problem.config)
 ```
 
-实际开发时，`optical_model_and_optimizer` 不应被放入 `opc.common`；它应位于新的 solver 包中，通过 `MBOPCProblem`、`BoundarySampleBatch` 和 `SegmentUpdateBatch` 与前端交互。
+实际开发时，`optical_model_and_optimizer` 不应被放入 `opc.input`；具体循环应位于 `opc.iteration.<method>`，并通过顶层 `lithography`、`evaluation` 组合模型与指标，再用 `MBOPCProblem`、`BoundarySampleBatch` 和 `SegmentUpdateBatch` 与输入前端交互。
 
 ## 11. ILT 和其他方法的复用路径
 
@@ -425,18 +433,18 @@ ILT 如果使用像素 mask，可以在 `PhysicalMask.region` 上调用 `geometr
 | 主题 | 文件 |
 |---|---|
 | 直接运行与完整编排 | [`run_mbopc_frontend.py`](../run_mbopc_frontend.py) |
-| 可复用准备入口 | [`opc/mbopc/frontend.py`](../opc/mbopc/frontend.py) |
-| 物理 mask | [`opc/common/mask.py`](../opc/common/mask.py) |
-| core 和采样数据契约 | [`opc/common/types.py`](../opc/common/types.py) |
-| 采样物化 | [`opc/common/sampling.py`](../opc/common/sampling.py) |
-| 控制段切分 | [`opc/mbopc/fragment.py`](../opc/mbopc/fragment.py) |
-| 控制段、归属和更新数据契约 | [`opc/mbopc/types.py`](../opc/mbopc/types.py) |
-| owner 和 halo membership | [`opc/mbopc/ownership.py`](../opc/mbopc/ownership.py) |
-| owner-only 更新合并 | [`opc/mbopc/updates.py`](../opc/mbopc/updates.py) |
-| 轮廓重建 | [`opc/mbopc/reconstruct.py`](../opc/mbopc/reconstruct.py) |
-| NPZ/GDS 产物 | [`opc/mbopc/artifacts.py`](../opc/mbopc/artifacts.py) |
-| 标注可视化 | [`opc/common/visualize.py`](../opc/common/visualize.py) |
-| 多图形验证套件 | [`opc/mbopc/verification.py`](../opc/mbopc/verification.py) |
+| 可复用准备入口 | [`opc/input/edge/builder.py`](../opc/input/edge/builder.py) |
+| 物理 mask | [`opc/input/mask.py`](../opc/input/mask.py) |
+| core 和通用输入数据契约 | [`opc/input/types.py`](../opc/input/types.py) |
+| 采样物化 | [`opc/input/edge/sampling.py`](../opc/input/edge/sampling.py) |
+| 控制段切分 | [`opc/input/edge/fragmentation.py`](../opc/input/edge/fragmentation.py) |
+| 控制段、归属和更新数据契约 | [`opc/input/edge/types.py`](../opc/input/edge/types.py) |
+| owner 和 halo membership | [`opc/input/edge/ownership.py`](../opc/input/edge/ownership.py) |
+| owner-only 更新合并 | [`opc/input/edge/updates.py`](../opc/input/edge/updates.py) |
+| 轮廓重建 | [`opc/input/edge/reconstruction.py`](../opc/input/edge/reconstruction.py) |
+| NPZ/GDS 产物 | [`opc/input/edge/artifacts.py`](../opc/input/edge/artifacts.py) |
+| 标注可视化 | [`opc/input/edge/visualize.py`](../opc/input/edge/visualize.py) |
+| 多图形验证套件 | [`opc/input/edge/verification.py`](../opc/input/edge/verification.py) |
 | 层级版图生命周期 | [`layout/database.py`](../layout/database.py) |
 | ROI 局部物化 | [`layout/query.py`](../layout/query.py) |
 | Region/轮廓互转 | [`geometry/contour.py`](../geometry/contour.py) |

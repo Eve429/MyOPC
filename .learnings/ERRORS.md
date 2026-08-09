@@ -1043,3 +1043,88 @@ Resolve Unicode paths in PowerShell and pass them through an environment variabl
 - **Notes**: 后续通过符号搜索定位实现。
 
 ---
+## [ERR-20260809-032] full_reticle_shell_timeout
+
+**Logged**: 2026-08-09T17:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+首次完整 `gcd_45nm` MB-OPC 命令沿用了 10 秒 shell 超时，任务被工具提前终止。
+
+### Error
+`command timed out after 14039 milliseconds`
+
+### Context
+- 小版图验证可在数秒完成，但 870 个 tile 的整图三轮运行预计明显超过 10 秒。
+- 失败发生在工具进程管理层，不代表模型、显存或几何实现失败。
+
+### Suggested Fix
+长验证命令设置足够的进程超时，并依靠异步 cell/wait 分段回收状态，避免一次阻塞。
+
+### Metadata
+- Reproducible: yes
+- Related Files: run_mbopc.py
+
+### Resolution
+- **Resolved**: 2026-08-09T17:00:00+08:00
+- **Notes**: 后续整图运行改用 300 秒命令上限并异步等待。
+
+---
+## [ERR-20260809-033] test_manual_broad_patch_context
+
+**Logged**: 2026-08-09T17:30:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: documentation
+
+### Summary
+测试手册的大块补丁使用了与现有复合段落不完全一致的上下文，校验失败且未改文件。
+
+### Error
+`apply_patch verification failed: Failed to find expected lines in doc/test_manual.md`
+
+### Context
+- 预期的 ROI 句子实际与前一句位于同一段落，大块补丁把它当作独立锚点。
+
+### Suggested Fix
+按稳定的小节标题和短句分段应用文档补丁，不使用跨多个段落的宽泛上下文。
+
+### Metadata
+- Reproducible: yes
+- Related Files: doc/test_manual.md
+
+### Resolution
+- **Resolved**: 2026-08-09T17:30:00+08:00
+- **Notes**: 改用短锚点分段更新。
+
+---
+## [ERR-20260809-034] ripgrep_windows_path_glob
+
+**Logged**: 2026-08-09T18:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+最终审计把 `test_*mbopc*` 和 `run_*.py` 当作 rg 路径参数，在 Windows 上被解释为非法路径。
+
+### Error
+`rg: 文件名、目录名或卷标语法不正确 (os error 123)`
+
+### Context
+- PowerShell 未像预期展开这些路径模式，rg 收到包含星号的 Windows 路径。
+
+### Suggested Fix
+目录作为固定路径传入，文件模式使用 rg 的 `--glob` 参数。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/opc, run_mbopc.py
+
+### Resolution
+- **Resolved**: 2026-08-09T18:00:00+08:00
+- **Notes**: 后续审计统一使用 `rg --glob`。
+
+---

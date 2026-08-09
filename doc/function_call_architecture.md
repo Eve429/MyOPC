@@ -4,10 +4,10 @@
 
 本文档回答四个问题：
 
-1. 从 `run_mbopc_frontend.py` 开始，一次完整运行会调用哪些函数？
+1. 从 `run_mbopc.py` 开始，一次完整优化会调用哪些函数；前端验证入口与它有何区别？
 2. 哪些函数每个任务只执行一次，哪些函数会在 OPC 优化迭代中重复执行？
 3. `layout`、`geometry`、`opc.input` 和 `opc.input.edge` 之间通过什么数据对象衔接？
-4. 未来增加 ILT、光学模型、MB-OPC solver 或拓扑安全检查时，应该接在哪一层？
+4. 未来增加 ILT、替换光刻模型、输入构造或 OPC 迭代时，应该接在哪一层？
 
 图中实线箭头表示“直接调用”，虚线箭头表示“主要数据传递”或“可选调用”。
 
@@ -15,12 +15,12 @@
 
 ```mermaid
 flowchart TB
-    CLI["run_mbopc_frontend.py<br/>参数解析与流程编排"]
+    CLI["run_mbopc.py<br/>完整参数解析与流程编排"]
     MB["opc.input.edge<br/>分段、归属、更新载体、重建"]
     COMMON["opc.input<br/>物理 mask、core、通用输入契约"]
-    ITERATION["opc.iteration.&lt;method&gt;<br/>未来具体优化迭代"]
-    LITHOGRAPHY["lithography<br/>未来光刻模型"]
-    EVALUATION["evaluation<br/>未来评估指标"]
+    ITERATION["opc.iteration.mbopc<br/>当前 simple MB-OPC 迭代"]
+    LITHOGRAPHY["lithography<br/>ICCAD13 / 可替换模型"]
+    EVALUATION["evaluation<br/>L2、PVBand、EPE"]
     GEOMETRY["geometry<br/>Region、轮廓、边、Patch、栅格"]
     LAYOUT["layout<br/>GDS/OASIS、层级、ROI、Layer"]
     KLAYOUT["KLayout C++ API"]
@@ -40,10 +40,11 @@ flowchart TB
     GEOMETRY --> KLAYOUT
     MB --> NUMPY
     COMMON --> NUMPY
-    ITERATION -.-> MB
-    ITERATION -.-> COMMON
-    ITERATION -.-> LITHOGRAPHY
-    ITERATION -.-> EVALUATION
+    CLI --> ITERATION
+    ITERATION --> MB
+    ITERATION --> COMMON
+    ITERATION --> LITHOGRAPHY
+    ITERATION --> EVALUATION
 ```
 
 这是单向依赖：
@@ -52,10 +53,12 @@ flowchart TB
 - `geometry` 只依赖 `layout` 的坐标、Layer 和批次契约。
 - `opc.input` 可供 MB-OPC、ILT 和后续方法共用，不导入边段输入或具体迭代方法。
 - `opc.input.edge` 向下复用通用输入层，不把自己的位移/重建规则泄漏到 `geometry`。
-- `opc.iteration.<method>` 可独立更换，并组合顶层 `lithography` 与 `evaluation`；三个目录当前均不含实现文件。
+- `opc.iteration.<method>` 可独立更换，并组合顶层 `lithography` 与 `evaluation`；当前 simple MB-OPC、ICCAD13 和三类指标是实际调用方。
 - CLI 是流程编排者，不是 solver 公共 API。库调用方应从 `prepare_problem` 开始。
 
-## 3. 一次完整主程序调用
+## 3. 前端验证程序调用
+
+本节描述 `run_mbopc_frontend.py` 的输入/重建验证，不执行光刻迭代；完整 `run_mbopc.py` 调用见第 10 节。
 
 ```mermaid
 flowchart TD
@@ -187,32 +190,34 @@ flowchart TD
 
 ## 5. 优化迭代热路径
 
-真正的 MB-OPC solver 尚未实现，但前端已将每轮需要的调用压缩到下图的数组操作。
+当前 `opc.iteration.mbopc.optimize()` 已实现同步 owner-only 的流式 simple MB-OPC。它不通过 stable key 重排本进程内更新，而是预分配与全局 segment 对齐的 `next_values`，按 owner index 直接 scatter；stable key/`merge_owner_updates()` 继续服务跨进程提交、checkpoint 和外部方法。
 
 ```mermaid
-flowchart LR
-    SOLVER["未来 solver<br/>按 core 生成更新"]
-    UPDATE_BATCH["SegmentUpdateBatch[]"]
-    MERGE["merge_owner_updates()"]
-    LOOKUP["SegmentBatch.lookup_keys()"]
-    UPDATE_RESULT["UpdateResult<br/>displacements + dirty IDs"]
-    MATERIALIZE["SegmentBatch.materialize()"]
-    GEOMETRY["SegmentGeometry"]
-    SAMPLE["sample_lines()"]
-    SAMPLE_BATCH["BoundarySampleBatch"]
-    OPTICAL["未来光学模型/损失函数"]
-
-    SOLVER --> UPDATE_BATCH --> MERGE
-    MERGE --> LOOKUP --> UPDATE_RESULT
-    UPDATE_RESULT --> MATERIALIZE --> GEOMETRY
-    GEOMETRY --> SAMPLE --> SAMPLE_BATCH
-    SAMPLE_BATCH -.-> OPTICAL
-    OPTICAL -.-> SOLVER
+flowchart TD
+    CURRENT["current 位移 + current_contours"] --> TILE["_current_tile()<br/>仅邻近 Polygon"]
+    TARGET["_target_tile()<br/>uint8 LRU"] --> BATCH["stack 当前 batch"]
+    TILE --> BATCH
+    OWNER_PIXEL["ownership_canvas()<br/>halo=False"] --> BATCH
+    BATCH --> LITHO["ICCAD13Lithography()<br/>nominal/max/min"]
+    LITHO --> METRIC["evaluate_process_window()<br/>L2/PVBand"]
+    LITHO --> EPE["evaluate_edge_probes()<br/>-1/0/+1"]
+    EPE --> NEXT["owner index scatter 到 next_values"]
+    METRIC --> ACC["累计本轮标量"]
+    NEXT --> RELEASE["释放 batch tensors"]
+    ACC --> RELEASE
+    RELEASE --> MORE{"还有 tile?"}
+    MORE -->|是| TILE
+    MORE -->|否| REBUILD["reconstruct_contours(next_values)"]
+    REBUILD --> GUARD["ring 绕向 + hole 包含检查"]
+    GUARD -->|合法| BARRIER["轮次屏障：发布 current=next"]
+    GUARD -->|非法| ROLLBACK["整轮回滚并记录 rejected"]
 ```
+
+固定参考边中点/法向用于 EPE target 探针，当前 mask 则来自 `current_contours`。同轮所有 batch 只读同一个 `current`；只有全部 tile 结束并通过拓扑守卫，下一轮才能看到新位移。GPU 不保存整张 reticle tensor，每个 batch 之后只留下标量和 compact segment 方向。
 
 ### 5.1 `merge_owner_updates()`
 
-`merge_owner_updates()` 内部调用 `SegmentBatch.lookup_keys()`，然后依次检查：
+`merge_owner_updates()` 是外部更新批次的公共入口；当前同进程 solver 为性能直接使用已经对齐的 owner segment index。外部入口内部调用 `SegmentBatch.lookup_keys()`，然后依次检查：
 
 1. key 是否存在。
 2. 提交者 core 是否在范围内。
@@ -240,7 +245,11 @@ edge_starts + (edge_ends - edge_starts) * t0/t1
 
 `build_sample_template()` 在准备阶段预先生成 `line_indices`、切向位置和法向偏移。`sample_lines()` 每轮只做 `take` 和 NumPy 广播，并可重用调用方提供的 `out` 缓冲区。
 
-> 当前采样函数只按法向偏移坐标，不检查采样点是否穿过对面边界。例如 2 nm 线宽配置 8 nm 内偏移时，需要未来的局部间距/有效性层介入。
+`sample_lines()` 本身仍只负责坐标物化，不判断穿越；当前 solver 的 EPE 路径由 `evaluate_edge_probes()` 同时读取 target inner/outer 像素。2 nm 窄壁配 8 nm 探针时，穿入空区的长边 inner 点因 `target_inner=False` 失效，不会推动该边；靠近拐角的短段可能沿法向落入相邻壁，按其局部 target 语义独立判定。
+
+### 5.4 固定画布与缓存
+
+`rasterize_region_canvas()` 使用 KLayout 原生面积栅格，保持第 0 行对应低 Y，和探针 `(y-bottom)/pixel` 坐标一致。target tile 首次生成后量化为 uint8 放入受字节上限约束的 LRU，命中时恢复到 `[0,1]`。当前 tile 不物化完整 reticle Region，而是用 `target - reference_selected + current_selected` 只替换 context 内可能变化的 Polygon。
 
 ## 6. 轮廓重建调用链
 
@@ -275,22 +284,22 @@ flowchart TD
 
 ### 6.1 当前拓扑验证的边界
 
-`validate_contours()` 当前检查零长边、零面积环和每个 polygon 的唯一 hull；`has_valid_polygons()` 检查 KLayout 是否能表示输出 Polygon。它们尚不保证：
+公共 `validate_contours()` 检查零长边、零面积环和每个 polygon 的唯一 hull；`has_valid_polygons()` 检查 KLayout 是否能表示输出 Polygon。MB-OPC solver 在轮次发布前额外调用 `_preserves_reference_topology()`：
 
-- hole 始终完整位于原 hull 内。
-- 外边不会越过内边。
-- 矩形左边不会越过右边。
-- 新旧轮廓的拓扑关系不会改变。
+- 向量化比较参考/候选 ring 有向面积符号，拒绝矩形对边穿越造成的绕向翻转。
+- 只对实际含 hole 的 Polygon 执行 KLayout 包含检查，拒绝外轮廓越过内轮廓。
+- ring 数量、Polygon ID 与 hole 标志必须和固定参考拓扑逐项一致。
+- 任何失败都不发布局部结果，而是整轮回滚并记录 `rejected_segments`。
 
-因此未来几何安全层应该接在下列位置，而不是塞入 `layout` 或基础 `geometry` 查询中：
+这层约束属于具体 MB 位移语义，因此放在 solver 屏障而不是 `layout` 或基础 `geometry`。当前 v1 不做逐 Polygon 步长缩减；它优先保证不会提交半个 Polygon 的更新。不同 Polygon 彼此碰撞、受制造规则约束的最小宽度/间距仍属于未来 DRC/可行性检查范围，不能从现有守卫推断为已支持。
 
 ```mermaid
 flowchart LR
-    MERGE["merge_owner_updates()"] --> GUARD["未实现：<br/>MB 位移可行性/碰撞检查"]
-    GUARD -->|"接受/限幅"| MATERIALIZE["materialize() / sample_lines()"]
-    GUARD -->|"拒绝"| SOLVER["solver 缩小步长"]
-    MATERIALIZE --> RECONSTRUCT["reconstruct_region()"]
-    RECONSTRUCT --> POST_GUARD["未实现：<br/>环自交、绕向、hole 包含验证"]
+    NEXT["next_values"] --> RECONSTRUCT["reconstruct_contours()"]
+    RECONSTRUCT --> STRUCT["validate_contours()"]
+    STRUCT --> TOPO["_preserves_reference_topology()"]
+    TOPO -->|"通过"| PUBLISH["轮次屏障发布"]
+    TOPO -->|"拒绝"| ROLLBACK["整轮回滚"]
 ```
 
 ## 7. 输出与诊断调用关系
@@ -378,37 +387,38 @@ flowchart LR
 | 每问题一次 | `normalize_physical_mask` | 合并、轮廓和边界缓存 |
 | 每问题一次 | `fragment_edges` | 批量分段、法向和 key 构建 |
 | 每问题一次 | `OwnershipPolicy.assign` | 规则网格不构建 segment×core 稠密矩阵 |
-| 每迭代 | `merge_owner_updates` | 复用排序 key 索引，不建 Python dict |
-| 每光学评估 | `SegmentBatch.materialize` | 端点/法向按需物化，可只取 core/dirty 子集 |
-| 每光学评估 | `sample_lines` | 重用模板和输出缓冲区 |
-| 最终或按需 | `reconstruct_region` | 生成完整轮廓，不必放入每次光学评估 |
+| 每任务一次 | 固定参考 `SegmentBatch.materialize` | EPE 中点/法向跨轮复用 |
+| 每 target tile 首次 | `_target_tile` | uint8 LRU 有显式 CPU 字节上限 |
+| 每 tile/每轮 | `_current_tile` | `searchsorted` 只提取邻近 Polygon，不扫描全局顶点 |
+| 每 GPU batch | `ICCAD13Lithography` + evaluation | ownership 像素计分；只回传标量和方向 |
+| 每轮候选 | `reconstruct_contours` | 重建紧凑全局轮廓，不创建完整 reticle Region/PNG/GDS |
+| 每轮发布 | `_preserves_reference_topology` | 无 hole 走向量化面积路径；失败整轮回滚 |
+| 最终一次 | `reconstruct_region` | 最佳位移全局重建，不沿 core 裁 Polygon |
 | 调试或交付 | NPZ/GDS/PNG 函数 | 不进入 solver 热路径 |
 
-## 10. 如何接入真正的 MB-OPC solver
+## 10. 当前完整 MB-OPC 主调用
 
-下面是调用顺序示意，不是已实现的 solver 代码：
+根入口 `run_mbopc.py` 的 `run()` 只做编排；输入构造、光刻、评价和迭代分别保持可替换：
 
-```python
-# 任务级：只准备一次。
-problem = prepare_problem(batch, layer, config, core_grid)
-displacements = np.zeros(problem.segments.segment_count)
-sample_buffer = np.empty((len(problem.sample_template.line_indices), 2))
-
-for iteration in range(max_iterations):
-    # 只物化当前几何和采样点，不重做版图查询、合并、分段和 owner 分配。
-    geometry = problem.segments.materialize(displacements)
-    samples = sample_lines(geometry.starts, geometry.ends, geometry.normals,
-                           problem.sample_template, sample_buffer)
-    loss, core_updates = optical_model_and_optimizer(samples, problem.ownership)
-
-    # 未来应在这里插入位移可行性/碰撞限幅。
-    update_result = merge_owner_updates(problem, core_updates, displacements)
-    displacements = update_result.displacements
-
-final_region = reconstruct_region(problem.segments, displacements, problem.config)
+```mermaid
+flowchart TD
+    CLI["run_mbopc.main()"] --> RUN["run(args)"]
+    RUN --> OPEN["LayoutDB.open()"]
+    OPEN --> QUERY["query().materialize()"]
+    QUERY --> PREPARE["prepare_problem()"]
+    PREPARE --> MODEL["ICCAD13Lithography()"]
+    MODEL --> OPT["opc.iteration.mbopc.optimize()"]
+    PREPARE --> OPT
+    OPT --> RESULT["SimpleMBOPCResult"]
+    RESULT --> FINAL["reconstruct_region()<br/>全局一次"]
+    FINAL --> NPZ["save_problem_npz()"]
+    FINAL --> GDS["write_debug_gds()"]
+    FINAL -.-> PNG["--preview 时<br/>render_boundary_overlay()"]
 ```
 
-实际开发时，`optical_model_and_optimizer` 不应被放入 `opc.input`；具体循环应位于 `opc.iteration.<method>`，并通过顶层 `lithography`、`evaluation` 组合模型与指标，再用 `MBOPCProblem`、`BoundarySampleBatch` 和 `SegmentUpdateBatch` 与输入前端交互。
+`SimpleMBOPCResult.best_displacements` 对应已经实际评价过的状态，不会返回最后一轮尚未仿真的候选。评分按 `(EPE, L2, PVBand)` 字典序选择最佳轮次；报告同时保留所有轮次三项指标，不能因为 EPE 改善而隐去 PVBand 退化。
+
+若只替换 MB 迭代策略，新实现放入另一个 `opc.iteration.<method>` 并消费相同 `MBOPCProblem`；若只替换输入构造，输出仍应维持固定参考 segment、唯一 owner、context membership 和全局位移对齐契约。光刻模型继续位于顶层 `lithography`，评价位于 `evaluation`，两者不得反向依赖具体 solver。
 
 ## 11. ILT 和其他方法的复用路径
 
@@ -431,9 +441,11 @@ ILT 如果使用像素 mask，可以在 `PhysicalMask.region` 上调用 `geometr
 
 | 主题 | 文件 |
 |---|---|
-| 直接运行与完整编排 | [`run_mbopc_frontend.py`](../run_mbopc_frontend.py) |
+| 完整 MB-OPC 编排 | [`run_mbopc.py`](../run_mbopc.py) |
+| 仅前端验证编排 | [`run_mbopc_frontend.py`](../run_mbopc_frontend.py) |
 | 可复用准备入口 | [`opc/input/edge/builder.py`](../opc/input/edge/builder.py) |
 | 物理 mask | [`opc/input/mask.py`](../opc/input/mask.py) |
+| 固定画布栅格输入 | [`opc/input/raster.py`](../opc/input/raster.py) |
 | core 和通用输入数据契约 | [`opc/input/types.py`](../opc/input/types.py) |
 | 采样物化 | [`opc/input/edge/sampling.py`](../opc/input/edge/sampling.py) |
 | 控制段切分 | [`opc/input/edge/fragmentation.py`](../opc/input/edge/fragmentation.py) |
@@ -444,6 +456,10 @@ ILT 如果使用像素 mask，可以在 `PhysicalMask.region` 上调用 `geometr
 | NPZ/GDS 产物 | [`opc/input/edge/artifacts.py`](../opc/input/edge/artifacts.py) |
 | 标注可视化 | [`opc/input/edge/visualize.py`](../opc/input/edge/visualize.py) |
 | 多图形验证套件 | [`opc/input/edge/verification.py`](../opc/input/edge/verification.py) |
+| simple MB-OPC 配置/结果 | [`opc/iteration/mbopc/types.py`](../opc/iteration/mbopc/types.py) |
+| 流式同步迭代与拓扑屏障 | [`opc/iteration/mbopc/solver.py`](../opc/iteration/mbopc/solver.py) |
+| ICCAD13 Hopkins 光刻模型 | [`lithography/iccad13.py`](../lithography/iccad13.py) |
+| L2/PVBand/EPE 评价 | [`evaluation/metrics.py`](../evaluation/metrics.py) |
 | 层级版图生命周期 | [`layout/database.py`](../layout/database.py) |
 | ROI 局部物化 | [`layout/query.py`](../layout/query.py) |
 | Region/轮廓互转 | [`geometry/contour.py`](../geometry/contour.py) |
@@ -457,4 +473,4 @@ ILT 如果使用像素 mask，可以在 `PhysicalMask.region` 上调用 `geometr
 2. 阅读第 4 节，理解为什么 `prepare_problem()` 是架构中心。
 3. 阅读第 5 节，理解多轮优化时哪些数据保持不变。
 4. 阅读第 6 节，理解轮廓重建和当前拓扑安全边界。
-5. 开发 solver 时使用第 10 节作为调用骨架，并在位移合并后插入几何可行性层。
+5. 阅读第 10 节理解当前根入口；替换方法时保持输入、模型、评价和迭代的单向依赖。

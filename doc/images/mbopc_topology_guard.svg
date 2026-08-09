@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="340" viewBox="0 0 960 340">
+  <rect width="960" height="340" fill="#fbfbf8"/>
+  <text x="40" y="38" font-family="Microsoft YaHei, sans-serif" font-size="24" fill="#20252b">轮次发布前的拓扑拒绝场景</text>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="16" fill="#30363d">
+    <text x="125" y="78">矩形对边穿越</text><text x="555" y="78">外轮廓越过 hole</text>
+  </g>
+  <g fill="none" stroke="#66707a" stroke-width="3" stroke-dasharray="7 5">
+    <rect x="80" y="100" width="180" height="150"/>
+    <rect x="500" y="100" width="240" height="180"/><rect x="565" y="145" width="110" height="90"/>
+  </g>
+  <g fill="none" stroke="#e45756" stroke-width="5">
+    <path d="M290 100V250H260V100Z"/>
+    <rect x="590" y="160" width="60" height="60"/>
+  </g>
+  <g stroke="#e45756" stroke-width="7">
+    <path d="M315 112L355 152M355 112L315 152"/>
+    <path d="M775 112L815 152M815 112L775 152"/>
+  </g>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="14" fill="#4d5660">
+    <text x="70" y="300">候选 ring 绕向相对参考翻转 → 整轮回滚</text>
+    <text x="500" y="300">hole 有面积落在候选 hull 外 → 整轮回滚</text>
+  </g>
+</svg>

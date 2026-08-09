@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420">
+  <rect width="960" height="420" fill="#fbfbf8"/>
+  <text x="40" y="38" font-family="Microsoft YaHei, sans-serif" font-size="24" fill="#20252b">gcd_45nm：三轮整图 MB-OPC 指标</text>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="14" fill="#343a40">
+    <text x="70" y="82">EPE（越低越好）</text><text x="365" y="82">L2（越低越好）</text><text x="660" y="82">PVBand（本次上升）</text>
+  </g>
+  <g stroke="#c8ccd0" stroke-width="1">
+    <path d="M70 100V330H310"/><path d="M365 100V330H605"/><path d="M660 100V330H900"/>
+  </g>
+  <g fill="none" stroke-width="4">
+    <path d="M100 118 L190 208 L280 251" stroke="#e45756"/>
+    <path d="M395 113 L485 212 L575 236" stroke="#4c78a8"/>
+    <path d="M690 285 L780 223 L870 161" stroke="#f2a541"/>
+  </g>
+  <g fill="#e45756"><circle cx="100" cy="118" r="6"/><circle cx="190" cy="208" r="6"/><circle cx="280" cy="251" r="6"/></g>
+  <g fill="#4c78a8"><circle cx="395" cy="113" r="6"/><circle cx="485" cy="212" r="6"/><circle cx="575" cy="236" r="6"/></g>
+  <g fill="#f2a541"><circle cx="690" cy="285" r="6"/><circle cx="780" cy="223" r="6"/><circle cx="870" cy="161" r="6"/></g>
+  <g font-family="Consolas, monospace" font-size="12" fill="#20252b" text-anchor="middle">
+    <text x="100" y="108">129645</text><text x="190" y="198">74592</text><text x="280" y="241">48348</text>
+    <text x="395" y="103">1038629</text><text x="485" y="202">563336</text><text x="575" y="226">440251</text>
+    <text x="690" y="305">115627</text><text x="780" y="243">134541</text><text x="870" y="151">147187</text>
+  </g>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="13" fill="#555" text-anchor="middle">
+    <text x="100" y="352">轮 0</text><text x="190" y="352">轮 1</text><text x="280" y="352">轮 2</text>
+    <text x="395" y="352">轮 0</text><text x="485" y="352">轮 1</text><text x="575" y="352">轮 2</text>
+    <text x="690" y="352">轮 0</text><text x="780" y="352">轮 1</text><text x="870" y="352">轮 2</text>
+  </g>
+  <text x="40" y="395" font-family="Microsoft YaHei, sans-serif" font-size="13" fill="#666">评分按 (EPE, L2, PVBand) 字典序选择；图中三项使用独立纵轴，仅表示各自趋势。</text>
+</svg>

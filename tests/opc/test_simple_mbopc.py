@@ -12,6 +12,7 @@ from opc.errors import ReconstructionError
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import FragmentationConfig, prepare_problem
 from opc.iteration.mbopc.solver import (
+    _preserves_reference_topology,
     _subset_contours,
     _target_tile,
     _TargetCache,
@@ -64,6 +65,19 @@ def test_target_cache_hit_restores_unit_interval() -> None:
     assert float(second.max()) <= 1.0
 
 
+def test_target_lru_replaces_existing_value_and_evicts_oldest() -> None:
+    """target LRU 应正确更新字节计数，并在超限时只驱逐最旧 tile。"""
+    cache = _TargetCache(8)
+    cache.put(0, np.zeros(4, dtype=np.uint8))
+    cache.put(0, np.zeros(6, dtype=np.uint8))
+    assert cache.current_bytes == 6
+    cache.put(1, np.zeros(4, dtype=np.uint8))
+    assert list(cache.values) == [1]
+    assert cache.current_bytes == 4
+    cache.put(2, np.zeros(9, dtype=np.uint8))
+    assert list(cache.values) == [1]
+
+
 def test_contour_subset_selects_only_requested_polygon_and_all_holes() -> None:
     """局部提取应跳过无关顶点，同时完整保留目标 Polygon 的 hull 与 hole。"""
     first = kdb.Region(kdb.Box(0, 0, 20, 20))
@@ -113,6 +127,36 @@ def test_reconstruction_failure_rolls_back_whole_round(monkeypatch: pytest.Monke
     assert np.count_nonzero(result.best_displacements) == 0
 
 
+def test_topology_guard_rejects_opposite_edge_crossing_and_hull_inside_hole() -> None:
+    """发布屏障必须拒绝矩形对边穿越，以及外轮廓越过 hole 边界。"""
+    from opc.input.edge import reconstruct_contours
+
+    rectangle = kdb.Region(kdb.Box(0, 0, 20, 20))
+    rectangle_config = FragmentationConfig(2, 10, 40)
+    rectangle_problem = prepare_problem(
+        _batch(rectangle), _batch(rectangle).layers[0], rectangle_config)
+    rectangle_geometry = rectangle_problem.segments.materialize()
+    rectangle_values = np.zeros(rectangle_problem.segments.segment_count)
+    left = ((rectangle_geometry.starts[:, 0] == 0) &
+            (rectangle_geometry.ends[:, 0] == 0))
+    rectangle_values[left] = -30.0
+    crossed = reconstruct_contours(
+        rectangle_problem.segments, rectangle_values, rectangle_config)
+    assert not _preserves_reference_topology(
+        rectangle_problem.segments.contours, crossed)
+
+    hollow = (kdb.Region(kdb.Box(0, 0, 40, 40)) -
+              kdb.Region(kdb.Box(10, 10, 30, 30)))
+    hollow_config = FragmentationConfig(2, 10, 30)
+    hollow_problem = prepare_problem(_batch(hollow), _batch(hollow).layers[0], hollow_config)
+    hollow_values = np.zeros(hollow_problem.segments.segment_count)
+    segment_holes = hollow_problem.segments.edges.is_hole[hollow_problem.segments.edge_ids]
+    hollow_values[~segment_holes] = -25.0
+    inverted = reconstruct_contours(
+        hollow_problem.segments, hollow_values, hollow_config)
+    assert not _preserves_reference_topology(hollow_problem.segments.contours, inverted)
+
+
 def test_two_dbu_hollow_wall_invalid_long_edge_probes_are_not_published() -> None:
     """壁宽 2 DBU 而探针距 8 DBU 时，无效长边不得进入最终最佳位移。"""
     region = (kdb.Region(kdb.Box(0, 0, 40, 40)) -
@@ -146,3 +190,31 @@ def test_actual_iccad13_model_completes_one_streaming_round() -> None:
     assert result.records[0].valid_probes == problem.segments.segment_count
     assert np.isfinite(result.records[0].l2)
     assert np.isfinite(result.records[0].pvband)
+
+
+@pytest.mark.parametrize("overrides", [
+    {"iterations": 0}, {"pixel_dbu": 0}, {"target_cache_bytes": -1},
+    {"initial_step_dbu": float("nan")}, {"epe_distance_dbu": 0.0},
+    {"print_threshold": 1.0},
+])
+def test_iteration_config_rejects_invalid_limits(overrides: dict[str, object]) -> None:
+    """空轮次、非法内存上限和非有限/越界浮点参数必须在运行前拒绝。"""
+    values: dict[str, object] = {
+        "iterations": 1, "initial_step_dbu": 1.0, "decay_every": 1,
+        "max_displacement_dbu": 2.0, "epe_distance_dbu": 1.0,
+        "pixel_dbu": 1,
+    }
+    values.update(overrides)
+    with pytest.raises(ValueError):
+        SimpleMBOPCConfig(**values)
+
+
+def test_optimize_rejects_displacement_and_canvas_outside_frontend_contract() -> None:
+    """求解位移超过前端上限或 context 超出画布时不得开始模型计算。"""
+    problem, _ = _rectangle_problem()
+    with pytest.raises(ValueError, match="最大位移"):
+        optimize(problem, _RecordingZeroModel(), SimpleMBOPCConfig(
+            1, 1.0, 1, 9.0, 3.0, 1, canvas=96, batch_size=1))
+    with pytest.raises(ValueError, match="超过固定光刻画布"):
+        optimize(problem, _RecordingZeroModel(), SimpleMBOPCConfig(
+            1, 1.0, 1, 8.0, 3.0, 1, canvas=32, batch_size=1))

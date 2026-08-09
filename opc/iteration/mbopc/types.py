@@ -7,8 +7,6 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from geometry import ContourBatch
-
 
 @dataclass(frozen=True, slots=True)
 class SimpleMBOPCConfig:
@@ -57,10 +55,9 @@ class IterationRecord:
 
 @dataclass(frozen=True, slots=True)
 class SimpleMBOPCResult:
-    """保存最佳位移、最佳轮廓、完整轮次记录和停止原因。"""
+    """保存最佳位移、完整轮次记录、最佳轮次和停止原因。"""
 
     best_displacements: NDArray[np.float64]
-    best_contours: ContourBatch
     records: tuple[IterationRecord, ...]
     best_iteration: int
     stop_reason: str

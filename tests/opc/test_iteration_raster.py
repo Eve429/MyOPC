@@ -35,6 +35,16 @@ def test_rasterize_rejects_context_larger_than_fixed_canvas() -> None:
             kdb.Region(kdb.Box(0, 0, 20, 20)), DbuBox(0, 0, 30, 20), 10, 2)
 
 
+def test_rasterize_empty_region_and_invalid_pixel_configuration() -> None:
+    """空 Region 应返回固定零画布，非正或非整数像素配置必须拒绝。"""
+    assert not np.any(rasterize_region_canvas(
+        kdb.Region(), DbuBox(0, 0, 20, 20), 10, 2))
+    with pytest.raises(ValueError, match="正整数"):
+        rasterize_region_canvas(kdb.Region(), DbuBox(0, 0, 20, 20), 0, 2)
+    with pytest.raises(ValueError, match="正整数"):
+        rasterize_region_canvas(kdb.Region(), DbuBox(0, 0, 20, 20), 1.5, 20)
+
+
 def test_ownership_canvas_counts_only_pixel_centers_inside_core() -> None:
     """halo 只读，落入半开 core 的像素中心应恰好形成唯一计分区。"""
     owned = ownership_canvas(DbuBox(0, 0, 50, 40), DbuBox(-10, -10, 60, 50), 10, 7)
@@ -42,3 +52,9 @@ def test_ownership_canvas_counts_only_pixel_centers_inside_core() -> None:
     assert int(np.count_nonzero(owned)) == 20
     assert not np.any(owned[0])
     assert np.all(owned[1:5, 1:6])
+
+
+def test_ownership_canvas_requires_context_to_contain_all_four_sides() -> None:
+    """独立调用像素归属函数时，context 任一方向缺失都必须拒绝。"""
+    with pytest.raises(ValueError, match="四个方向"):
+        ownership_canvas(DbuBox(0, 0, 50, 40), DbuBox(-10, -10, 40, 50), 10, 7)

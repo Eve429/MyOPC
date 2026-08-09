@@ -40,8 +40,9 @@ def rasterize_region_canvas(region: kdb.Region, box: DbuBox, pixel_dbu: int,
 def ownership_canvas(core: DbuBox, context: DbuBox, pixel_dbu: int,
                      canvas: int) -> NDArray[np.bool_]:
     """按像素中心生成 core 唯一计分区域，halo 像素保持 False。"""
-    if context.left > core.left or context.bottom > core.bottom:
-        raise ValueError("context 必须从左下方向包含 core")
+    if (context.left > core.left or context.bottom > core.bottom or
+            context.right < core.right or context.top < core.top):
+        raise ValueError("context 必须从四个方向完整包含 core")
     xs = context.left + (np.arange(canvas, dtype=np.float64) + 0.5) * pixel_dbu
     ys = context.bottom + (np.arange(canvas, dtype=np.float64) + 0.5) * pixel_dbu
     x_owned = (xs >= core.left) & (xs < core.right)

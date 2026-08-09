@@ -51,7 +51,7 @@ layout -> geometry -> opc.input -> opc.iteration.mbopc
 
 ### 3.3 `OwnershipBatch`
 
-`owner_core_ids[i]` 是 segment `i` 的唯一写入者；CSR 形式的 membership 保存哪些 core 的 halo 需要只读该 segment。规则 `RectilinearCoreGrid` 采用内部半开、版图最大外边界闭合的归属规则，避免共享边界重复 owner 或最外沿无 owner。
+`owner_indices[i]` 是 segment `i` 的唯一写入 core 下标；CSR 形式的 membership 保存哪些 core 的 halo 需要只读该 segment。规则 `RectilinearCoreGrid` 采用内部半开、版图最大外边界闭合的归属规则，避免共享边界重复 owner 或最外沿无 owner。
 
 ### 3.4 `MBOPCProblem`
 
@@ -65,6 +65,10 @@ layout -> geometry -> opc.input -> opc.iteration.mbopc
 2. `fragment_edges` 按角段和最大段长向量化切分数学边；
 3. `build_ownership` 用规则网格批量计算唯一 owner 和 halo membership；
 4. 返回只读参考 problem，不预生成图片、文件或探针缓存。
+
+`build_ownership` 只需要参考端点和中点，不需要迭代阶段的逐段法向。实现直接由
+`edges + edge_ids + t0/t1` 向量化生成端点，并在展开 CSR membership 前释放端点临时表；
+不得为此调用 `SegmentBatch.materialize()`，否则会额外复制法向并抬高准备阶段峰值内存。
 
 `edge_probe_points(starts, ends, normals, distance_dbu)` 是求解器和诊断共用的唯一探针坐标实现：以当前 segment 中点为基准，`inner = midpoint - normal * distance`，`outer = midpoint + normal * distance`。探针距离来自迭代配置，不与角段长度绑定。
 
@@ -81,6 +85,12 @@ layout -> geometry -> opc.input -> opc.iteration.mbopc
 5. 保存最佳一维位移，结束后只做一次全局重建。
 
 因此“立即累计”只累计数值，不会提前移动参考边。跨 core 的同一边段只有一个 owner，其他 core 即使在 halo 中看到它也无写权限。
+
+求解开始时的零位移状态直接共享 `SegmentBatch.contours`，不执行一次无意义的全局
+`reconstruct_contours`。某个 core 的全部 context segment 仍为精确零位移时，
+`_current_tile` 直接栅格化固定参考 Region，跳过局部 contour 子集和 Region 差分。
+target 缓存为降低常驻内存使用 `uint8`，而 current mask 保留浮点面积覆盖率，因此快路
+不能直接把量化 target 当作 current mask；这一数值边界有专门回归保护。
 
 拓扑保护会拒绝 ring 绕向翻转和 hole 逃逸。当前 v1 采用整轮回滚，避免发布局部损坏图形；没有为假设中的局部恢复预建接口。
 

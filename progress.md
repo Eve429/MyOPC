@@ -124,3 +124,12 @@
 - 最终调用审计删除无调用方的 `DbuBox.overlaps` 糖衣方法；保留作为明确公共交付能力的只读 `hierarchy_summary`，并记录其保留理由。
 - 阶段 28 最终 Ruff、compileall、114 项全仓库回归和 38 项 Layout/Geometry 覆盖率复核通过；综合覆盖率 91%。
 - 最终文档/docstring/删除符号/未调用函数/用户文件/diff 审计通过；阶段 28 完成，准备提交 Layout/Geometry 精简与全部同步报告。
+- 阶段 29 开始：锁定只优化边段归属准备和零位移图形生成热路径，保持现有密集 core 网格、全局边段身份、owner/halo、轮次屏障以及最终全局重建语义不变。
+- 首次并行基线误用 Miniforge base Python，因缺少 pytest 提前失败；尚未执行生产修改，后续统一改用 `myopc` 环境解释器。
+- ownership 改为直接生成参考端点并在 CSR 前释放临时表；新增禁止调用完整 `SegmentBatch.materialize` 的回归，23 项归属/迭代定向测试通过。
+- 零位移初态直接共享参考 ContourBatch，局部未变化 core 跳过轮廓与 Region 差分；保留未量化 current raster 语义。严格 5,000 图形基准通过，prepare 为 115.55 ms。
+- 真实 `gcd_45nm` 前端验证通过：223,553 segments、2 cores、226,813 memberships，零位移 XOR/core gap/core overlap 均为 0。
+- 三轮 CUDA 整图验证通过，全部质量/探针/更新指标与历史一致；总耗时 79.117 s，结果 GDS 合法，GPU 峰值未增加。
+- 最终 Ruff、compileall 和全仓库 117 tests（19.49 s）通过；OPC/光刻/评价 77 tests、综合 statement/branch coverage 92%。
+- 代码与回归已本地提交 `56fd33d`；开发/测试手册、调用关系和两份专项报告已同步，用户 `doc/design_review.md` 保持未暂存。
+- 阶段 29 两项授权优化、详细验证、过度设计复查和交付文档全部完成；稀疏 core 方案继续保持未实施。

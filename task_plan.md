@@ -47,6 +47,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 26. Diagnostics and artifact cleanup | complete | Move explicit diagnostics out of input construction and restrict NPZ output to the frontend verifier |
 | 27. Regression, performance and reports | complete | Full geometry/solver/CLI regressions, gcd_45nm comparison, audits, reports and local milestone commits |
 | 28. Layout/geometry subtraction | complete | Removed user-authorized backend/index overdesign, unified exact ROI semantics, and passed regression/performance/full-flow gates |
+| 29. Edge preparation and zero-displacement hot paths | complete | Removed unused ownership materialization and skipped mathematically unchanged reconstruction without changing tiling semantics |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -147,3 +148,6 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - The frontend verifier remains a separate root entry point; it demonstrates input/reconstruction diagnostics without maintaining an alternate update architecture.
 - The user has now explicitly authorized layout/geometry simplification; phase 28 may modify those directories, but only after call-site evidence and with regression/performance verification.
 - Phase 28 subtraction: delete the unused uniform edge index and its bbox-only support; delete fixed-backend metadata/checks; make ROI materialization itself exact; retire the unused GeometryEngine facade while retaining native KLayout batch semantics in active callers.
+- Phase 29 scope is limited to ownership endpoint preparation and unchanged-geometry fast paths. Sparse active-core planning, macro partitioning, gradient OPC, and changes under `layout/` or `geometry/` are explicitly excluded.
+- Phase 29 planning update initially used one shared end-of-file anchor for `findings.md` and `progress.md`; the latter differed, so the atomic patch made no change. Subsequent updates use verified per-file anchors.
+- Phase 29 baseline initially invoked the Miniforge base `python`, which has no pytest module; rerun all Python checks with the repository's established `myopc` environment interpreter.

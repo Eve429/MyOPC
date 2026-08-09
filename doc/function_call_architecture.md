@@ -68,7 +68,7 @@ flowchart LR
 |---|---|---|---|
 | `normalize_physical_mask` | ROI `RegionBatch`、Layer | `PhysicalMask` | 合并覆盖、规范孔洞、一次提取轮廓和数学边 |
 | `fragment_edges` | `PhysicalMask`、`FragmentationConfig` | `SegmentBatch` | 用 edge ID 和 `t0/t1` 表示控制段，不复制每段参考端点 |
-| `build_ownership` | `SegmentBatch`、规则 grid | `OwnershipBatch` | 向量化确定唯一 owner，并建立稀疏 halo membership |
+| `build_ownership` | `SegmentBatch`、规则 grid | `OwnershipBatch` | 由参数化参考端点直接确定唯一 owner 并建立 CSR halo membership；不物化逐段法向 |
 | `prepare_problem` | 上述输入 | `MBOPCProblem` | 提供唯一公共构造入口；不产生诊断文件 |
 
 未传 grid 时，构造覆盖查询框的 1×1 `RectilinearCoreGrid`；没有另一套 explicit-core 分支。
@@ -101,9 +101,15 @@ sequenceDiagram
     participant Tile as tile/batch 构造
     participant GPU as 光刻模型
     participant Eval as 评价
+    CPU->>CPU: current=0 时共享参考 ContourBatch
     CPU->>CPU: current 复制为 next_values
     loop 每个 core batch
-        CPU->>Tile: 用同一 current 重建局部上下文
+        CPU->>Tile: 用同一 current 构造局部上下文
+        alt 本 core 的 context segment 全为零位移
+            Tile->>Tile: 直接栅格化参考 Region
+        else 存在局部位移
+            Tile->>Tile: contour 子集 + Region 差分
+        end
         Tile->>GPU: current/target/ownership tensor
         GPU->>Eval: nominal/maximum/minimum
         Eval-->>CPU: core L2/PVBand + owner EPE 方向
@@ -121,7 +127,7 @@ sequenceDiagram
 内部主要调用：
 
 1. `_target_tile` 从固定物理 mask 构造并缓存 uint8 target；
-2. `_current_tile` 根据本轮 `current` 和相关 polygon 构造当前 mask；
+2. `_current_tile` 同时接收本轮全局位移；局部全零时直接栅格化参考 Region，否则根据相关 polygon 构造当前 mask；
 3. `ICCAD13Lithography.forward` 批量生成三种工艺条件；
 4. `evaluate_process_window` 只在 core ownership 像素累计 L2/PVBand；
 5. `edge_probe_points` 生成与当前 segment 顺序对齐的 inner/outer 坐标；
@@ -129,6 +135,9 @@ sequenceDiagram
 7. `_preserves_reference_topology` 在发布前检查 ring 绕向和 hole 关系。
 
 “batch 完成后立即累计”不会提前移动边：tile 输入始终来自 `current`，更新只写 `next_values`，直到 round barrier 才可见。
+
+target LRU 保存 `uint8`，current mask 保持未量化浮点覆盖率。零位移快路只省略几何
+重建，不直接复用 target 数组，所以光刻模型输入和历史评价值不发生量化变化。
 
 ## 6. 探针和移动方向
 

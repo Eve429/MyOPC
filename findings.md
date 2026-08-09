@@ -179,3 +179,8 @@
 - 最终代码复跑通过：Ruff、compileall、全仓库 114 tests（16.03 s）；Layout/Geometry 38 tests（1.50 s）、综合 statement/branch coverage 91%。
 - 最终静态审计覆盖 72 个第一方 Python 文件和 13 份 Markdown：中文 docstring 零缺失、链接/围栏零错误、删除符号零生产引用、diff whitespace 零错误；用户 `CLAUDE.md`、历史 `design_review.md` 与 `TestReticle` 无差异。
 - 零内部生产引用只剩 `hierarchy_summary` 与 `DbuBox.intersection` 两个明确公共基础能力；前者提供只读层级快照，后者提供 planner DBU 框精确关系，均实现紧凑、无并列抽象且已有直接测试，因此有意保留。
+- 阶段 29 用户只授权两项优化：ownership 构建避免完整 `SegmentGeometry` 临时物化；零位移初态和局部未变化 core 跳过轮廓/Region 重建。稀疏活跃 core 方案暂缓，不得增加 `core_at`、改变 core 数量或修改分块 JSON 语义。
+- 11 万 segment 的 ownership 等价对照中，owner/core offsets/memberships 逐项一致；中位耗时 `40.20 -> 37.15 ms`，tracemalloc 峰值 `24.56 -> 17.85 MiB`。端点中间表必须在 CSR 展开前显式释放，否则 Python 局部引用会抵消省掉 normals 的内存收益。
+- target LRU 使用 uint8 常驻，而历史 current mask 保留浮点像素覆盖率；零位移 core 因此不能直接返回 target。当前快路直接栅格化参考 Region，只跳过轮廓子集与 Region 差分，保持原评价数值语义。
+- 零位移局部等价微基准（500 polygons/11,000 segments）像素逐项相同，中位耗时 `44.35 -> 11.06 ms`；`gcd_45nm` 三轮 CUDA 的 EPE/L2/PVBand 等全部指标与阶段 28 逐项一致，总耗时 `85.892 -> 79.117 s`，GPU 峰值仍为 271,544,320 bytes。
+- 阶段 29 最终审计覆盖 72 个第一方 Python 文件和 20 份 Markdown：中文模块/函数 docstring、链接、代码围栏、diff whitespace 均无问题；没有新增生产抽象、死函数、重复字段或异常兼容分支，`layout/`、`geometry/` 无差异。

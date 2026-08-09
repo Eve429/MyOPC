@@ -67,7 +67,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
   run_layout_geometry.py run_mbopc_frontend.py run_mbopc.py
 ```
 
-当前结果：全仓库 114 项通过；OPC/光刻/评价专项 74 项通过，综合语句/分支覆盖率 92%；Layout/Geometry 专项 38 项通过，综合覆盖率 91%。相对最初 119 项基线，先因 OPC API 减法净减 1 项，再因删除 5 个旧门面/索引用例并增加 1 个 ROI 回归净减 4 项。
+当前结果：全仓库 117 项通过；OPC/光刻/评价专项 77 项通过，综合语句/分支覆盖率 92%；Layout/Geometry 专项 38 项通过，综合覆盖率 91%。阶段 29 新增 3 项热路径回归，分别锁定 ownership 不物化法向、零位移不重建 contour/Region，以及 current mask 不被 uint8 target 偷换。
 
 ## 5. 严格性能基准
 
@@ -77,15 +77,20 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 严格门槛检查 5,000 个图形、110,000 个 segment：零位移 XOR、最大段长、owner 完整性、halo 稀疏性，以及紧凑常驻数组相对展开表示至少节省 60%。当前结果：
 
-| 指标 | 当前值 | 重构前记录 |
+| 指标 | 阶段 29 当前值 | 本轮修改前基线 |
 |---|---:|---:|
-| prepare | 125.64 ms | 168.41 ms |
-| materialize | 12.45 ms | 17.04 ms |
-| zero reconstruct | 427.83 ms | 477.95 ms |
+| prepare | 115.55 ms | 126.69 ms |
+| materialize | 12.19 ms | 12.31 ms |
+| zero reconstruct（显式 API） | 576.01 ms | 579.56 ms |
 | persistent arrays | 2.441 MiB | — |
-| 相对展开节省 | 69.38% | 43.43% |
+| 相对展开节省 | 69.38% | 69.38% |
 
 基准不再测试 key lookup，因为生产迭代直接使用数组下标且已删除该路径。
+
+补充热点等价基准：11 万 segment 的 `build_ownership` 中位耗时从 40.20 ms 降到
+37.15 ms，tracemalloc 峰值从 24.56 MiB 降到 17.85 MiB，三组归属数组逐项一致；
+500 polygons/11,000 segments 的零位移 `_current_tile` 从 44.35 ms 降到 11.06 ms，
+输出像素逐项一致。`zero reconstruct` 仍保留为显式诊断/最终输出 API，但已从求解器零位移初始化路径移除。
 
 ## 6. 图形与边界必测矩阵
 
@@ -116,7 +121,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 `gcd_45nm.gds` Layer 11/0 前端结果：1,776 polygons、21,590 edges、223,553 segments；常驻 segment 数组 4,830,716 bytes，相比旧实现 12,675,300 bytes 减少 61.89%；阶段 28 prepare 152.82 ms；重建 XOR 为 0。
 
-授权精简 Layout/Geometry 后再次执行三轮 CUDA 完整流程：870 cores、880,801 memberships；EPE `129645 -> 74592 -> 48348`，L2 `1038629.522 -> 563335.522 -> 440251.431`；GPU 峰值分配 271,544,320 bytes；总耗时 85.892 s；结果 GDS 合法且无全流程 NPZ。
+阶段 29 再次执行三轮 CUDA 完整流程：870 cores、880,801 memberships；EPE `129645 -> 74592 -> 48348`，L2 `1038629.522 -> 563335.522 -> 440251.431`；GPU 峰值分配 271,544,320 bytes；总耗时 79.117 s（阶段 28 为 85.892 s）；结果 GDS 合法且无全流程 NPZ。
 
 PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改善指标。
 

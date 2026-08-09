@@ -69,3 +69,8 @@
 - Started phase 20: split the current OPC input construction from future iteration methods using directory creation and file moves only; no new source or placeholder file will be introduced.
 - Completed phase 20: moved 14 existing Python files into `opc.input` / `opc.input.edge`, created the empty future iteration/lithography/evaluation directories, and updated imports plus existing manuals/reports.
 - Directory regression passed 37 OPC tests at 93% coverage and all 81 repository tests; Ruff, compileall, AST logic-equivalence, stale-import, protected-directory and Markdown-link audits also passed.
+- Started phase 21: add a fixed physical tile-size CLI mode while preserving the existing count-based grid mode and the DBU-only shared grid contract.
+- Added mutually exclusive `--tile-size-nm SIZE`, vectorized fixed-step cut construction, clipped final tiles, JSON tiling metadata and focused CLI regressions without changing `layout/`, `geometry/` or shared grid types.
+- Targeted testing exposed a pre-existing diagonal multi-core Patch stitch loss: zero displacement differs by 35 DBU² on the new 3×3 case, while direct clipping, PatchSet and merged output agree on the failure. Paused before modifying protected `geometry/patch.py` and requested user authorization for the minimal correction.
+- User approved changing the existing frontend so core boundaries remain computation/ownership partitions but no longer physically clip canonical vector output; phases 22-24 were added for ICCAD13, streaming MB-OPC and full-flow delivery.
+- Completed phase 21 with global canonical vector output and exact ownership-box coverage/overlap checks. The 3×3 diagonal regression now passes; 8 focused tests and Ruff passed without any `layout/` or `geometry/` change.

@@ -13,7 +13,6 @@ from typing import Any
 import klayout.db as kdb
 import numpy as np
 
-from geometry import GeometryPatch, PatchSet
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, LayoutError, RegionBatch
 from opc import OPCError
 from opc.input import RectilinearCoreGrid
@@ -50,8 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--layer", type=parse_layer, help="真实版图目标 layer/datatype")
     parser.add_argument("--box", nargs=4, type=int, metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),
                         help="可选全局 DBU 处理范围；默认使用 top bbox")
-    parser.add_argument("--grid", nargs=2, type=int, default=(2, 1), metavar=("COLUMNS", "ROWS"),
-                        help="core 网格列数和行数，默认 2 1")
+    tiling = parser.add_mutually_exclusive_group()
+    tiling.add_argument("--grid", nargs=2, type=int, default=(2, 1),
+                        metavar=("COLUMNS", "ROWS"), help="core 网格列数和行数，默认 2 1")
+    tiling.add_argument("--tile-size-nm", type=float, metavar="SIZE",
+                        help="按固定正方形边长切分 core，末列和末行自动裁到处理边界")
     parser.add_argument("--halo-nm", type=float, default=200.0, help="每个 core 的 halo，默认 200 nm")
     parser.add_argument("--corner-nm", type=float, default=16.0, help="角部段长，默认 16 nm")
     parser.add_argument("--segment-nm", type=float, default=32.0, help="最大段长，默认 32 nm")
@@ -92,6 +94,21 @@ def _axis_cuts(start: int, end: int, count: int) -> np.ndarray:
     return cuts
 
 
+def _axis_cuts_by_size(start: int, end: int, tile_size_dbu: int) -> np.ndarray:
+    """按固定 DBU 步长生成轴向 cuts，并把最后一个 tile 裁到范围终点。"""
+    if end <= start:
+        raise ValueError("core grid range must be positive")
+    if tile_size_dbu <= 0:
+        raise ValueError("tile size must be at least one DBU")
+    tile_count = (end - start + tile_size_dbu - 1) // tile_size_dbu
+    # cuts 直接用 NumPy 批量生成，不按 tile 执行 Python 循环。锚点始终是本次
+    # 处理框的左/下边界；最后一个 cut 强制等于右/上边界，因此不会越过 ROI，
+    # 也不会因版图尺寸不是 tile 整数倍而丢失最外侧窄条区域。
+    cuts = start + np.arange(tile_count + 1, dtype=np.int64) * tile_size_dbu
+    cuts[-1] = end
+    return cuts
+
+
 def _load_database_batch(args: argparse.Namespace,
                          database: LayoutDB) -> tuple[RegionBatch, LayerSpec, float]:
     """在数据库生命周期内选择 Layer、范围并物化局部批次。"""
@@ -114,11 +131,23 @@ def _prepare_input_problem(args: argparse.Namespace, batch: RegionBatch,
                                MBOPCProblem, RectilinearCoreGrid, FragmentationConfig]:
     """按 CLI 物理尺寸构造 core 网格、分段配置和独立紧凑问题。"""
     dbu_nm = dbu_um * 1000.0
-    columns, rows = args.grid
+    # 网格数量模式保持原有均分语义；物理尺寸模式只在 CLI 边界做一次 nm→DBU
+    # 换算，公共 RectilinearCoreGrid 始终处理整数坐标。两条路径最终都只产生
+    # x/y cuts，后续 owner、halo 和重建完全共用原有批量实现，不增加迭代开销。
+    if args.tile_size_nm is None:
+        columns, rows = args.grid
+        x_cuts = _axis_cuts(batch.query_box.left, batch.query_box.right, columns)
+        y_cuts = _axis_cuts(batch.query_box.bottom, batch.query_box.top, rows)
+    else:
+        if not np.isfinite(args.tile_size_nm) or args.tile_size_nm <= 0.0:
+            raise ValueError("tile-size-nm must be finite and positive")
+        tile_size_dbu = round(args.tile_size_nm / dbu_nm)
+        if tile_size_dbu <= 0:
+            raise ValueError("tile-size-nm is smaller than one layout DBU")
+        x_cuts = _axis_cuts_by_size(batch.query_box.left, batch.query_box.right, tile_size_dbu)
+        y_cuts = _axis_cuts_by_size(batch.query_box.bottom, batch.query_box.top, tile_size_dbu)
     grid = RectilinearCoreGrid(
-        _axis_cuts(batch.query_box.left, batch.query_box.right, columns),
-        _axis_cuts(batch.query_box.bottom, batch.query_box.top, rows),
-        round(args.halo_nm / dbu_nm))
+        x_cuts, y_cuts, round(args.halo_nm / dbu_nm))
     config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
                                  args.max_displacement_nm / dbu_nm)
     return prepare_problem(batch, layer, config, grid), grid, config
@@ -226,21 +255,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if (reference ^ problem.physical_mask.region).area() != 0:
         raise ValueError("零位移重建与物理参考 mask 不一致")
 
-    # 9. 验证跨 core 的拼接。每个 GeometryPatch 输入同一份移动后 Region 和
-    #    对应 core 的 ownership_box；PatchSet.add 会把 Region 裁剪到该所有权框，
-    #    因而跨边界图形会被分别提取，最后由 PatchSet.region 合并为完整目标层。
-    patches = PatchSet()
-    for core_index, core in enumerate(problem.ownership.cores):
-        patches.add(GeometryPatch(f"core-{core_index}", layer, reconstructed,
-                                  core.ownership_box))
-
-    # grid.bounds 是本次规划覆盖范围。clipped_reference 这个局部变量表示移动后
-    # Region 在网格范围内的直接裁剪结果，它是拼接结果的比较基准，并非上面的
-    # 零位移 reference。两者异或面积必须为零，才能证明跨 core 图形无缝且无重叠。
-    clipped_reference = reconstructed & kdb.Region(grid.bounds.to_native())
-    stitch_xor = (patches.region(layer) ^ clipped_reference).area()
-    if stitch_xor:
-        raise ValueError(f"跨 core 拼接 XOR 面积非零：{stitch_xor}")
+    # 9. core 只划分计算责任，最终矢量结果始终由全局位移统一重建，不能再沿
+    #    core 边界裁 Polygon。任意斜边与切线的解析交点未必位于整数 DBU，物理
+    #    裁剪会被迫增加取整顶点并改变面积；这里只校验 ownership box 对规划范围
+    #    覆盖完整且没有正面积重叠，边段唯一 owner 则已由准备阶段单独保证。
+    core_coverage = kdb.Region()
+    core_area_sum = 0
+    for core in problem.ownership.cores:
+        core_coverage.insert(core.ownership_box.to_native())
+        core_area_sum += core.ownership_box.width * core.ownership_box.height
+    core_coverage = core_coverage.merged()
+    bounds_region = kdb.Region(grid.bounds.to_native())
+    coverage_xor = (core_coverage ^ bounds_region).area()
+    overlap_area = core_area_sum - core_coverage.area()
+    if coverage_xor or overlap_area:
+        raise ValueError(
+            f"core ownership 覆盖无效：XOR={coverage_xor}，重叠面积={overlap_area}")
 
     # 10. 创建产物目录。expanduser 支持用户目录写法，resolve 固定摘要中的绝对
     #     路径，parents=True 允许一次创建缺失的父目录，exist_ok=True 支持复跑。
@@ -279,6 +309,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "source": source, "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
         "box_dbu": [batch.query_box.left, batch.query_box.bottom,
                     batch.query_box.right, batch.query_box.top],
+        "tiling": {
+            "mode": "physical_size" if args.tile_size_nm is not None else "count",
+            "columns": grid.column_count, "rows": grid.row_count,
+            "requested_tile_size_nm": args.tile_size_nm,
+        },
         "counts": {
             "polygons": problem.physical_mask.contours.polygon_count,
             "rings": problem.physical_mask.contours.ring_count,
@@ -294,7 +329,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "artifact_output": finished - rebuilt, "total": finished - started,
         },
         "verification": {
-            "zero_displacement_xor_area": 0, "stitch_xor_area": int(stitch_xor),
+            "zero_displacement_xor_area": 0,
+            "core_coverage_xor_area": int(coverage_xor),
+            "core_overlap_area": int(overlap_area),
             "reconstructed_valid": bool(reconstructed.has_valid_polygons()),
             "geometry_suite_case_count": 0 if geometry_suite is None else
             geometry_suite["case_count"],

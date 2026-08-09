@@ -18,7 +18,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 & $python run_mbopc_frontend.py
 ```
 
-无参数模式同时验证重叠、孔洞、凹角、斜边、跨 core 长边、owner 更新、采样、重建、Patch 拼接、NPZ、PNG 和 GDS，并生成 5 个多图形图集案例。
+无参数模式同时验证重叠、孔洞、凹角、斜边、跨 core 长边、owner 更新、采样、全局重建、core 覆盖、NPZ、PNG 和 GDS，并生成 5 个多图形图集案例。
 
 主产物默认位于 `.benchmarks/mbopc_frontend_demo/`：
 
@@ -37,7 +37,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
   --skip-geometry-suite --json
 ```
 
-`--skip-geometry-suite` 只跳过已独立验证的合成图集，不跳过当前版图的分段、owner、更新、重建、拼接或产物输出。处理自定义 ROI 时使用 `--box LEFT BOTTOM RIGHT TOP`，坐标单位为输入版图 DBU。
+`--skip-geometry-suite` 只跳过已独立验证的合成图集，不跳过当前版图的分段、owner、更新、全局重建、core 覆盖或产物输出。处理自定义 ROI 时使用 `--box LEFT BOTTOM RIGHT TOP`，坐标单位为输入版图 DBU。
 
 ## 4. 自动测试
 

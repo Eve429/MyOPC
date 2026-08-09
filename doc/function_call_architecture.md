@@ -80,7 +80,7 @@ flowchart TD
     MERGE --> RECON_REF["reconstruct_region(零位移)"]
     MERGE --> RECON_MOVED["reconstruct_region(当前位移)"]
 
-    RECON_MOVED --> PATCH["PatchSet.add() / region()"]
+    RECON_MOVED --> COVERAGE["core ownership 覆盖验证"]
     RECON_MOVED --> NPZ["save_problem_npz()"]
     RECON_REF --> GDS["write_debug_gds()"]
     RECON_MOVED --> GDS
@@ -88,7 +88,7 @@ flowchart TD
     SAMPLE --> PNG
     RUN -.-> SUITE["run_geometry_suite()\n可选"]
 
-    PATCH --> SUMMARY["summary.json"]
+    COVERAGE --> SUMMARY["summary.json"]
     NPZ --> SUMMARY
     GDS --> SUMMARY
     PNG --> SUMMARY
@@ -304,9 +304,8 @@ flowchart LR
     GEOMETRY["SegmentGeometry"]
     SAMPLES["BoundarySampleBatch"]
 
-    MOVED --> PATCH["PatchSet.add()"]
-    PATCH --> STITCH["PatchSet.region()"]
-    STITCH --> XOR["跨 core XOR 验证"]
+    MOVED --> VALID["全局重建有效性"]
+    PROBLEM --> COVERAGE["core 覆盖/重叠验证"]
 
     PROBLEM --> NPZ["save_problem_npz()"]
     DISPLACEMENT --> NPZ
@@ -324,7 +323,7 @@ flowchart LR
 
 | 函数 | 是否进入 solver 热路径 | 用途 |
 |---|---|---|
-| `PatchSet.add` / `region` | 否 | 按 ownership box 精确裁剪并验证跨 core 拼接 |
+| core 覆盖验证 | 否 | 验证 ownership box 无空洞、无正面积重叠；不裁剪最终 Polygon |
 | `save_problem_npz` | 否 | 保存可复现的纯数值调试状态 |
 | `write_debug_gds` | 否 | 把参考/重建 mask 分别写入两个顶层 Cell |
 | `render_boundary_overlay` | 否 | 绘制 mask、segment owner、core、法向和采样点 |
@@ -450,7 +449,7 @@ ILT 如果使用像素 mask，可以在 `PhysicalMask.region` 上调用 `geometr
 | Region/轮廓互转 | [`geometry/contour.py`](../geometry/contour.py) |
 | 轮廓提边 | [`geometry/edge.py`](../geometry/edge.py) |
 | 轮廓基础验证 | [`geometry/validate.py`](../geometry/validate.py) |
-| core Patch 裁剪与拼接 | [`geometry/patch.py`](../geometry/patch.py) |
+| 通用 Patch 输出（非正式 tile 结果） | [`geometry/patch.py`](../geometry/patch.py) |
 
 ## 13. 建议阅读顺序
 

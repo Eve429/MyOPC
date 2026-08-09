@@ -91,3 +91,15 @@
 - Post-move verification passed: 37 OPC tests at 93% combined statement/branch coverage, 81 full-repository tests, scoped Ruff and compileall.
 - AST comparison of the 12 non-initializer production modules found zero logic mismatch after removing imports and module docstrings; the two initializers only changed exports and names.
 - Both obsolete import specs (`opc.common`, `opc.mbopc`) now resolve to `None`; all 19 source links in the call-architecture document resolve after the move.
+
+## Physical Tile-Size CLI
+- Existing `--grid COLUMNS ROWS` divides the selected processing box, not unconditionally the full reticle; without `--box` that processing box is the selected top-cell bbox.
+- A grid core is the tile's unique ownership/output region. Its `halo_nm` is not another output tile: the halo is read-only context used by nearby segment membership.
+- The new mode should be `--tile-size-nm SIZE`, mutually exclusive with an explicitly supplied `--grid`; it creates square fixed-size cuts anchored at the selected box's left/bottom and clips the final column/row to the right/top boundary.
+- Unit conversion should remain in the root CLI adapter because `RectilinearCoreGrid` intentionally stores integer DBU cuts and is shared by callers that may not use nanometers.
+- The first 100 nm synthetic run generated exact cuts `x=[-20,80,180,250]`, `y=[-20,80,180,240]`, but nine per-core KLayout intersections did not reconstruct the diagonal-containing Region exactly.
+- The discrepancy exists at zero displacement (35 DBU² XOR) and after demo updates (29 DBU²), so it is not caused by the new physical-size conversion or update policy.
+- Direct manual per-box intersections and `PatchSet` produce identical loss; merging the fragments does not repair it. The failure boundary is the existing integer Region clipping of diagonal polygons across multiple ownership boxes.
+- Completing a trustworthy whole-reticle tile mode therefore requires a focused `geometry/patch.py` correction plus diagonal/multi-row/multi-column regressions. Skipping the stitch check in the runner would hide data loss and is rejected.
+- The user approved the corrected responsibility split: core boxes partition computation and ownership, while canonical vector output uses one global reconstruction. This removes the unnecessary diagonal clipping operation rather than weakening its XOR assertion, and requires no `layout/` or `geometry/` change.
+- `run_mbopc_frontend.run()` and its physical-tile regression are the only existing functions explicitly approved for this semantic correction; subsequent solver work should use new modules unless separately authorized.

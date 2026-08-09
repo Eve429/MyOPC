@@ -1,5 +1,30 @@
 # Feature Requests
 
+## [FEAT-20260809-003] physical_tile_size_cli
+
+**Logged**: 2026-08-09T22:15:00+08:00
+**Priority**: high
+**Status**: in_progress
+**Area**: backend
+
+### Requested Capability
+除按列数和行数切分外，允许用户按指定纳米边长切分整张 reticle 或当前 ROI。
+
+### User Context
+用户需要直接用物理尺寸控制 tile/core 大小，避免先根据不同版图尺寸人工换算网格列数和行数。
+
+### Complexity Estimate
+medium
+
+### Suggested Implementation
+在根 CLI 增加与 `--grid` 互斥的 `--tile-size-nm SIZE`，转换为整数 DBU cuts，末列/末行裁到处理框边界；保持 `RectilinearCoreGrid` 和下层归属逻辑不变。
+
+### Metadata
+- Frequency: first_time
+- Related Features: mbopc_shared_frontend
+
+---
+
 ## [FEAT-20260809-002] mbopc_shared_frontend
 
 **Logged**: 2026-08-09T14:30:00+08:00

@@ -42,7 +42,7 @@
 
 `run_mbopc_frontend.py` 支持无参数合成验证或 GDS/OASIS 真实文件。真实文件在 `LayoutDB` 打开期间完成物理规范化和紧凑问题构建，然后关闭源数据库，后续更新与输出不依赖源文件。
 
-主程序会自动检查零位移 XOR、Patch 拼接 XOR 和重建 Region 有效性，再以原子替换方式输出 JSON、NPZ、PNG 和 GDS。
+主程序会自动检查零位移 XOR、core ownership 覆盖/重叠和重建 Region 有效性，再以原子替换方式输出 JSON、NPZ、PNG 和 GDS。core 只划分计算责任，最终矢量结果保持全局重建，避免斜边与整数 DBU 切线相交时引入量化顶点。
 
 ## 7. 简化与 bug 审计
 

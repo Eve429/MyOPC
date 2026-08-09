@@ -39,6 +39,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 18. Performance and simplify audit | complete | Strict benchmarks, real-layout validation and removal of bug-driven/dead logic |
 | 19. Function call architecture document | complete | Mermaid call graphs, data contracts, extension boundaries and source navigation under doc |
 | 20. OPC directory responsibility split | complete | Move-only split of shared input, edge input, iteration, lithography and evaluation directories |
+| 21. Physical tile-size CLI | complete | Fixed-nm cuts plus global canonical vector output and exact core-coverage validation |
+| 22. ICCAD13 lithography and evaluation | pending | Port the used Hopkins model assets plus EPE/L2/PVBand without global GPU tensors |
+| 23. Streaming simple MB-OPC iteration | pending | Synchronous owner-only tile batches with bounded CPU/GPU memory |
+| 24. Full-flow verification and reports | pending | Synthetic, simple.gds and full gcd_45nm validation, manuals, reports and audits |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -90,6 +94,11 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | `git mv` could not create `.git/index.lock` in the managed sandbox | 1 | No file moved; switched to workspace-local `Move-Item` and left Git rename detection for the authorized commit stage |
 | First post-move Ruff pass found two import-order issues and two omitted runner symbols | 1 | Reordered the imports manually and added the moved sampling/visualization exports to the existing runner import block |
 | Old-directory cleanup also targeted an already absent `opc/mbopc` directory | 1 | PowerShell emitted non-terminating path errors; verified both old directories are absent and both old import specs resolve to `None` |
+| A documentation `rg` pattern beginning with `--grid` was parsed as an option | 1 | Repeated the read-only search with `rg --` to terminate option parsing; no files were affected |
+| First 100 nm tile-size runner regression produced 29 DBU² stitch XOR on a 3×3 grid | 1 | Fixed cuts and parser passed; diagnosing demo displacement versus existing PatchSet behavior without modifying protected `geometry/` |
+| Two phase 22 documentation patches used inexact broad contexts | 2 | No file changed; switched to short per-file exact anchors |
+| First phase 21 final diff check found one trailing space | 1 | Removed the single whitespace character; functional tests and Ruff had already passed |
+| First phase 22 planning patch used an inexact long-line context | 1 | No file changed; retried with short exact anchors instead of repeating the failed patch |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -103,8 +112,11 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Raster semantics: white means full mask coverage, black means empty, gray means exact partial area coverage; one Layer per image.
 - Raster bounds: 64,000,000 output pixels and 1,000,000 temporary pixels per native stripe by default.
 - OPC package layout is being refined into top-level `lithography` / `evaluation`, shared `opc.input`, edge-oriented `opc.input.edge`, and replaceable `opc.iteration.<method>` responsibilities.
+- CLI tiling keeps `RectilinearCoreGrid` DBU-only; physical nm-to-DBU conversion belongs in `run_mbopc_frontend.py`, with the final row/column clipped to the selected processing box.
 - Segment storage: retain edge ID and parametric intervals; materialize repeated endpoint/normal/parent arrays only on demand.
 - Iteration model: normalize, fragment, hash and index once; later iterations update a displacement vector and dirty polygon IDs.
 - Cross-core default: midpoint unique owner plus stable-key update synchronization; alternate coordination policies remain injectable but unimplemented.
 - Project-wide delivery rule: every bug fix gets a regression test followed by a dead-wrapper/branch/call-site audit.
 - Final MB-OPC audit: removed redundant persistent fragment ordinal/count arrays; retained edge keys for stable diagnostics, ring offsets for topology reconstruction, and sorted key indices for iteration speed. Both runner lifecycle helpers have distinct tested responsibilities and no bug-only compatibility branch remains.
+- Core boundaries partition computation, metric ownership and update authority; canonical vector output is reconstructed globally once and is never physically clipped by core boxes.
+- Simple MB-OPC uses synchronous `d_current/d_next`: completed GPU batches release tensors after accumulating scalars and staging owner updates, but no tile can observe `d_next` before the round barrier.

@@ -1,5 +1,66 @@
 # Errors
 
+## [ERR-20260809-027] physical_tile_multicore_stitch_xor
+
+**Logged**: 2026-08-09T22:30:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+固定 100 nm tile 在合成版图上生成 3×3 core 后，主程序拼接自检出现 29 DBU² XOR。
+
+### Error
+`ValueError: 跨 core 拼接 XOR 面积非零：29`
+
+### Context
+- `_axis_cuts_by_size(11, 36, 10)` 精确得到 `[11, 21, 31, 36]`。
+- Ruff 通过，失败发生在九个 ownership patch 拼接后的几何一致性检查。
+- `layout/`、`geometry/` 受项目规则保护，只进行只读诊断。
+
+### Suggested Fix
+分别比较零位移和示范位移、逐 core 裁剪并检查 PatchSet 语义，确定差异来源后在允许的 CLI/测试范围内修正；若必须修改 geometry，停止并请求用户确认。
+
+### Metadata
+- Reproducible: yes
+- Related Files: run_mbopc_frontend.py, tests/opc/test_artifacts_cli.py, geometry/patch.py
+
+### Resolution
+- **Resolved**: 2026-08-09T23:30:00+08:00
+- **Notes**: 用户确认 core 只负责计算/归属；正式矢量结果改为全局重建，CLI 改验 ownership box 覆盖与重叠，不再执行会量化斜边的 core Polygon 裁剪。8 个聚焦测试和 Ruff 均通过，`geometry/` 未修改。
+
+---
+
+## [ERR-20260809-026] ripgrep_pattern_option_boundary
+
+**Logged**: 2026-08-09T22:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: config
+
+### Summary
+以 `--grid` 开头的检索模式被 ripgrep 误解析为命令行选项。
+
+### Error
+`rg: unrecognized flag --grid|grid|core 网格`
+
+### Context
+- 只读文档检索把正则直接放在选项位置。
+- 前面的源码读取成功，未发生文件写入或半完成修改。
+
+### Suggested Fix
+检索可能以连字符开头的模式时，在模式前加入 `--` 结束选项解析。
+
+### Metadata
+- Reproducible: yes
+- Related Files: doc/development_manual.md, doc/test_manual.md
+
+### Resolution
+- **Resolved**: 2026-08-09T22:21:00+08:00
+- **Notes**: 改用 `rg -n -- "--grid|grid|core 网格" ...` 后检索成功。
+
+---
+
 ## [ERR-20260809-025] real_runner_database_lifetime
 
 **Logged**: 2026-08-09T18:10:00+08:00

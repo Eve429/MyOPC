@@ -35,6 +35,7 @@ def normalize_physical_mask(batch: RegionBatch, layer: LayerSpec) -> PhysicalMas
     if not region.has_valid_polygons():
         raise PhysicalMaskError("physical mask contains invalid polygons after merge")
     normalized = RegionBatch({layer: region}, batch.query_box, batch.cell)
+    # 给出具体的边缘，多边形数量、环数量、是不是hole
     contours = extract_contours(normalized)[layer]
     edges = extract_edges(contours)
     return PhysicalMask(layer, region, contours, edges, batch.query_box)

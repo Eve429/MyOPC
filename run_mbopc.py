@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, default=Path("output/mbopc"),
                         help="结果目录，默认 output/mbopc")
     parser.add_argument("--preview", action="store_true",
-                        help="额外保存带分段、法向、探针和 core 的诊断 PNG")
+                        help="额外保存带分段、法向、探针和 core 的诊断 PNG",default=True)
     parser.add_argument("--json", action="store_true", help="终端输出完整 JSON")
     return parser
 

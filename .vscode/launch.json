@@ -1,6 +1,18 @@
  {
       "version": "0.2.0",
       "configurations": [
+                  {
+              "name": "调试 run_mbopc_frontend",
+              "type": "debugpy",
+              "request": "launch",
+              "program": "${workspaceFolder}/run_mbopc_frontend.py",
+              "cwd": "${workspaceFolder}",
+              "console": "integratedTerminal",
+              "justMyCode": true,
+              "args": [
+                  "TestReticle\\JustPoly.gds",
+              ]
+          },
           {
               "name": "调试 run_layout_geometry",
               "type": "debugpy",

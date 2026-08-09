@@ -107,7 +107,8 @@ def fragment_edges(mask: PhysicalMask, config: FragmentationConfig) -> SegmentBa
     # 数学边在 ContourBatch 中与顶点一一对应且按 ring 连续，因此可直接用原始
     # ring_offsets 索引 edge_offsets，避免为每个 segment 重复保存 ring ID。
     ring_offsets = edge_offsets[mask.contours.ring_offsets]
+    # ordinal/count 已编入稳定 key，分段参数已保存为 t0/t1；构建完成后
+    # 不再常驻两列重复整数，使每轮 MB-OPC 保持更小的内存工作集。
     return SegmentBatch(mask.contours, mask.edges, lengths,
                         _outward_normals(mask, lengths), edge_keys, edge_offsets,
-                        ring_offsets, edge_ids, t0, t1, fragment_indices,
-                        fragment_counts, keys)
+                        ring_offsets, edge_ids, t0, t1, keys)

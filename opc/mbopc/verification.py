@@ -105,7 +105,9 @@ def run_geometry_suite(output_dir: str | Path, write_images: bool = True) -> dic
             "membership_count": len(problem.ownership.member_segment_indices),
             "maximum_segment_length_dbu": maximum_length,
             "zero_displacement_xor_area": xor_area,
-            "image": str(image_path) if write_images else None,
+            # JSON 只保存相对文件名，便于 doc 图集随仓库移动；Python
+            # 调用方已持有 output_dir，不需要把开发机绝对路径写入产物。
+            "image": image_path.name if write_images else None,
         })
     summary: dict[str, Any] = {
         "case_count": len(results),

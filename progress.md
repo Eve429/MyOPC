@@ -58,3 +58,8 @@
 - Thirteen OPC tests and Ruff pass. Real `gcd_45nm` preparation completed in 290.01 ms with 13.79 MiB persistent segment arrays; full zero-displacement reconstruction took 960.54 ms and had XOR area zero.
 - Completed compact MB-OPC fragmentation, stable 128-bit keys, sparse ownership, owner-only updates, reconstruction, NPZ/GDS artifacts, direct runner and five-case annotated geometry suite.
 - OPC verification now has 36 tests at 93% combined statement/branch coverage; the full repository has 80 passing tests.
+- Final full regression passed 81 tests; 37 OPC tests retain 93% combined coverage, scoped Ruff and compileall passed, and 62 first-party Python files passed the Chinese documentation scan.
+- Final strict MB benchmark passed with 110,000 segments: 168.41 ms preparation, 10.66 ms/50,000 key lookup, 17.04 ms materialization, 477.95 ms reconstruction, 43.43% compact-memory savings and zero XOR.
+- Corrected the real-file runner lifetime and verified `gcd_45nm.gds`: 223,553 segments, 12.09 MiB persistent arrays, 282.89 ms preparation, 2.951 s including all artifacts, zero reconstruction/stitch XOR.
+- Generated and visually inspected five annotated geometry cases plus the real-layout owner overlay under `doc/images/mbopc`; synchronized development/test manuals and feature reports.
+- Final overdesign audit removed redundant fragment arrays and found no remaining bug-only wrapper, compatibility branch or unused solver abstraction; `layout/` and `geometry/` remain untouched.

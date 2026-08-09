@@ -61,7 +61,7 @@ def test_geometry_suite_writes_readable_annotated_images(tmp_path: Path) -> None
     assert summary["case_count"] == 5
     assert summary["all_zero_displacement_exact"]
     for case in summary["cases"]:
-        with Image.open(case["image"]) as image:
+        with Image.open(tmp_path / case["image"]) as image:
             assert image.format == "PNG"
             assert max(image.size) >= 800
 

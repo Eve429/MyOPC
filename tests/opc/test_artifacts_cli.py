@@ -8,6 +8,7 @@ import klayout.db as kdb
 import numpy as np
 
 from run_mbopc_frontend import build_parser, run
+from tests.fixtures.layout_factory import write_advanced_layout
 
 
 def test_direct_runner_writes_all_artifacts_and_validates_round_trips(tmp_path: Path) -> None:
@@ -41,3 +42,17 @@ def test_runner_executes_from_external_working_directory_without_install(tmp_pat
     assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
     assert result["verification"]["stitch_xor_area"] == 0
+
+
+def test_runner_prepares_real_hierarchical_input_before_database_close(tmp_path: Path) -> None:
+    """真实文件分支必须在 LayoutDB 关闭前完成物理 mask 和紧凑问题准备。"""
+    source = write_advanced_layout(tmp_path / "advanced.gds")
+    output = tmp_path / "real-output"
+    args = build_parser().parse_args([
+        str(source), "--layer", "1/0", "--output-dir", str(output),
+        "--skip-geometry-suite",
+    ])
+    result = run(args)
+    assert result["source"] == str(source.resolve())
+    assert result["counts"]["polygons"] > 1
+    assert result["verification"]["zero_displacement_xor_area"] == 0

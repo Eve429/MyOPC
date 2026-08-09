@@ -1,0 +1,66 @@
+{
+  "case_count": 5,
+  "all_zero_displacement_exact": true,
+  "cases": [
+    {
+      "name": "orthogonal_concave",
+      "polygon_count": 1,
+      "ring_count": 1,
+      "edge_count": 12,
+      "segment_count": 56,
+      "core_count": 4,
+      "membership_count": 70,
+      "maximum_segment_length_dbu": 25.0,
+      "zero_displacement_xor_area": 0,
+      "image": "orthogonal_concave.png"
+    },
+    {
+      "name": "hole_overlap",
+      "polygon_count": 1,
+      "ring_count": 2,
+      "edge_count": 14,
+      "segment_count": 70,
+      "core_count": 4,
+      "membership_count": 101,
+      "maximum_segment_length_dbu": 24.85714285714286,
+      "zero_displacement_xor_area": 0,
+      "image": "hole_overlap.png"
+    },
+    {
+      "name": "diagonal_angles",
+      "polygon_count": 1,
+      "ring_count": 1,
+      "edge_count": 6,
+      "segment_count": 39,
+      "core_count": 4,
+      "membership_count": 55,
+      "maximum_segment_length_dbu": 24.504385627478452,
+      "zero_displacement_xor_area": 0,
+      "image": "diagonal_angles.png"
+    },
+    {
+      "name": "negative_cross_core",
+      "polygon_count": 1,
+      "ring_count": 1,
+      "edge_count": 12,
+      "segment_count": 78,
+      "core_count": 4,
+      "membership_count": 127,
+      "maximum_segment_length_dbu": 25.0,
+      "zero_displacement_xor_area": 0,
+      "image": "negative_cross_core.png"
+    },
+    {
+      "name": "overlap_corner_touch",
+      "polygon_count": 2,
+      "ring_count": 2,
+      "edge_count": 12,
+      "segment_count": 48,
+      "core_count": 4,
+      "membership_count": 69,
+      "maximum_segment_length_dbu": 25.0,
+      "zero_displacement_xor_area": 0,
+      "image": "overlap_corner_touch.png"
+    }
+  ]
+}

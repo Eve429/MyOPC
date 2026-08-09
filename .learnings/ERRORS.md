@@ -1,5 +1,66 @@
 # Errors
 
+## [ERR-20260809-025] real_runner_database_lifetime
+
+**Logged**: 2026-08-09T18:10:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+The direct runner's real-layout branch passed an invalid keyword and would close `LayoutDB` before converting its native Region into an independent MB problem.
+
+### Error
+`TypeError: LayoutDB.open() got an unexpected keyword argument 'top'` during `gcd_45nm.gds` validation.
+
+### Context
+- Synthetic runner tests never entered the real-file branch.
+- KLayout Region data must be normalized while its source database remains open.
+
+### Suggested Fix
+Query and call `prepare_problem` inside the `LayoutDB` context, then close the database and continue solely from the independent physical Region and compact arrays.
+
+### Metadata
+- Reproducible: yes
+- Related Files: run_mbopc_frontend.py, tests/opc/test_artifacts_cli.py
+
+### Resolution
+- **Resolved**: 2026-08-09T18:20:00+08:00
+- **Notes**: Added a generated hierarchical GDS regression covering the complete real-input runner branch; no layout or geometry source changed.
+
+---
+
+## [ERR-20260809-024] provisional_compact_memory_gate
+
+**Logged**: 2026-08-09T17:50:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: performance
+
+### Summary
+The first strict MB-OPC benchmark measured 43.4% compact-memory savings and failed a provisional 50% gate.
+
+### Error
+`benchmark_mbopc_frontend.py --strict` returned `紧凑常驻数组相对完全展开表示节省不足 50%`.
+
+### Context
+- Redundant fragment ordinal/count arrays had already been removed.
+- The remaining per-segment overhead includes reusable sorted-key order and token arrays that avoid rebuilding lookup state during every optimizer iteration.
+- Iteration speed has higher priority than maximizing a synthetic memory ratio.
+
+### Suggested Fix
+Keep the reusable lookup index, document the tradeoff, and enforce a 40% regression floor below the measured 43.4% rather than weakening the hot path.
+
+### Metadata
+- Reproducible: yes
+- Related Files: benchmarks/benchmark_mbopc_frontend.py, opc/mbopc/types.py
+
+### Resolution
+- **Resolved**: 2026-08-09T17:55:00+08:00
+- **Notes**: The strict threshold now protects both compactness and update speed; no lookup functionality was removed.
+
+---
+
 ## [ERR-20260809-023] repository_ruff_scanned_user_notebook
 
 **Logged**: 2026-08-09T17:20:00+08:00

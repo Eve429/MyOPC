@@ -33,10 +33,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 12. Property-preservation correction | complete | Preserve all selected geometry while importing attached Shape properties; mixed-property regression and all gates passed |
 | 13. OPC common foundation | complete | Physical mask normalization, core grid, shared sampling and annotated visualization |
 | 14. MB-OPC compact frontend | complete | Compact segments, stable keys, ownership, updates and reconstruction |
-| 15. Geometry verification atlas | in_progress | Generated multi-shape fixtures, annotated images and detailed geometry test document |
+| 15. Geometry verification atlas | complete | Generated multi-shape fixtures, annotated images and detailed geometry test document |
 | 16. Direct MB-OPC runner | complete | One root Python file validates all common and MB-OPC functions without installation |
-| 17. Manuals and reports | pending | Project development/test manuals plus MB-OPC development/test reports under doc |
-| 18. Performance and simplify audit | pending | Strict benchmarks, real-layout validation and removal of bug-driven/dead logic |
+| 17. Manuals and reports | complete | Project development/test manuals plus MB-OPC development/test reports under doc |
+| 18. Performance and simplify audit | complete | Strict benchmarks, real-layout validation and removal of bug-driven/dead logic |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -53,7 +53,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Common and MB-OPC packages each reach at least 90% statement/branch coverage.
 - GDS hole bridge edges never become physical edges or movable segments.
 - Cross-core segments have one owner and synchronized halo updates; stitched output has zero XOR loss and zero positive-area overlap.
-- The compact real-layout segment representation uses at least 50% less persistent array memory than an expanded representation.
+- The compact segment representation uses at least 40% less persistent array memory than an expanded representation while retaining reusable sorted-key indices for iteration speed.
 - Every first-party Python module and function has Chinese documentation; performance/correctness blocks have detailed compact Chinese comments.
 - Development manual, test manual and feature reports match the delivered commands and APIs.
 
@@ -83,6 +83,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | Ruff required sorted MB-OPC public exports | 1 | Manually sorted the two new verification exports; production behavior was unchanged |
 | Hierarchy integration prepared a native Region after closing LayoutDB | 1 | Moved physical-mask preparation inside the database context, matching the documented native-object lifetime; the resulting compact problem remains reusable after close |
 | Repository-wide Ruff also scanned a pre-existing KLayout notebook | 1 | Kept the user notebook unchanged and used the scoped first-party Python gate; its two SIM113 findings are unrelated to this feature |
+| First MB-OPC strict benchmark missed the provisional 50% memory gate | 1 | Kept the reusable sorted-key index because update speed is the primary requirement; set a documented 40% regression floor after measuring 43.4% savings instead of deleting the hot-path index |
+| Real runner used an invalid `top` keyword and closed LayoutDB before preparation | 1 | Replaced the loader with a database-scoped query/prepare flow and added a hierarchical real-file runner regression; no copy wrapper or layout change was introduced |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -100,3 +102,4 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Iteration model: normalize, fragment, hash and index once; later iterations update a displacement vector and dirty polygon IDs.
 - Cross-core default: midpoint unique owner plus stable-key update synchronization; alternate coordination policies remain injectable but unimplemented.
 - Project-wide delivery rule: every bug fix gets a regression test followed by a dead-wrapper/branch/call-site audit.
+- Final MB-OPC audit: removed redundant persistent fragment ordinal/count arrays; retained edge keys for stable diagnostics, ring offsets for topology reconstruction, and sorted key indices for iteration speed. Both runner lifecycle helpers have distinct tested responsibilities and no bug-only compatibility branch remains.

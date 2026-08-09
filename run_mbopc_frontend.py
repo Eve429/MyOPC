@@ -19,6 +19,7 @@ from opc import OPCError
 from opc.common import RectilinearCoreGrid, render_boundary_overlay, sample_lines
 from opc.mbopc import (
     FragmentationConfig,
+    MBOPCProblem,
     SegmentUpdateBatch,
     merge_owner_updates,
     prepare_problem,
@@ -89,29 +90,40 @@ def _axis_cuts(start: int, end: int, count: int) -> np.ndarray:
     return cuts
 
 
-def _load_input(args: argparse.Namespace) -> tuple[RegionBatch, LayerSpec, float, str]:
-    """读取真实版图或返回合成批次，始终保持源文件只读。"""
-    if args.layout is None:
-        batch, layer, dbu_um = _demo_batch()
-        return batch, layer, dbu_um, "synthetic"
-    with LayoutDB.open(args.layout, top=None) as database:
-        layers = database.layers()
-        if args.layer is None:
-            if len(layers) != 1:
-                raise ValueError("多 Layer 版图必须通过 --layer 明确选择")
-            layer = layers[0]
-        else:
-            layer = args.layer
-        bbox = database.bbox()
-        if bbox is None:
-            raise ValueError("输入版图为空")
-        box = DbuBox(*args.box) if args.box else bbox
-        batch = database.query([layer], box).materialize()
-        dbu_um = database.dbu_um
-    return batch, layer, dbu_um, str(args.layout.expanduser().resolve())
+def _load_database_batch(args: argparse.Namespace,
+                         database: LayoutDB) -> tuple[RegionBatch, LayerSpec, float]:
+    """在数据库生命周期内选择 Layer、范围并物化局部批次。"""
+    layers = database.layers()
+    if args.layer is None:
+        if len(layers) != 1:
+            raise ValueError("多 Layer 版图必须通过 --layer 明确选择")
+        layer = layers[0]
+    else:
+        layer = args.layer
+    bbox = database.bbox()
+    if bbox is None:
+        raise ValueError("输入版图为空")
+    box = DbuBox(*args.box) if args.box else bbox
+    return database.query([layer], box).materialize(), layer, database.dbu_um
 
 
-def _demo_updates(problem, displacement_dbu: float) -> list[SegmentUpdateBatch]:
+def _prepare_input_problem(args: argparse.Namespace, batch: RegionBatch,
+                           layer: LayerSpec, dbu_um: float) -> tuple[
+                               MBOPCProblem, RectilinearCoreGrid, FragmentationConfig]:
+    """按 CLI 物理尺寸构造 core 网格、分段配置和独立紧凑问题。"""
+    dbu_nm = dbu_um * 1000.0
+    columns, rows = args.grid
+    grid = RectilinearCoreGrid(
+        _axis_cuts(batch.query_box.left, batch.query_box.right, columns),
+        _axis_cuts(batch.query_box.bottom, batch.query_box.top, rows),
+        round(args.halo_nm / dbu_nm))
+    config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
+                                 args.max_displacement_nm / dbu_nm)
+    return prepare_problem(batch, layer, config, grid), grid, config
+
+
+def _demo_updates(problem: MBOPCProblem,
+                  displacement_dbu: float) -> list[SegmentUpdateBatch]:
     """为每个有可拥有边段的 core 选择一段，构造确定性示范更新。"""
     updates: list[SegmentUpdateBatch] = []
     for core_index in range(len(problem.ownership.cores)):
@@ -127,18 +139,21 @@ def _demo_updates(problem, displacement_dbu: float) -> list[SegmentUpdateBatch]:
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """执行准备、更新、采样、重建、跨 core 拼接和全部产物验证。"""
-    batch, layer, dbu_um, source = _load_input(args)
-    dbu_nm = dbu_um * 1000.0
-    columns, rows = args.grid
-    grid = RectilinearCoreGrid(
-        _axis_cuts(batch.query_box.left, batch.query_box.right, columns),
-        _axis_cuts(batch.query_box.bottom, batch.query_box.top, rows),
-        round(args.halo_nm / dbu_nm))
-    config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
-                                 args.max_displacement_nm / dbu_nm)
-    started = perf_counter()
-    problem = prepare_problem(batch, layer, config, grid)
+    if args.layout is None:
+        batch, layer, dbu_um = _demo_batch()
+        source = "synthetic"
+        started = perf_counter()
+        problem, grid, config = _prepare_input_problem(args, batch, layer, dbu_um)
+    else:
+        source = str(args.layout.expanduser().resolve())
+        # KLayout 的物化 Region 仍依赖打开的 Layout；因此必须在上下文内
+        # 完成物理合并和紧凑数组构建。之后所有迭代与输出均脱离源文件。
+        with LayoutDB.open(args.layout, top_cell=None) as database:
+            batch, layer, dbu_um = _load_database_batch(args, database)
+            started = perf_counter()
+            problem, grid, config = _prepare_input_problem(args, batch, layer, dbu_um)
     prepared = perf_counter()
+    dbu_nm = dbu_um * 1000.0
     updates = _demo_updates(problem, args.demo_displacement_nm / dbu_nm)
     update_result = merge_owner_updates(problem, updates)
     geometry = problem.segments.materialize(update_result.displacements)

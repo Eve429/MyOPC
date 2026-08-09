@@ -100,8 +100,6 @@ class SegmentBatch:
     edge_ids: Int32Array
     t0: FloatArray
     t1: FloatArray
-    fragment_indices: Int32Array
-    fragment_counts: Int32Array
     keys: UIntArray
     _key_order: IntArray = field(init=False, repr=False)
     _sorted_tokens: UIntArray = field(init=False, repr=False)
@@ -118,9 +116,6 @@ class SegmentBatch:
         edge_ids = _vector(self.edge_ids, np.dtype(np.int32), "edge_ids")
         t0 = _vector(self.t0, np.dtype(np.float64), "t0")
         t1 = _vector(self.t1, np.dtype(np.float64), "t1")
-        fragment_indices = _vector(self.fragment_indices, np.dtype(np.int32),
-                                   "fragment_indices")
-        fragment_counts = _vector(self.fragment_counts, np.dtype(np.int32), "fragment_counts")
         keys = _matrix(self.keys, np.dtype(np.uint64), 2, "keys")
         edge_count, segment_count = self.edges.edge_count, len(edge_ids)
         if (len(edge_lengths) != edge_count or len(edge_normals) != edge_count or
@@ -132,7 +127,7 @@ class SegmentBatch:
         if (len(ring_offsets) != self.contours.ring_count + 1 or ring_offsets[0] != 0 or
                 ring_offsets[-1] != segment_count or np.any(np.diff(ring_offsets) < 1)):
             raise ValueError("every contour ring must own at least one segment")
-        fields = (t0, t1, fragment_indices, fragment_counts, keys)
+        fields = (t0, t1, keys)
         if any(len(array) != segment_count for array in fields):
             raise ValueError("segment-level metadata vectors must have equal length")
         if (segment_count and (np.any(edge_ids < 0) or np.any(edge_ids >= edge_count) or
@@ -152,8 +147,7 @@ class SegmentBatch:
             ("edge_lengths", edge_lengths), ("edge_normals", edge_normals),
             ("edge_keys", edge_keys), ("edge_segment_offsets", edge_offsets),
             ("ring_segment_offsets", ring_offsets), ("edge_ids", edge_ids), ("t0", t0),
-            ("t1", t1), ("fragment_indices", fragment_indices),
-            ("fragment_counts", fragment_counts), ("keys", keys),
+            ("t1", t1), ("keys", keys),
             ("_key_order", order.astype(np.int64, copy=False)),
             ("_sorted_tokens", sorted_tokens),
         ):
@@ -169,7 +163,7 @@ class SegmentBatch:
         """返回当前批次新增常驻 NumPy 数组的总字节数。"""
         arrays = (self.edge_lengths, self.edge_normals, self.edge_keys,
                   self.edge_segment_offsets, self.ring_segment_offsets, self.edge_ids,
-                  self.t0, self.t1, self.fragment_indices, self.fragment_counts, self.keys,
+                  self.t0, self.t1, self.keys,
                   self._key_order, self._sorted_tokens)
         return sum(array.nbytes for array in arrays)
 

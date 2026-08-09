@@ -4,7 +4,7 @@
 
 **Logged**: 2026-08-09T14:30:00+08:00
 **Priority**: high
-**Status**: in_progress
+**Status**: resolved
 **Area**: backend
 
 ### Requested Capability
@@ -18,6 +18,10 @@ complex
 
 ### Suggested Implementation
 建立 `opc.common` 与 `opc.mbopc` 单向依赖，使用紧凑参数化 segment 数组、一次性缓存、稳定 key 和稀疏 core membership，并在完成后执行严格性能与简化审计。
+
+### Resolution
+- **Resolved**: 2026-08-09T19:10:00+08:00
+- **Notes**: 已交付 `opc.common`/`opc.mbopc`、紧凑分段与稳定 key、稀疏 core 归属、owner-only 更新、重建、无安装主入口、严格基准、多图形标注图集和中文手册/报告；81 项全仓库测试与真实 `gcd_45nm.gds` 验证通过。
 
 ### Metadata
 - Frequency: recurring

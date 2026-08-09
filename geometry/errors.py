@@ -15,3 +15,7 @@ class CoordinateSystemError(GeometryError):
 
 class PatchConflictError(GeometryError):
     """同一 Layer 的两个 Patch ownership 区域重叠时抛出。"""
+
+
+class RasterizationError(GeometryError):
+    """版图区域无法按请求的物理像素规则栅格化时抛出。"""

@@ -2,7 +2,7 @@
 
 ## 1. 测试结论
 
-最终验证全部通过：31 个自动化测试通过，`layout/` 与 `geometry/` 合并语句/分支覆盖率为 91%，Ruff 静态规则检查、Python 字节码编译、仓库外工作目录直接执行、严格性能门槛均通过。Patch 测试明确覆盖了“一个图形跨越两个 core 边界”的情况，左右结果无丢失、无正面积重叠。
+最终验证全部通过：43 个自动化测试通过，`layout/` 与 `geometry/` 合并语句/分支覆盖率为 92%，Ruff 静态规则检查、Python 字节码编译、仓库外工作目录直接执行、严格性能门槛均通过。Patch 和像素图测试都明确覆盖了“一个图形跨越两个 core 边界”的情况，左右结果无丢失、无正面积重叠。
 
 ## 2. 测试环境
 
@@ -56,19 +56,31 @@
 - `--arrays`、`--diagnostics`、`--output` 组合流程。
 - 可预期领域错误返回退出码 2，而不是打印 Python traceback。
 
+### 3.5 灰度像素图
+
+- 精确的完整、部分和空白像素覆盖率。
+- 版图 `+Y` 到图片向上的坐标方向转换。
+- 孔洞、重叠 Polygon 合并、空 ROI 和二维分块一致性。
+- ROI 宽高不能整除像素尺寸时的右侧/顶部灰度补齐。
+- 跨 core Polygon 的左右图片横向拼接后与完整 ROI 图片逐像素一致。
+- PNG 八位灰度模式、原子保存和可选系统查看器调用。
+- 物理像素到整数 DBU 的精确换算、最大像素保护、缺失/多 Layer 和输出路径错误。
+
 ## 4. 测试数据
 
 ### 4.1 仓库现有数据
 
 | 文件 | 基线 |
 |---|---|
-| `TestReticle/simple.gds` | DBU 0.001 μm，top `TOP`，Layer 1/0；排除 Text 后 10 个 polygon-like 图形 |
+| `TestReticle/simple.gds` | 用户可编辑样例，DBU 0.001 μm，top `TOP`，Layer 1/0；不再对其坐标和计数设置固定自动化断言 |
 | `TestReticle/JustPoly.gds` | 单 top，两个 Polygon，包含负坐标 |
 | `TestReticle/test1.gds` | 两个 top；明确选择 `cell1` 后 Layer 2/0、1/0、3/0 分别为 22、13、1 个 polygon-like 图形 |
 
 ### 4.2 测试时生成数据
 
 自动生成的临时 GDS/OASIS 包含多 Layer、Box、Path、Text、带孔 Polygon、R90、镜像和 AREF。另生成一个叶 Cell 加 1000 × 1000 AREF 的基准文件；逻辑实例为一百万，但文件和内存结构保持层级，不把全部实例平铺写出。
+
+精确 bbox、图形数和 CLI 结果统一使用这些生成式数据作为确定性基线，因此用户修改 `simple.gds` 等样例不会造成自动化测试误报。
 
 ### 4.3 真实版图只读冒烟测试
 
@@ -116,10 +128,10 @@ D:\app\miniforge\envs\myopc\python.exe benchmarks\benchmark_layout_geometry.py -
 |---|---:|---:|
 | 逻辑实例数 | 1,000,000 | 固定场景 |
 | ROI Polygon 数 | 25 | 必须为 25 |
-| 文件打开 | 10.8027 ms | 记录项 |
-| 查询 + 精确裁剪中位数 | 0.1126 ms | ≤ 50 ms |
-| 查询 + 精确裁剪 P95 | 0.1294 ms | 记录项 |
-| RSS 增量 | 0.5391 MB | ≤ 64 MB |
+| 文件打开 | 10.0135 ms | 记录项 |
+| 查询 + 精确裁剪中位数 | 0.1058 ms | ≤ 50 ms |
+| 查询 + 精确裁剪 P95 | 0.1164 ms | 记录项 |
+| RSS 增量 | 0.4805 MB | ≤ 64 MB |
 
 结果说明查询保持层级，没有因一百万逻辑实例而全量展开。
 
@@ -127,12 +139,12 @@ D:\app\miniforge\envs\myopc\python.exe benchmarks\benchmark_layout_geometry.py -
 
 | 指标 | 结果 | 严格门槛 |
 |---|---:|---:|
-| 索引构建 | 432.0103 ms | 一次性成本 |
+| 索引构建 | 425.4770 ms | 一次性成本 |
 | 查询次数 | 1,000 | 固定场景 |
-| 索引查询中位数 | 0.0207 ms | 记录项 |
-| 索引查询 P95 | 0.0256 ms | 记录项 |
-| 完整 NumPy bbox 扫描中位数 | 0.3438 ms | 对照项 |
-| 查询加速 | 16.6087 × | ≥ 2 × |
+| 索引查询中位数 | 0.0208 ms | 记录项 |
+| 索引查询 P95 | 0.0264 ms | 记录项 |
+| 完整 NumPy bbox 扫描中位数 | 0.3325 ms | 对照项 |
+| 查询加速 | 15.9855 × | ≥ 2 × |
 | 与暴力扫描结果一致 | 是 | 必须为是 |
 
 严格模式返回码为 0，全部门槛通过。性能数字是本机基线，不应视为所有机器的绝对承诺；适合后续作为相同环境下的回归比较。
@@ -145,7 +157,7 @@ D:\app\miniforge\envs\myopc\python.exe benchmarks\benchmark_layout_geometry.py -
 D:\app\miniforge\envs\myopc\python.exe -m pytest -q --cov=layout --cov=geometry --cov-report=term-missing
 ```
 
-结果：31 passed，合并覆盖率 91%，达到不低于 90% 的验收线。
+结果：43 passed，合并覆盖率 92%，达到不低于 90% 的验收线；新增 `geometry/raster.py` 覆盖率为 98%。
 
 其他检查：
 
@@ -179,3 +191,38 @@ Ruff 静态规则检查和 compileall 均通过。Ruff formatter 不是本项目
 - 可维护性和中文注释要求：通过。
 - 不安装项目包运行：通过。
 - 用户真实 GDS 只读验证：通过，文件未提交。
+
+## 10. 像素图专项结果
+
+### 10.1 真实 `gcd_45nm` 完整版图
+
+对未跟踪的用户文件执行：
+
+```powershell
+D:\app\miniforge\envs\myopc\python.exe run_layout_geometry.py TestReticle\gcd_45nm.gds --layer 11/0 --pixel-size-nm 5 --png .benchmarks\gcd_45nm_full_5nm.png --json
+```
+
+| 指标 | 结果 |
+|---|---:|
+| Layer | 11/0 |
+| Polygon 数 | 1,776 |
+| 物理像素尺寸 | 5 nm/pixel |
+| PNG 尺寸 | 6,118 × 5,914 |
+| 总像素数 | 36,181,852 |
+| 端到端时间 | 4.663 s |
+| 峰值进程 RSS | 149.36 MB |
+| PNG 文件大小 | 78,464 bytes |
+
+视觉检查确认图片顶部方向、完整布局结构、白色 mask 和黑色背景正确。生成图片位于被 Git 忽略的 `.benchmarks` 目录，源 GDS 和 PNG 都没有提交。
+
+### 10.2 可重复严格栅格基准
+
+严格 benchmark 增加 2,048 × 2,048、像素网格对齐的纵横 Region：
+
+| 指标 | 结果 | 门槛 |
+|---|---:|---:|
+| 栅格化耗时 | 482.839 ms | ≤ 5,000 ms |
+| RSS 增量 | 4.32 MB | ≤ 128 MB |
+| 白像素数与 Region 面积一致 | 是 | 必须为是 |
+
+基准覆盖多次原生二维分块，严格模式返回码为 0。

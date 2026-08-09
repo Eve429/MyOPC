@@ -22,8 +22,8 @@ import klayout.db as kdb
 import numpy as np
 import psutil
 
-from geometry import EdgeBatch, GeometryEngine, UniformGridIndex
-from layout import DbuBox, LayerSpec, LayoutDB
+from geometry import EdgeBatch, GeometryEngine, UniformGridIndex, render_region_batch
+from layout import CellRef, DbuBox, LayerSpec, LayoutDB, RegionBatch
 
 
 def percentile_ms(values: list[float], percentile: float) -> float:
@@ -135,7 +135,38 @@ def benchmark_spatial(edge_count: int, query_count: int) -> dict[str, float | in
     }
 
 
-def run_benchmarks(runs: int, edge_count: int, query_count: int) -> dict[str, object]:
+def benchmark_raster(image_size: int) -> dict[str, float | int | bool]:
+    """测量原生面积覆盖栅格化，并核对与对齐几何面积完全一致。"""
+    layer = LayerSpec(1, 0)
+    pixel_dbu = 5
+    extent = image_size * pixel_dbu
+    region = kdb.Region()
+    # 构造像素网格对齐的纵横线。合并后既覆盖大量不规则交点，又能用 Region 面积
+    # 精确推导应为 255 的像素数，从而同时验证速度和栅格结果，而不逐像素生成答案。
+    for coordinate in range(0, extent, 200):
+        region.insert(kdb.Box(coordinate, 0, coordinate + 10, extent))
+        region.insert(kdb.Box(0, coordinate, extent, coordinate + 10))
+    region = region.merged()
+    batch = RegionBatch({layer: region}, DbuBox(0, 0, extent, extent), CellRef("BENCH", 0))
+    process = psutil.Process()
+    rss_before = process.memory_info().rss
+    started = perf_counter()
+    pixels = render_region_batch(batch, layer, 0.001, pixel_size_nm=5)
+    elapsed_ms = (perf_counter() - started) * 1000.0
+    rss_after = process.memory_info().rss
+    expected_white_pixels = region.area() // (pixel_dbu * pixel_dbu)
+    actual_white_pixels = int(np.count_nonzero(pixels == 255))
+    return {
+        "width": int(pixels.shape[1]),
+        "height": int(pixels.shape[0]),
+        "elapsed_ms": elapsed_ms,
+        "rss_delta_mb": max(0.0, (rss_after - rss_before) / (1024.0 * 1024.0)),
+        "coverage_exact": actual_white_pixels == expected_white_pixels,
+    }
+
+
+def run_benchmarks(runs: int, edge_count: int, query_count: int,
+                   raster_size: int) -> dict[str, object]:
     """运行全部基准并附带可复现实验环境。"""
     return {
         "environment": {
@@ -149,6 +180,7 @@ def run_benchmarks(runs: int, edge_count: int, query_count: int) -> dict[str, ob
         },
         "hierarchy": benchmark_hierarchy(runs),
         "spatial": benchmark_spatial(edge_count, query_count),
+        "raster": benchmark_raster(raster_size),
     }
 
 
@@ -156,6 +188,7 @@ def strict_failures(result: dict[str, object]) -> list[str]:
     """根据开发方案中的性能门槛返回失败原因。"""
     hierarchy = result["hierarchy"]
     spatial = result["spatial"]
+    raster = result["raster"]
     failures: list[str] = []
     if hierarchy["roi_polygon_count"] != 25:
         failures.append("百万实例 ROI 应精确得到 25 个 Polygon")
@@ -167,6 +200,12 @@ def strict_failures(result: dict[str, object]) -> list[str]:
         failures.append("网格索引结果与暴力扫描不一致")
     if spatial["speedup"] < 2.0:
         failures.append("网格索引查询加速低于 2 倍")
+    if not raster["coverage_exact"]:
+        failures.append("原生灰度栅格结果与对齐 Region 面积不一致")
+    if raster["elapsed_ms"] > 5_000.0:
+        failures.append("2048x2048 灰度栅格化耗时超过 5 秒")
+    if raster["rss_delta_mb"] > 128.0:
+        failures.append("2048x2048 灰度栅格化额外 RSS 超过 128 MB")
     return failures
 
 
@@ -176,9 +215,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs", type=int, default=100, help="层级 ROI 重复次数")
     parser.add_argument("--edges", type=int, default=100_000, help="空间索引边数量")
     parser.add_argument("--queries", type=int, default=1_000, help="空间索引查询次数")
+    parser.add_argument("--raster-size", type=int, default=2_048, help="正方形栅格基准边长")
     parser.add_argument("--strict", action="store_true", help="未达到验收门槛时返回非零退出码")
     args = parser.parse_args(argv)
-    result = run_benchmarks(args.runs, args.edges, args.queries)
+    result = run_benchmarks(args.runs, args.edges, args.queries, args.raster_size)
     failures = strict_failures(result)
     result["strict_failures"] = failures
     print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -80,7 +80,7 @@ RegionBatch（按 Layer 保存原生 Region）
 6. 局部索引：重复邻域查询时用网格索引替代全量边 bbox 扫描。
 7. 写出隔离：源版图只读，减少深复制和误修改；输出仅含变更 Patch。
 
-最终基准中，一百万逻辑实例的小 ROI 查询与裁剪中位数为 0.1126 ms，额外 RSS 为 0.54 MB；100,000 条边的网格查询中位数为 0.0207 ms，相对完整 NumPy bbox 扫描加速 16.61 倍。具体环境和方法见测试报告。
+最终基准中，一百万逻辑实例的小 ROI 查询与裁剪中位数为 0.1058 ms，额外 RSS 为 0.48 MB；100,000 条边的网格查询中位数为 0.0208 ms，相对完整 NumPy bbox 扫描加速 15.99 倍。具体环境和方法见测试报告。
 
 ## 5. 直接运行与公共入口
 
@@ -136,3 +136,38 @@ D:\app\miniforge\envs\myopc\python.exe run_layout_geometry.py TestReticle\simple
 - 当前轮廓数组是整数 DBU；需要物理单位时在配置/报告边界乘以 `dbu_um`。
 - 大规模多进程运行时，建议每个 worker 打开自己的只读版图句柄，并以 ownership box 分派任务；不要共享可变 KLayout 对象。
 - 下一阶段应先选择一个真实 OPC 方法做窄接口验证，再决定是否需要栅格/GPU 后端，避免提前建设用不到的扩展框架。
+
+## 8. planner 区域像素图
+
+系统现在提供两个紧凑入口：
+
+```python
+from geometry import render_layout_region
+from layout import DbuBox, LayerSpec, LayoutDB
+
+with LayoutDB.open("TestReticle/gcd_45nm.gds") as database:
+    pixels = render_layout_region(
+        database,
+        DbuBox(11400, 13150, 317300, 308850),
+        LayerSpec(11, 0),
+        pixel_size_nm=5,
+        output_path="gcd_45nm.png",
+        show=True,
+    )
+```
+
+- `render_layout_region()` 接受复用中的只读数据库和 planner `DbuBox`，负责查询、裁剪、栅格化、保存与显示。
+- `render_region_batch()` 接受已经提取的 `RegionBatch`，适合 planner/core 流水线直接展示现有结果，避免重复查询。
+- 两个函数都返回顶部朝上的二维 `uint8` 数组；0 表示空，255 表示完整覆盖，中间灰度表示 Polygon 在像素中的精确面积覆盖率。
+- 核心使用 KLayout `Region.rasterize()`，不在 Python 中逐 Polygon 绘制。由于原生接口不采用 merged semantics，局部区域在栅格前显式合并，避免重叠面积重复计数。
+- 原生浮点结果按最多 1,000,000 个临时像素切成二维块，最终只保留八位数组；默认在分配前拒绝超过 64,000,000 像素的图片。
+- 物理像素尺寸必须能精确换算为整数 DBU，避免静默舍入改变 OPC 采样网格。默认值为 5 nm/pixel。
+- Pillow 只负责灰度 PNG 和可选系统查看器；不引入独立 GUI、图层混色或交互框架。
+
+直接保存真实版图完整 Layer：
+
+```powershell
+D:\app\miniforge\envs\myopc\python.exe run_layout_geometry.py TestReticle\gcd_45nm.gds --layer 11/0 --pixel-size-nm 5 --png gcd_45nm.png
+```
+
+增加 `--show-image` 可同时调用系统图片查看器。PNG 模式要求且只允许一个 Layer；多个 Layer 必须分别输出，从而保持 mask 语义明确。

@@ -7,8 +7,10 @@ from .errors import (
     CoordinateSystemError,
     GeometryError,
     PatchConflictError,
+    RasterizationError,
 )
 from .patch import PatchSet
+from .raster import render_layout_region, render_region_batch
 from .region import GeometryEngine
 from .spatial import UniformGridIndex
 from .types import (
@@ -30,6 +32,7 @@ __all__ = [
     "GeometryPatch",
     "PatchConflictError",
     "PatchSet",
+    "RasterizationError",
     "UniformGridIndex",
     "ValidationIssue",
     "ValidationReport",
@@ -37,5 +40,7 @@ __all__ = [
     "extract_contours",
     "extract_edge_batches",
     "extract_edges",
+    "render_layout_region",
+    "render_region_batch",
     "validate_contours",
 ]

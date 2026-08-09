@@ -14,19 +14,21 @@ from layout import (
     LayoutDB,
     LayoutOpenError,
 )
+from tests.fixtures.layout_factory import write_advanced_layout
 
 
-def test_open_simple_and_inspect_hierarchy(reticle_dir: Path) -> None:
-    """简单版图应稳定给出数据库单位、顶层单元、图层、包围盒和子单元信息。"""
-    with LayoutDB.open(reticle_dir / "simple.gds") as db:
+def test_open_generated_layout_and_inspect_hierarchy(tmp_path: Path) -> None:
+    """确定性版图应稳定给出数据库单位、顶层单元、图层、包围盒和子单元信息。"""
+    source = write_advanced_layout(tmp_path / "advanced.gds")
+    with LayoutDB.open(source) as db:
         assert db.dbu_um == pytest.approx(0.001)
         assert db.top_cell.name == "TOP"
-        assert db.layers() == (LayerSpec(1, 0),)
-        assert db.bbox() == DbuBox(-2400, -500, 400, 1500)
+        assert db.layers() == (LayerSpec(1, 0), LayerSpec(2, 5))
+        assert db.bbox() == DbuBox(-200, -200, 1000, 2700)
         summary = db.hierarchy_summary()
         top = next(info for info in summary.cells if info.ref.name == "TOP")
-        assert {child.name for child in top.child_cells} == {"CIRCLE", "TEXT"}
-        assert (top.instance_records, top.logical_instances) == (2, 2)
+        assert {child.name for child in top.child_cells} == {"LEAF"}
+        assert (top.instance_records, top.logical_instances) == (3, 8)
 
 
 def test_multiple_top_requires_explicit_selection(reticle_dir: Path) -> None:
@@ -38,20 +40,22 @@ def test_multiple_top_requires_explicit_selection(reticle_dir: Path) -> None:
         assert db.layers() == (LayerSpec(1, 0), LayerSpec(2, 0), LayerSpec(3, 0))
 
 
-def test_invalid_file_cell_and_layer_fail_clearly(reticle_dir: Path, tmp_path: Path) -> None:
+def test_invalid_file_cell_and_layer_fail_clearly(tmp_path: Path) -> None:
     """非法调用参数应抛出领域异常，而不是泄漏原生调用栈。"""
+    source = write_advanced_layout(tmp_path / "advanced.gds")
     with pytest.raises(LayoutOpenError):
         LayoutDB.open(tmp_path / "missing.gds")
     with pytest.raises(CellNotFoundError):
-        LayoutDB.open(reticle_dir / "simple.gds", top_cell="MISSING")
-    with LayoutDB.open(reticle_dir / "simple.gds") as db, pytest.raises(LayerNotFoundError):
+        LayoutDB.open(source, top_cell="MISSING")
+    with LayoutDB.open(source) as db, pytest.raises(LayerNotFoundError):
         db.query([LayerSpec(99, 0)], DbuBox(-10, -10, 10, 10))
 
 
-def test_closed_database_invalidates_lazy_query(reticle_dir: Path) -> None:
+def test_closed_database_invalidates_lazy_query(tmp_path: Path) -> None:
     """查询可以保留元数据，但不得继续使用已经释放的原生数据库。"""
-    db = LayoutDB.open(reticle_dir / "simple.gds")
-    query = db.query([LayerSpec(1, 0)], DbuBox(-2500, -600, 500, 1600))
+    source = write_advanced_layout(tmp_path / "advanced.gds")
+    db = LayoutDB.open(source)
+    query = db.query([LayerSpec(1, 0)], DbuBox(-200, -200, 1000, 2700))
     db.close()
     with pytest.raises(ClosedLayoutError):
         query.materialize()

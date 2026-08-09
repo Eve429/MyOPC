@@ -31,3 +31,16 @@
 - Post-audit verification passed: 31 tests, 91% combined `layout/geometry` coverage, Ruff rules, compileall, external-directory CLI execution, and strict benchmarks.
 - Read-only direct CLI validation of the untracked real file `gcd_45nm.gds` succeeded: 1,776 polygons, 21,590 vertices/edges, and 461.001 ms process wall time.
 - Added detailed Chinese development and test reports under `doc/`; all plan phases are complete.
+- User requested a callable planner-ROI visualization function that can display or save a grayscale PNG.
+- Locked raster decisions: single Layer, exact grayscale area coverage, default 5 nm/pixel, Python API plus CLI, no standalone GUI.
+- Restored planning and learning context; phases 8-11 added and native raster foundation started.
+- Implemented `render_layout_region` and `render_region_batch` with exact gray coverage, top-up orientation, explicit DBU sampling validation, pixel guard, native tiled rasterization, atomic PNG save, and optional system viewer.
+- Extended the direct CLI with PNG/show/pixel-size/pixel-limit options without repeating its existing ROI query.
+- Added raster unit/integration/CLI tests; targeted verification passed 10 tests and Ruff rules.
+- Initial full regression passed 40 tests with 92% combined coverage; after boundary and mutable-fixture regressions were added, the final suite passed 43 tests and the raster module reached 98% coverage.
+- Rendered and visually inspected the complete real `gcd_45nm` Layer 11/0 at 5 nm/pixel; measured 4.663 seconds and 149.36 MB peak RSS.
+- Investigated a changed `simple.gds`; user confirmed it is intentional, so it remains untouched and excluded from the raster feature commit.
+- Decoupled hierarchy/query/direct-CLI exact assertions from the mutable `simple.gds` and moved them to the generated advanced fixture.
+- Final gates passed: 43 tests, 92% coverage, Ruff, compileall, Chinese-comment scan, external-directory PNG CLI without project installation, and all strict benchmarks.
+- Final strict raster benchmark: 2,048 × 2,048 in 482.84 ms with 4.32 MB RSS delta and exact coverage.
+- Manually confirmed all 11 plan phases complete because the optional checker does not parse the project's table-based status format.

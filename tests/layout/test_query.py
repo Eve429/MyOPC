@@ -3,19 +3,21 @@
 from pathlib import Path
 
 from layout import DbuBox, LayerSpec, LayoutDB
+from tests.fixtures.layout_factory import write_advanced_layout
 
 
-def test_simple_materialization_ignores_text_and_reports_it_on_demand(reticle_dir: Path) -> None:
+def test_generated_materialization_ignores_text_and_reports_it_on_demand(tmp_path: Path) -> None:
     """可转 Polygon 的图形保留在原生端，可选诊断能够识别 Text。"""
     layer = LayerSpec(1, 0)
-    with LayoutDB.open(reticle_dir / "simple.gds") as db:
+    source = write_advanced_layout(tmp_path / "advanced.gds")
+    with LayoutDB.open(source) as db:
         box = db.bbox()
         assert box is not None
         batch = db.query([layer], box).materialize(diagnostics=True)
-        assert batch.counts()[layer] == 10
+        assert batch.counts()[layer] == 25
         assert batch.stats is not None
-        assert batch.stats.shapes[layer].polygon_like == 10
-        assert batch.stats.shapes[layer].text == 1
+        assert batch.stats.shapes[layer].polygon_like == 25
+        assert batch.stats.shapes[layer].text == 8
 
 
 def test_existing_fixture_counts_and_top_transforms(reticle_dir: Path) -> None:

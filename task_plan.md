@@ -23,6 +23,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 5. Verification | complete | Unit/integration/regression/performance tests |
 | 6. Reports | complete | Development and test reports under `doc/` |
 | 7. Simplify and harden audit | complete | Removed overdesign, error-driven special cases, cycles, and dead abstractions; reran all verification |
+| 8. Native raster foundation | complete | Single-layer grayscale coverage rasterization with bounded temporary memory |
+| 9. PNG display and CLI | complete | Callable render function, atomic PNG save, optional viewer, direct CLI options |
+| 10. Raster verification | complete | Unit/integration/performance/real-layout tests and report updates |
+| 11. Raster simplify audit | complete | Reviewed abstraction, hot-path allocations and error branches; removed duplicate CLI clipping and passed all gates |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -32,6 +36,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - New `layout/` and `geometry/` code reaches at least 90% test coverage.
 - Million-instance ROI benchmark does not flatten the full hierarchy and stays within agreed limits.
 - Git working tree retains unrelated user files and all milestone commits remain local.
+- A planner `DbuBox` can render one Layer to a top-up grayscale PNG at 5 nm/pixel.
+- Raster values equal exact polygon area coverage, including holes and partial boundary pixels.
+- Full `gcd_45nm.gds` Layer 11/0 bbox renders within the 64-million-pixel guard.
+- Rasterization uses bounded horizontal stripes and never loops over Polygon coordinates in Python.
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -47,6 +55,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | Ruff audit command was unavailable | 1 | Added Ruff as an optional development dependency; runtime remains unaffected |
 | Ruff found 10 maintainability findings | 1 | Manually simplified imports, constants, casts, test defaults, and context managers; no auto-fix used |
 | Ruff formatter would expand the requested compact style | 1 | Keep compact manual layout; use Ruff rules, compileall, and tests as quality gates instead |
+| Tracked `simple.gds` differed after verification | 2 | User confirmed it is their intentional edit; preserve it and exclude all `TestReticle` files from this feature commit |
+| Tests coupled exact baselines to mutable `simple.gds` | 1 | Move exact hierarchy/query/CLI assertions to deterministic generated GDS fixtures |
+| Planning completeness script reported 0/0 phases | 1 | Script does not parse the existing status table; manually verified all 11 phases complete |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -56,3 +67,6 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - `TestReticle/gcd_45nm.gds` is user-owned and excluded from commits unless explicitly requested.
 - Direct execution: `python run_layout_geometry.py ...`; editable installation is optional and used only for development tooling.
 - Final audit simplification: diagnostics allocate stats only when requested; PatchSet uses per-layer native ownership/result Regions instead of Python O(n²) scans and per-add sorting.
+- Raster API: `render_layout_region(LayoutDB, DbuBox, LayerSpec, pixel_size_nm=5.0, output_path=None, show=False)` returns a top-up `uint8` array.
+- Raster semantics: white means full mask coverage, black means empty, gray means exact partial area coverage; one Layer per image.
+- Raster bounds: 64,000,000 output pixels and 1,000,000 temporary pixels per native stripe by default.

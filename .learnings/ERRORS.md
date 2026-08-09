@@ -1,5 +1,156 @@
 # Errors
 
+## [ERR-20260809-018] planning_checker_table_format
+
+**Logged**: 2026-08-09T06:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+planning-with-files 完整性脚本不能识别项目现有的阶段状态表。
+
+### Error
+`Task in progress (0/0 phases complete)`，但计划表中 11 个阶段均为 complete。
+
+### Context
+- 脚本退出码为 0，只是解析结果不适用于当前表格格式。
+- 为工具改写已经稳定使用的项目规划格式没有实际价值。
+
+### Suggested Fix
+人工核对阶段表和验收门禁；保留当前文档格式。
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md
+
+### Resolution
+- **Resolved**: 2026-08-09T06:20:00+08:00
+- **Notes**: 已人工确认阶段 1-11 全部 complete，最终门禁均通过。
+
+---
+
+## [ERR-20260809-017] raster_comment_prefix_scan
+
+**Logged**: 2026-08-09T06:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+最终中文扫描发现两条新增注释以英文技术名词开头。
+
+### Error
+`planner` 和 `rasterize` 位于注释起始位置。
+
+### Context
+- 说明主体已经是中文，但项目约定要求中文起句。
+- 其他并行门禁输出因扫描返回非零而未汇总，必须完整重跑。
+
+### Suggested Fix
+分别改为“规划器”和“原生栅格接口”起句，再执行全部最终门禁。
+
+### Metadata
+- Reproducible: yes
+- Related Files: geometry/raster.py, tests/geometry/test_raster.py
+
+### Resolution
+- **Resolved**: 2026-08-09T06:10:00+08:00
+- **Notes**: 两条起句均已改为中文。
+
+---
+
+## [ERR-20260809-016] mutable_user_fixture_baseline
+
+**Logged**: 2026-08-09T05:50:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+全量回归有两项失败，因为自动化测试把用户可编辑的 `simple.gds` 内容硬编码为固定基线。
+
+### Error
+版图 bbox 从 `(-2400,-500;400,1500)` 变为 `(-2000,-1100;-200,2200)`，旧 ROI 中 Polygon 数从 10 变为 11。
+
+### Context
+- 用户确认版图变化是主动修改，不能恢复文件。
+- 生产栅格代码和生成式专项测试均通过。
+
+### Suggested Fix
+把精确坐标、计数和 CLI 断言迁移到测试时生成的确定性 GDS；用户样例只用于手工只读验证。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/layout/test_database.py, tests/layout/test_query.py, tests/test_cli.py
+
+### Resolution
+- **Resolved**: 2026-08-09T05:50:00+08:00
+- **Notes**: 所有依赖 `simple.gds` 精确内容的断言均改用生成式版图，用户文件未修改。
+
+---
+
+## [ERR-20260809-015] learning_resolution_patch_context
+
+**Logged**: 2026-08-09T05:47:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+更新 GDS 调查记录时，把 `task_plan.md` 的错误表行放进了 `.learnings/ERRORS.md` 补丁上下文。
+
+### Error
+`apply_patch verification failed: Failed to find expected lines`
+
+### Context
+- 补丁在写入前完整失败，没有产生部分修改。
+- 两个文件的目标位置已经分别读取确认。
+
+### Suggested Fix
+按文件分别更新状态、解决说明和计划错误表，不复用跨文件上下文。
+
+### Metadata
+- Reproducible: yes
+- Related Files: .learnings/ERRORS.md, task_plan.md
+
+### Resolution
+- **Resolved**: 2026-08-09T05:47:00+08:00
+- **Notes**: 已按实际文件位置拆分补丁。
+
+---
+
+## [ERR-20260809-014] tracked_gds_fixture_changed
+
+**Logged**: 2026-08-09T05:40:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+全量测试后，原本干净的跟踪文件 `TestReticle/simple.gds` 被 Git 标记为二进制变化。
+
+### Error
+工作树对象哈希 `33ef637a...` 与 HEAD 对象哈希 `83acea5c...` 不一致，文件大小仍为 2,190 bytes。
+
+### Context
+- 本功能只应读取该文件；CLI 的 Patch 和 PNG 输出均指向 pytest 临时目录。
+- 必须先确认语义差异和写入来源，再决定是否恢复，不能把无关二进制变化纳入提交。
+- 第一次尝试使用 `git show --output` 导出 blob，但该参数不生成纯 blob 文件，KLayout 报告未知流格式；后续改用 `git archive`，不重复失败方法。
+
+### Suggested Fix
+导出 HEAD 版本到忽略目录，比较两个 GDS 的结构、图层、图形和头信息；定位写入路径后增加防回归检查。
+
+### Metadata
+- Reproducible: unknown
+- Related Files: TestReticle/simple.gds, tests/test_cli.py, layout/database.py
+
+### Resolution
+- **Resolved**: 2026-08-09T05:45:00+08:00
+- **Notes**: 用户确认 `simple.gds` 是其主动修改；该文件保持原样并从本次暂存与提交范围中排除。
+
+---
+
 ## [ERR-20260809-013] chinese_comment_prefix_scan
 
 **Logged**: 2026-08-09T04:45:00+08:00

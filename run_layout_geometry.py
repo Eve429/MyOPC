@@ -15,6 +15,7 @@ from geometry import (
     PatchSet,
     extract_contours,
     extract_edge_batches,
+    render_region_batch,
 )
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError, PatchWriter
 
@@ -48,6 +49,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="额外生成 ContourBatch/EdgeBatch 并报告数量")
     parser.add_argument("--output", type=Path,
                         help="把精确裁剪结果作为单 core Patch 写出到 .gds/.oas")
+    parser.add_argument("--png", type=Path, help="把单个 Layer 的 ROI 保存为灰度覆盖率 PNG")
+    parser.add_argument("--show-image", action="store_true",
+                        help="使用系统图片查看器显示单个 Layer 的 ROI")
+    parser.add_argument("--pixel-size-nm", type=float, default=5.0,
+                        help="PNG 物理像素尺寸，默认 5 nm/pixel")
+    parser.add_argument("--max-image-pixels", type=int, default=64_000_000,
+                        help="PNG 最大像素数，默认 64000000")
     parser.add_argument("--json", action="store_true", help="使用 JSON 输出，便于脚本集成")
     return parser
 
@@ -59,6 +67,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         query_box = DbuBox(*args.box) if args.box else database.bbox()
         if query_box is None:
             raise ValueError("所选 top Cell 为空，无法生成默认查询框")
+        if (args.png or args.show_image) and len(layers) != 1:
+            raise ValueError("PNG 展示必须且只能选择一个 Layer")
         # 先由层级索引筛出 bbox 可能相交的图形，再在 C++ Region 中做精确裁剪。
         # 这两步分开是为了避免 Python 全版图遍历，同时正确处理跨 ROI 边界的图形。
         queried = database.query(list(layers), query_box).materialize(args.diagnostics)
@@ -103,6 +113,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     clipped.region(layer), query_box))
             result["output"] = str(PatchWriter.write(
                 patches, args.output, database.dbu_um, top_name="OPC_PATCHES"))
+        if args.png or args.show_image:
+            layer = layers[0]
+            pixels = render_region_batch(
+                queried, layer, database.dbu_um, args.pixel_size_nm,
+                output_path=args.png, show=args.show_image,
+                max_pixels=args.max_image_pixels)
+            result["image"] = {
+                "path": None if args.png is None else str(args.png.expanduser().resolve()),
+                "shown": bool(args.show_image),
+                "width": int(pixels.shape[1]),
+                "height": int(pixels.shape[0]),
+                "pixel_size_nm": args.pixel_size_nm,
+                "layer": f"{layer.layer}/{layer.datatype}",
+            }
         return result
 
 
@@ -120,6 +144,11 @@ def print_text(result: dict[str, Any]) -> None:
         print(line)
     if "output" in result:
         print(f"Patch 已写出：{result['output']}")
+    if "image" in result:
+        image = result["image"]
+        print(f"像素图：{image['width']}x{image['height']}，{image['pixel_size_nm']} nm/pixel")
+        if image["path"]:
+            print(f"PNG 已保存：{image['path']}")
 
 
 def main(argv: list[str] | None = None) -> int:

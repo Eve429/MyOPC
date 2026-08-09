@@ -41,8 +41,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 20. OPC directory responsibility split | complete | Move-only split of shared input, edge input, iteration, lithography and evaluation directories |
 | 21. Physical tile-size CLI | complete | Fixed-nm cuts plus global canonical vector output and exact core-coverage validation |
 | 22. ICCAD13 lithography and evaluation | complete | Exact used Hopkins assets/math plus vectorized EPE/L2/PVBand and direct CUDA runtime |
-| 23. Streaming simple MB-OPC iteration | pending | Synchronous owner-only tile batches with bounded CPU/GPU memory |
-| 24. Full-flow verification and reports | pending | Synthetic, simple.gds and full gcd_45nm validation, manuals, reports and audits |
+| 23. Streaming simple MB-OPC iteration | complete | Synchronous owner-only tile batches with bounded CPU/GPU memory |
+| 24. Full-flow verification and reports | in progress | Synthetic, simple.gds and full gcd_45nm validation, manuals, reports and audits |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.

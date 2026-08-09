@@ -986,3 +986,60 @@ Resolve Unicode paths in PowerShell and pass them through an environment variabl
 - **Notes**: Environment-variable path passing succeeded.
 
 ---
+## [ERR-20260809-030] assumed_test_filename
+
+**Logged**: 2026-08-09T16:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: testing
+
+### Summary
+审查命令假定存在 `tests/opc/test_mbopc_frontend.py`，实际前端测试分布在其他文件中。
+
+### Error
+`Get-Content: Cannot find path 'tests\\opc\\test_mbopc_frontend.py'`
+
+### Context
+- 在一次包含多个只读检查的 PowerShell 命令中直接使用了猜测的测试文件名。
+- 不影响代码或工作树，但使命令以非零状态结束并遗漏该项输出。
+
+### Suggested Fix
+先用 `rg --files tests` 定位实际文件，再读取具体测试文件；避免在复合检查命令中猜测路径。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/
+
+### Resolution
+- **Resolved**: 2026-08-09T16:00:00+08:00
+- **Notes**: 已通过 `rg --files tests` 获取实际测试布局。
+
+---
+## [ERR-20260809-031] assumed_artifact_module_path
+
+**Logged**: 2026-08-09T16:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+读取产物实现时猜测为 `opc/artifacts.py`，实际文件位于 `opc/input/edge/artifacts.py`。
+
+### Error
+`Get-Content: Cannot find path 'opc\\artifacts.py'`
+
+### Context
+- 公共导出来自 `opc.input.edge`，但只读检查未先反查符号定义位置。
+
+### Suggested Fix
+读取实现前先使用 `rg -n "def <symbol>"` 定位真实文件，不依据导入路径猜测目录。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/input/edge/artifacts.py
+
+### Resolution
+- **Resolved**: 2026-08-09T16:20:00+08:00
+- **Notes**: 后续通过符号搜索定位实现。
+
+---

@@ -110,3 +110,13 @@
 - Direct `myopc/python.exe` on Windows needs `<env>/bin` both registered through `os.add_dll_directory()` and prepended to the process `PATH`; the latter is required because NVRTC performs its own builtins lookup. A direct CUDA subprocess test now covers this without `conda run`.
 - Two 256×256 masks used about 64.45 MiB peak CUDA allocations in the first smoke test. The model remains a differentiable `torch.nn.Module`; MB-OPC will wrap calls in `torch.no_grad()`, while future ILT can reuse gradients.
 - Evaluation keeps images on their existing device, excludes halo pixels with an ownership mask, and returns only scalar L2/PVBand plus compact per-segment EPE directions. Invalid narrow-feature/out-of-bounds/same-pixel probes never move an edge; simultaneous inner/outer violations are explicitly ambiguous with direction zero.
+
+## Streaming Simple MB-OPC
+- `opc.iteration.mbopc.optimize` keeps only the compact global displacement/contour state on CPU. It creates current/target/ownership images for one batch, returns only scalar metrics and compact owner directions, then releases the batch tensors.
+- Every tile in a round reads `current`; owner updates accumulate in `next_values` and become visible only after all batches complete and global contour validation succeeds. Cross-core order therefore cannot update an edge early.
+- Target tiles are cached as uint8 under an explicit LRU byte bound. A regression caught and fixed a cache-hit normalization error that would otherwise pass values up to 255 into the second round.
+- Final vector output is reconstructed once from global best displacements. Core boxes control evaluation ownership and update authority but never clip final polygons.
+- Candidate topology safety is deliberately conservative in v1: any predictable reconstruction failure rolls back the complete round. This avoids partial-polygon publication without adding an unproven per-polygon recovery layer.
+- The 2 DBU hollow-wall/8 DBU probe case invalidates long-edge probes through target semantics. A few corner fragments can remain locally valid because their inward normal crosses the adjacent perpendicular wall; tests distinguish this geometry rather than incorrectly declaring every probe invalid.
+- Direct `simple.gds` CUDA validation used 8 cores and 885 segments. Three rounds reduced EPE 338 → 203 → 113, used about 65 MiB peak allocated GPU memory, and produced valid GDS/NPZ/JSON/PNG artifacts.
+- The new `run_mbopc.py` is directly executable from any working directory without installing MyOPC. Defaults target `TestReticle/simple.gds`; full-reticle and ROI runs share fixed-nm tile, halo, pixel-grid and batch controls.

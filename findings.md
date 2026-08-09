@@ -63,3 +63,6 @@
 - The largest Python-only speedups are one-time physical-boundary caching, edge-level metadata, lazy coordinate materialization, sorted stable-key lookup, sparse core membership and regular-grid point location.
 - Physical-mask normalization, rectilinear core grids, line sampling and annotated boundary visualization are reusable by ILT evaluation and later OPC methods; displacement/reconstruction remain MB-OPC-specific.
 - The common mask regression proved that minimum-coherence keeps corner-touch components separate, overlap cut-lines disappear, and a GDS keyhole becomes exactly one hull plus one hole with eight physical edges.
+- The first real implementation run on `gcd_45nm.gds` produced 223,553 segments with 13.79 MiB persistent arrays, 290.01 ms preparation, 36.25 ms coordinate materialization, 960.54 ms full reconstruction, and zero XOR area.
+- The 2x1 grid stored 226,813 sparse memberships for 223,553 segments, confirming that halo context scales with nearby cores instead of an S×C matrix.
+- The first synthetic overlay was geometrically correct but only 276×266 pixels because DBU rasterization cannot use a sub-DBU pixel. At that size 71 segment labels obscured the mask, so diagnostic rendering needs a display-only nearest-neighbor enlargement plus independent label/sample decimation; this must not affect physical coordinates or reconstruction.

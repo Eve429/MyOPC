@@ -8,6 +8,7 @@ from .types import (
     CoreSpec,
     RectilinearCoreGrid,
 )
+from .visualize import render_boundary_overlay
 
 __all__ = [
     "BoundarySampleBatch",
@@ -17,5 +18,6 @@ __all__ = [
     "RectilinearCoreGrid",
     "build_sample_template",
     "normalize_physical_mask",
+    "render_boundary_overlay",
     "sample_lines",
 ]

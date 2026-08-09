@@ -54,3 +54,7 @@
 - User added a hard boundary: existing `layout/` and `geometry/` must remain unchanged; any necessary modification requires stopping for explicit confirmation.
 - Added project AGENTS rules and the first `opc.common` milestone: physical mask normalization, keyhole recovery, rectilinear core grids and reusable vectorized line sampling.
 - Common targeted checks passed (4 tests and Ruff); full regression passed 48 tests, and Git confirmed no `layout/` or `geometry/` diff.
+- Implemented compact MB-OPC fragmentation, analytic outward normals, 128-bit stable IDs, midpoint ownership, sparse halo membership, owner-only updates and jog/miter/bevel reconstruction.
+- Thirteen OPC tests and Ruff pass. Real `gcd_45nm` preparation completed in 290.01 ms with 13.79 MiB persistent segment arrays; full zero-displacement reconstruction took 960.54 ms and had XOR area zero.
+- Completed compact MB-OPC fragmentation, stable 128-bit keys, sparse ownership, owner-only updates, reconstruction, NPZ/GDS artifacts, direct runner and five-case annotated geometry suite.
+- OPC verification now has 36 tests at 93% combined statement/branch coverage; the full repository has 80 passing tests.

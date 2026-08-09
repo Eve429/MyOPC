@@ -1,5 +1,185 @@
 # Errors
 
+## [ERR-20260809-023] repository_ruff_scanned_user_notebook
+
+**Logged**: 2026-08-09T17:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The repository-wide Ruff command included a pre-existing KLayout notebook and reported two unrelated counter-loop suggestions.
+
+### Error
+`ruff check .` reported two `SIM113` findings in `Test/klayout.ipynb`.
+
+### Context
+- The notebook predates this feature and is outside the authorized MB-OPC scope.
+- The user explicitly prohibited unrelated modifications to existing geometry/layout work.
+
+### Suggested Fix
+Run the delivery gate against maintained Python source, runners and tests; report but do not rewrite the user notebook.
+
+### Metadata
+- Reproducible: yes
+- Related Files: Test/klayout.ipynb, pyproject.toml
+
+### Resolution
+- **Resolved**: 2026-08-09T17:25:00+08:00
+- **Notes**: Scoped Ruff checks pass; the notebook remains untouched.
+
+---
+
+## [ERR-20260809-022] diagonal_split_rounding_xor
+
+**Logged**: 2026-08-09T16:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+组合合成版图的零位移重建在非网格对齐斜边产生 10 DBU² XOR 毛刺。
+
+### Error
+`零位移重建与物理参考 mask 不一致`
+
+### Context
+- 同一数学边的相邻 segment 位移相等，但重建仍输出每个内部参数点。
+- 浮点参数点取整后可能偏离原斜线；矩形和部分有理斜率测试没有暴露问题。
+
+### Suggested Fix
+相同数学边且位移相等时完全省略内部 junction，只保留原始数学边两端拐角；增加非网格对齐长斜边回归。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/mbopc/reconstruct.py, tests/opc/test_ownership_reconstruct.py
+
+### Resolution
+- **Resolved**: 2026-08-09T16:02:00+08:00
+- **Notes**: 删除无意义内部输出点，没有增加特判函数或舍入补偿分支。
+
+---
+
+## [ERR-20260809-009] native_region_lifetime_integration_test
+
+**Logged**: 2026-08-09T17:00:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A hierarchy-to-MBOPC integration test deferred physical-mask preparation until after its owning `LayoutDB` context had closed, so the native Region appeared empty.
+
+### Error
+The expected multi-polygon mask reported `polygon_count == 0` after leaving the database context.
+
+### Context
+- Existing layout tests materialize and consume native Region data while the database is open.
+- `prepare_problem` creates the independent merged Region and compact NumPy arrays needed by later MB iterations.
+
+### Suggested Fix
+Complete `prepare_problem` inside the `LayoutDB` context, then verify the resulting independent problem after close.
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/opc/test_geometry_matrix.py
+
+### Resolution
+- **Resolved**: 2026-08-09T17:05:00+08:00
+- **Notes**: The integration test now respects native database lifetime without adding a production copy or wrapper.
+
+---
+
+## [ERR-20260809-008] geometry_suite_contract_and_exports
+
+**Logged**: 2026-08-09T16:30:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The geometry-suite result field intentionally extended the runner contract, while an old exact-dictionary assertion and the sorted-export gate still described the previous contract.
+
+### Error
+`test_direct_runner_writes_all_artifacts_and_validates_round_trips` saw one additional `geometry_suite_case_count` field; Ruff reported `RUF022` for the two new public names.
+
+### Context
+- The five geometry cases had already completed with zero XOR area.
+- The failure was contract synchronization, not a geometry or ownership defect.
+
+### Suggested Fix
+Update the regression to assert the complete new contract and manually place exports in sorted order; do not add a compatibility branch to production code.
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/opc/test_artifacts_cli.py, opc/mbopc/__init__.py
+
+### Resolution
+- **Resolved**: 2026-08-09T16:35:00+08:00
+- **Notes**: The exact assertion now includes five geometry cases and public exports are sorted.
+
+---
+
+## [ERR-20260809-021] mbopc_import_static_findings
+
+**Logged**: 2026-08-09T15:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+归属与重建测试通过后，Ruff 发现一个长导入块和一个未使用测试符号。
+
+### Error
+`I001` 与 `F401`。
+
+### Context
+- 五个功能测试均已通过。
+- 问题不涉及生产行为或接口。
+
+### Suggested Fix
+仅整理导入分组并删除未使用的 DbuBox 导入。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/mbopc/frontend.py, tests/opc/test_ownership_reconstruct.py
+
+### Resolution
+- **Resolved**: 2026-08-09T15:36:00+08:00
+- **Notes**: 导入已最小化修正。
+
+---
+
+## [ERR-20260809-020] parametric_length_float_tolerance
+
+**Logged**: 2026-08-09T15:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+参数化分段长度的严格上限断言受到浮点尾差影响。
+
+### Error
+`20.000000000000007 <= 20.0` 为假。
+
+### Context
+- 分段覆盖总长度和实际序列均正确。
+- 在生产路径强制截断会掩盖计算语义并增加无意义分支。
+
+### Suggested Fix
+测试使用 1e-12 容差和 `allclose`，生产参数计算保持不变。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/opc/test_fragment.py
+
+### Resolution
+- **Resolved**: 2026-08-09T15:11:00+08:00
+- **Notes**: 仅调整数值断言。
+
+---
+
 ## [ERR-20260809-019] common_mask_edge_expectation
 
 **Logged**: 2026-08-09T14:50:00+08:00

@@ -31,10 +31,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 10. Raster verification | complete | Unit/integration/performance/real-layout tests and report updates |
 | 11. Raster simplify audit | complete | Reviewed abstraction, hot-path allocations and error branches; removed duplicate CLI clipping and passed all gates |
 | 12. Property-preservation correction | complete | Preserve all selected geometry while importing attached Shape properties; mixed-property regression and all gates passed |
-| 13. OPC common foundation | in_progress | Physical mask normalization, core grid, shared sampling and annotated visualization |
-| 14. MB-OPC compact frontend | pending | Compact segments, stable keys, ownership, updates and reconstruction |
-| 15. Geometry verification atlas | pending | Generated multi-shape fixtures, annotated images and detailed geometry test document |
-| 16. Direct MB-OPC runner | pending | One root Python file validates all common and MB-OPC functions without installation |
+| 13. OPC common foundation | complete | Physical mask normalization, core grid, shared sampling and annotated visualization |
+| 14. MB-OPC compact frontend | complete | Compact segments, stable keys, ownership, updates and reconstruction |
+| 15. Geometry verification atlas | in_progress | Generated multi-shape fixtures, annotated images and detailed geometry test document |
+| 16. Direct MB-OPC runner | complete | One root Python file validates all common and MB-OPC functions without installation |
 | 17. Manuals and reports | pending | Project development/test manuals plus MB-OPC development/test reports under doc |
 | 18. Performance and simplify audit | pending | Strict benchmarks, real-layout validation and removal of bug-driven/dead logic |
 
@@ -76,6 +76,13 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | Planning completeness script reported 0/0 phases | 1 | Script does not parse the existing status table; manually verified all 11 phases complete |
 | Common mask test expected 10 rather than 8 exterior edges | 1 | Corrected the test: both merged and corner-touch components are rectangles with four physical edges |
 | Initial OPC Ruff check found import grouping and a constructed test default | 1 | Kept first-party imports together and moved LayerSpec construction into the helper body |
+| Exact maximum-length assertion saw 20.000000000000007 | 1 | Kept parametric production math unchanged and used a 1e-12 numerical tolerance in the test |
+| Ownership/reconstruction Ruff pass found one long import and one unused test import | 1 | Reflowed only the import block and removed the unused symbol; all five behavior tests already passed |
+| Composite demo zero-displacement XOR area was 10 DBU² | 1 | Equal-displacement fragments on one diagonal edge no longer emit rounded internal split points; added a non-grid-aligned diagonal regression |
+| Geometry-suite summary extended an exact old result assertion | 1 | Updated the runner regression to include the intentional five-case validation field; no compatibility branch added |
+| Ruff required sorted MB-OPC public exports | 1 | Manually sorted the two new verification exports; production behavior was unchanged |
+| Hierarchy integration prepared a native Region after closing LayoutDB | 1 | Moved physical-mask preparation inside the database context, matching the documented native-object lifetime; the resulting compact problem remains reusable after close |
+| Repository-wide Ruff also scanned a pre-existing KLayout notebook | 1 | Kept the user notebook unchanged and used the scoped first-party Python gate; its two SIM113 findings are unrelated to this feature |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.

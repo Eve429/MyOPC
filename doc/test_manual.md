@@ -8,7 +8,16 @@
 $python = 'D:\app\miniforge\envs\myopc\python.exe'
 ```
 
-运行依赖 KLayout、NumPy、Pillow 和 PyTorch；测试依赖 pytest、pytest-cov、Ruff 和 psutil。
+一次安装运行、测试和性能基准的直接依赖：
+
+```powershell
+& $python -m pip install -r requirements.txt
+```
+
+`requirements.txt` 与 `pyproject.toml` 使用相同版本范围；前者方便直接准备环境，
+后者继续声明 Python 3.12 及以上和项目元数据。源码仍从仓库根目录直接运行，不需要
+把 MyOPC 自身执行 `pip install`。运行依赖为 KLayout、NumPy、Pillow 和 PyTorch；
+开发验收另外使用 pytest、pytest-cov、Ruff 和 psutil。
 
 ## 2. 前端输入验证
 

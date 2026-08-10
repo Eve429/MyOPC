@@ -1,0 +1,11 @@
+# 运行依赖
+klayout>=0.30.10,<0.31
+numpy>=2.5,<3
+pillow>=12,<13
+torch>=2.4,<3
+
+# 开发、测试与性能基准
+psutil>=7
+pytest>=8,<10
+pytest-cov>=5,<8
+ruff>=0.12,<1

@@ -64,8 +64,9 @@ def test_target_cache_hit_restores_unit_interval() -> None:
     """uint8 target 缓存命中后必须恢复到 [0,1]，不能把 255 送入光刻模型。"""
     problem, _ = _rectangle_problem()
     cache = _TargetCache(1 << 20)
-    first = _target_tile(problem, 0, _solver_config(), cache)
-    second = _target_tile(problem, 0, _solver_config(), cache)
+    core = problem.grid.cores()[0]
+    first = _target_tile(problem, 0, core, _solver_config(), cache)
+    second = _target_tile(problem, 0, core, _solver_config(), cache)
     assert np.array_equal(first, second)
     assert float(second.min()) >= 0.0
     assert float(second.max()) <= 1.0
@@ -92,8 +93,7 @@ def test_contour_subset_selects_only_requested_polygon_and_all_holes() -> None:
     problem = prepare_problem(_batch(first + second), _batch(first + second).layers[0],
                               FragmentationConfig(2, 8, 2))
     selected = _subset_contours(problem.segments.contours, np.array([1]))
-    assert selected.ring_polygon_ids.tolist() == [1, 1]
-    assert selected.ring_is_hole.tolist() == [False, True]
+    assert selected.polygon_ring_offsets.tolist() == [0, 2]
     assert selected.ring_count == 2
 
 
@@ -137,13 +137,14 @@ def test_zero_local_tile_preserves_unquantized_reference_raster() -> None:
         epe_distance_dbu=3.0, pixel_dbu=4,
         canvas=96, batch_size=1, target_cache_bytes=1 << 20)
     core_index = 0
-    context = problem.ownership.cores[core_index].context_box
+    core = problem.grid.cores()[core_index]
+    context = core.context_box
     expected = rasterize_region_canvas(
         problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
-    target = _target_tile(problem, core_index, config, _TargetCache(1 << 20))
+    target = _target_tile(problem, core_index, core, config, _TargetCache(1 << 20))
     actual = _current_tile(
         problem, problem.segments.contours,
-        np.zeros(problem.segments.segment_count), core_index,
+        np.zeros(problem.segments.segment_count), core_index, core,
         _polygon_ids_for_core(problem, core_index), target, config)
     assert not np.array_equal(target, expected)
     assert np.array_equal(actual, expected)
@@ -192,7 +193,12 @@ def test_topology_guard_rejects_opposite_edge_crossing_and_hull_inside_hole() ->
     hollow_config = FragmentationConfig(2, 10, 30)
     hollow_problem = prepare_problem(_batch(hollow), _batch(hollow).layers[0], hollow_config)
     hollow_values = np.zeros(hollow_problem.segments.segment_count)
-    segment_holes = hollow_problem.segments.edges.is_hole[hollow_problem.segments.edge_ids]
+    contours = hollow_problem.segments.contours
+    ring_holes = np.ones(contours.ring_count, dtype=np.bool_)
+    ring_holes[contours.polygon_ring_offsets[:-1]] = False
+    edge_ring_ids = np.repeat(
+        np.arange(contours.ring_count, dtype=np.int32), np.diff(contours.ring_offsets))
+    segment_holes = ring_holes[edge_ring_ids[hollow_problem.segments.edge_ids]]
     hollow_values[~segment_holes] = -25.0
     inverted = reconstruct_contours(hollow_problem, hollow_values)
     assert not _preserves_reference_topology(hollow_problem.segments.contours, inverted)

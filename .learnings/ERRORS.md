@@ -1248,3 +1248,273 @@ Resolve Unicode paths in PowerShell and pass them through an environment variabl
 - **Notes**: 后续审计统一使用 `rg --glob`。
 
 ---
+
+## [ERR-20260810-002] retained_tile_benchmark_outputs
+
+**Logged**: 2026-08-10T15:20:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+全量版图子集基准错误地保留了所有 core 的轮廓结果，最终触发 OpenBLAS 内存分配失败。
+
+### Error
+`OpenBLAS blas_thread_init: pthread_create failed`，随后进程无法继续分配所需内存。
+
+### Context
+- 基准对 870 个 core 重复多轮，并把每个轮廓子集保存在列表中。
+- 这不符合项目流式处理约束，也不能代表真实 solver 的内存行为。
+
+### Suggested Fix
+性能测试仅累计耗时、计数和校验摘要；每个 core 完成后立即释放局部数组，不保存整轮 tile 输出。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/iteration/mbopc/solver.py
+
+### Resolution
+- **Resolved**: 2026-08-10T15:25:00+08:00
+- **Notes**: 后续计划已锁定有界、流式的基准方法。
+
+---
+
+## [ERR-20260810-003] windows_pagefile_torch_import
+
+**Logged**: 2026-08-10T15:30:00+08:00
+**Priority**: medium
+**Status**: pending
+**Area**: infra
+
+### Summary
+前一内存失败后系统分页文件处于低余量状态，后续 Python 进程导入 PyTorch 时加载 `shm.dll` 失败。
+
+### Error
+`OSError: [WinError 1455] 页面文件太小，无法完成操作。 Error loading ...\\torch\\lib\\shm.dll`
+
+### Context
+- 错误发生在只读性能探查阶段，并非项目源代码异常。
+- 连续启动重型 Python/PyTorch 进程会放大系统分页文件压力。
+
+### Suggested Fix
+把几何/NumPy 基准与 CUDA 集成测试分进程分阶段执行，避免失败后立即重复导入；必要时等待系统回收资源。
+
+### Metadata
+- Reproducible: unknown
+- Related Files: requirements.txt
+
+---
+
+## [ERR-20260810-004] rg_windows_root_glob
+
+**Logged**: 2026-08-10T15:40:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+调用审计再次把 `run_*.py` 作为 Windows 路径参数交给 rg，命令最后返回错误码 1。
+
+### Error
+`rg: run_*.py: 文件名、目录名或卷标语法不正确。 (os error 123)`
+
+### Context
+- 同一复合命令中其他文件读取和符号搜索已成功。
+- PowerShell 不会按 Unix shell 方式替 rg 展开该路径参数。
+
+### Suggested Fix
+始终传固定目录给 rg，并用 `--glob 'run_*.py'` 过滤根入口。
+
+### Metadata
+- Reproducible: yes
+- Related Files: run_mbopc.py, run_mbopc_frontend.py
+- See Also: ERR-20260809-034
+
+### Resolution
+- **Resolved**: 2026-08-10T15:42:00+08:00
+- **Notes**: 本次后续搜索统一采用固定目录或 PowerShell `Get-ChildItem -Filter`。
+
+---
+
+## [ERR-20260810-005] multi_file_patch_anchor
+
+**Logged**: 2026-08-10T15:50:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+首次同步计划记录的多文件补丁因 `findings.md` 一个中文空格不一致而整体校验失败。
+
+### Error
+`apply_patch verification failed: Failed to find expected lines in findings.md`
+
+### Context
+- 补丁是原子操作，因此其他文件也没有发生部分修改。
+- 长中文行不适合作为跨文件补丁的唯一锚点。
+
+### Suggested Fix
+先读取文件尾部，再按文件使用短且唯一的锚点独立应用补丁。
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md, findings.md, progress.md
+- See Also: ERR-20260809-033
+
+### Resolution
+- **Resolved**: 2026-08-10T15:52:00+08:00
+- **Notes**: 已拆成独立短锚点补丁并成功写入。
+
+---
+
+## [ERR-20260810-006] early_membership_validation_message
+
+**Logged**: 2026-08-10T16:40:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+归属校验合入 MBOPCProblem 后更早拒绝越界 membership，但通用英文消息破坏了加载器既有中文异常断言。
+
+### Error
+预期 `超出 segment 范围`，实际为 `member segment index is out of range`。
+
+### Context
+- 59 项聚焦迁移测试中仅此一项失败，其余几何、重建、solver 和归档往返均通过。
+- 重复在加载器预检查会产生两套相同范围逻辑。
+
+### Suggested Fix
+保留 Problem 作为唯一校验权威，并把其异常原因改为明确中文消息。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/input/edge/types.py, tests/workbench/test_offline_workbench.py
+
+### Resolution
+- **Resolved**: 2026-08-10T16:42:00+08:00
+- **Notes**: 问题级校验统一为 `member_segment_indices 超出 segment 范围`，既有回归直接覆盖。
+
+---
+
+## [ERR-20260810-007] solver_import_order
+
+**Logged**: 2026-08-10T16:50:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+首次迁移静态检查发现 solver 中 `opc.errors` 与 `opc.input` 的导入顺序不符合 Ruff 规则。
+
+### Error
+`I001 Import block is un-sorted or un-formatted`
+
+### Context
+- 59 项功能测试已经全部通过。
+- 项目禁止会大幅展开代码的自动格式化。
+
+### Suggested Fix
+只手工交换两行第一方导入，不运行 Ruff 自动修复。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/iteration/mbopc/solver.py
+
+### Resolution
+- **Resolved**: 2026-08-10T16:51:00+08:00
+- **Notes**: 已按 Ruff 建议手工调整导入顺序。
+
+---
+
+## [ERR-20260810-008] full_regression_contract_references
+
+**Logged**: 2026-08-10T17:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+全仓库回归发现两个未包含在聚焦集中的测试仍断言旧诊断版本或从 PhysicalMask 读取 contours。
+
+### Error
+诊断版本预期 `[2]` 实际 `[3]`；`PhysicalMask` 不再具有 `contours` 属性。
+
+### Context
+- 新诊断字段与旧字段不兼容，版本升级是预期行为。
+- ContourBatch 已由 SegmentBatch 唯一持有，不应增加兼容属性。
+
+### Suggested Fix
+测试直接验证 v3，并从 `problem.segments.contours` 读取数值轮廓。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/opc/test_artifacts_cli.py, tests/opc/test_geometry_matrix.py
+
+### Resolution
+- **Resolved**: 2026-08-10T17:07:00+08:00
+- **Notes**: 两处测试已迁移到新公共契约。
+
+---
+
+## [ERR-20260810-009] cuda_device_busy_subprocess
+
+**Logged**: 2026-08-10T17:05:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+全仓库回归的独立 CUDA 子进程在加载 kernel tensor 时报告设备忙或不可用。
+
+### Error
+`RuntimeError: CUDA error: CUDA-capable device(s) is/are busy or unavailable`
+
+### Context
+- 同轮 126 项 CPU/几何/OPC 测试通过。
+- 本次改动未触及 lithography 模块；此前系统还出现过分页文件不足。
+
+### Suggested Fix
+等待测试进程完全退出后单独复跑 CUDA 直接环境测试；只有稳定复现且与代码调用相关时才修改实现。
+
+### Metadata
+- Reproducible: unknown
+- Related Files: tests/lithography/test_iccad13.py
+- See Also: ERR-20260810-003
+
+### Resolution
+- **Resolved**: 2026-08-10T17:15:00+08:00
+- **Notes**: 测试进程退出后单独复跑成功，随后包含该用例的 130 项全仓库回归全部通过；确认是临时设备状态。
+
+---
+
+## [ERR-20260810-010] ownership_patch_stale_anchor
+
+**Logged**: 2026-08-10T17:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+owner/v1 校验收敛的多文件补丁使用了与已迁移代码不一致的长锚点，原子校验失败。
+
+### Error
+`apply_patch verification failed`，未找到 offline_inputs.py 中预期的连续校验块。
+
+### Context
+- 此前迁移已经改变相邻行，长上下文不再稳定。
+- 补丁原子失败，没有任何文件被部分修改。
+
+### Suggested Fix
+重新读取精确片段，按类型、加载器和测试的短锚点应用。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/input/edge/types.py, tests/workbench/offline_inputs.py
+- See Also: ERR-20260810-005
+
+### Resolution
+- **Resolved**: 2026-08-10T17:12:00+08:00
+- **Notes**: 短锚点补丁成功，23 项聚焦测试和全仓库回归均通过。
+
+---

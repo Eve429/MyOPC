@@ -196,7 +196,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         preview_path = render_boundary_overlay(
             reconstructed, layer, box, dbu_um, geometry.starts, geometry.ends,
             geometry.normals, output_dir / "mbopc_result.png",
-            problem.ownership.owner_indices, inner, outer, problem.ownership.cores)
+            problem.owner_indices, inner, outer, problem.grid.cores())
     finished = perf_counter()
     gpu_peak = (int(torch.cuda.max_memory_allocated(model.device))
                 if model.device.type == "cuda" else 0)
@@ -208,16 +208,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "tiling": {"columns": grid.column_count, "rows": grid.row_count,
                    "tile_size_nm": args.tile_size_nm, "halo_nm": args.halo_nm,
                    "pixel_nm": args.pixel_nm},
-        "counts": {"polygons": problem.physical_mask.contours.polygon_count,
-                   "rings": problem.physical_mask.contours.ring_count,
-                   "edges": problem.segments.edges.edge_count,
+        "counts": {"polygons": problem.segments.contours.polygon_count,
+                   "rings": problem.segments.contours.ring_count,
+                   "edges": len(problem.segments.contours.vertices),
                    "segments": problem.segments.segment_count,
-                   "cores": len(problem.ownership.cores),
-                   "memberships": len(problem.ownership.member_segment_indices)},
+                   "cores": problem.core_count,
+                   "memberships": len(problem.member_segment_indices)},
         "optimization": {"best_iteration": optimized.best_iteration,
                          "stop_reason": optimized.stop_reason,
                          "records": [asdict(record) for record in optimized.records]},
-        "memory": {"segment_persistent_bytes": problem.segments.persistent_nbytes,
+        "memory": {"problem_persistent_bytes": problem.persistent_nbytes,
+                   "segment_persistent_bytes": problem.segments.persistent_nbytes,
                    "target_cache_limit_bytes": iteration.target_cache_bytes,
                    "gpu_peak_allocated_bytes": gpu_peak},
         "timing_seconds": {"layout_load": loaded - started,

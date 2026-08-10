@@ -52,6 +52,11 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 31. Independent lithography and OPC runners | complete | Direct Python entry points consuming only saved offline inputs |
 | 32. Offline workbench verification | complete | Multi-geometry, corruption, memory-guard and end-to-end regressions plus real simple.gds runs |
 | 33. Reports, simplify audit and local commits | complete | Manuals/reports/planning sync, final audits and two local milestone commits |
+| 34. MB-OPC contract subtraction baseline | complete | Locked current behavior, memory and call-site baselines before changing public contracts |
+| 35. Generic contour topology cleanup | complete | Replaced repeated layer/polygon/hole metadata with nested CSR and removed EdgeBatch |
+| 36. Edge-input and ownership consolidation | complete | SegmentBatch owns edge caches and MBOPCProblem owns grid/CSR membership |
+| 37. Offline archive v2 migration | complete | Saves/loads only the new minimal problem contract and rejects v1 clearly |
+| 38. Regression, performance and reports | in_progress | Full tests, real-layout benchmark, simplification audit, manuals/reports and local commits |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -132,6 +137,15 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 阶段 30 首次 Ruff 检查报告 9 项导入/类型/遍历风格问题 | 1 | 不运行 formatter，手工整理导入并采用明确异常与 `pairwise`；功能和归档契约不变 |
 | 两个离线运行入口各残留一个未使用的 `json` 导入 | 1 | 直接删除无效导入，不增加占位引用；compileall 已通过 |
 | 最终异常审计发现损坏 `metadata.counts` 会泄漏 KeyError | 1 | 在统一校验块内规范化全部计数并补回归，加载器现在稳定抛 ValueError |
+| 全量 tile 子集基准保留 870 份结果导致 OpenBLAS 分配失败 | 1 | 后续基准只累计标量并立即释放每个 tile 输出，不保存整图子集结果 |
+| 系统分页文件不足导致后续 PyTorch 导入报 WinError 1455 | 1 | 不连续重跑重型进程；功能测试与性能基准分阶段执行并显式释放进程资源 |
+| PowerShell 把 `run_*.py` 作为 rg 路径传递并返回错误码 | 1 | 后续只传仓库目录并使用 `rg --glob 'run_*.py'` 过滤文件 |
+| 首次多文件计划补丁因 findings 中文空格不一致而整体失败 | 1 | 改为每个文件使用已核对的短锚点独立应用，避免原子补丁被单个文档上下文阻断 |
+| 新 Problem 提前拒绝越界 membership，但英文消息不匹配加载器回归 | 1 | 保留提前校验并统一为明确中文范围原因，不增加重复的加载器预检查 |
+| 首次迁移 Ruff 仅发现 solver 的一个第一方导入排序问题 | 1 | 手工交换两行导入，保持紧凑格式且不运行自动格式化 |
+| 全量回归发现诊断版本断言和层级测试仍使用旧结构 | 1 | 更新为诊断 v3 和 `problem.segments.contours`，不保留旧字段兼容属性 |
+| 全量回归中的独立 CUDA 子进程报告设备 busy/unavailable | 1 | 判定为环境资源状态；在 CPU/OPC 修正后单独复跑 CUDA 测试，不修改光刻代码 |
+| owner/v1 校验收敛补丁因一个已变化的离线校验锚点失败 | 1 | 读取精确上下文后拆分短锚点；原子补丁未产生部分修改 |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -165,3 +179,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Offline raster input is one model-ready bottom-left `float32` canvas; oversize ROI is rejected instead of silently tiled.
 - Offline segment input is a separate restorable versioned contract, not an extension of the diagnostic-only `save_problem_npz` format.
 - Strict preflight accepts a deliberate second layout read so raw hierarchical shape/vertex/segment complexity can be rejected before Region materialization.
+- Phase 34 is user-authorized to modify `geometry/`: `ContourBatch` becomes layer-free nested CSR, `EdgeBatch` is deleted, and no compatibility shim is retained.
+- `PhysicalMask` remains the common native mask contract with only layer, merged Region and query box; numeric contours are prepared only by edge-oriented OPC input.
+- `SegmentBatch` keeps only two measured edge caches (`edge_next_ids`, `edge_polygon_ids`) plus normals/fragment intervals; all other mathematical-edge metadata is derived transiently.
+- `OwnershipBatch` is deleted. `MBOPCProblem` directly owns the compact grid and owner/membership CSR arrays and exposes core access helpers.
+- Offline segment archives move directly to version 2; version 1 is rejected with a regenerate-input message rather than maintained through a conversion branch.

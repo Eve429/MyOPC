@@ -1,5 +1,6 @@
 """OPC 数据契约、归属和重建拒绝路径测试。"""
 
+from dataclasses import replace
 from pathlib import Path
 
 import klayout.db as kdb
@@ -41,9 +42,18 @@ def test_probe_sampling_rejects_malformed_lines_and_distance() -> None:
 def test_ownership_membership_rejects_bad_core_index() -> None:
     """规则网格必须为全部边段分配 owner，并拒绝越界 membership 查询。"""
     problem, _ = _rectangle_problem()
-    assert np.all(problem.ownership.owner_indices >= 0)
+    assert np.all(problem.owner_indices >= 0)
     with pytest.raises(IndexError, match="core index"):
-        problem.ownership.segments_for_core(len(problem.ownership.cores))
+        problem.segments_for_core(problem.core_count)
+
+
+def test_problem_rejects_segment_without_owner() -> None:
+    """完整 MB-OPC 问题不得接受没有唯一写入 core 的 segment。"""
+    problem, _ = _rectangle_problem()
+    owners = problem.owner_indices.copy()
+    owners[0] = -1
+    with pytest.raises(ValueError, match="有效 owner"):
+        replace(problem, owner_indices=owners)
 
 
 def test_reconstruction_and_artifacts_reject_invalid_vectors_and_paths(tmp_path: Path) -> None:

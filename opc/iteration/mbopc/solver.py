@@ -13,6 +13,7 @@ from evaluation import evaluate_edge_probes, evaluate_process_window
 from geometry import ContourBatch, contours_to_region
 from lithography import ICCAD13Lithography
 from opc.errors import ReconstructionError
+from opc.input import CoreSpec
 from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_contours
 from opc.input.raster import ownership_canvas, rasterize_region_canvas
 
@@ -21,18 +22,14 @@ from .types import IterationRecord, SimpleMBOPCConfig, SimpleMBOPCResult
 
 def _subset_contours(contours: ContourBatch,
                      polygon_ids: np.ndarray) -> ContourBatch:
-    """批量提取完整 Polygon 的 hull/hole rings，并保留原 polygon ID。"""
+    """批量提取完整 Polygon 的 hull/hole rings，并局部重建两级 CSR。"""
     ids = np.ascontiguousarray(polygon_ids, dtype=np.int64)
     if ids.ndim != 1:
         raise ValueError("polygon_ids 必须是一维数组")
     ids = np.unique(ids)
-    ring_polygon_ids = contours.ring_polygon_ids
-    if len(ring_polygon_ids) > 1 and np.any(np.diff(ring_polygon_ids) < 0):
-        raise ValueError("ContourBatch 的 polygon/ring 顺序必须单调")
-    left = np.searchsorted(ring_polygon_ids, ids, side="left")
-    right = np.searchsorted(ring_polygon_ids, ids, side="right")
-    exists = (left < len(ring_polygon_ids)) & (right > left)
-    left, right = left[exists], right[exists]
+    ids = ids[(ids >= 0) & (ids < contours.polygon_count)]
+    left = contours.polygon_ring_offsets[ids]
+    right = contours.polygon_ring_offsets[ids + 1]
     ring_group_counts = right - left
     ring_prefix = np.empty(len(ring_group_counts), dtype=np.int64)
     if len(ring_prefix):
@@ -55,18 +52,19 @@ def _subset_contours(contours: ContourBatch,
     offsets = np.empty(len(selected_counts) + 1, dtype=np.int64)
     offsets[0] = 0
     np.cumsum(selected_counts, out=offsets[1:])
-    return ContourBatch(
-        contours.layer, contours.vertices[vertex_indices], offsets,
-        ring_polygon_ids[ring_indices], contours.ring_is_hole[ring_indices])
+    polygon_offsets = np.empty(len(ring_group_counts) + 1, dtype=np.int64)
+    polygon_offsets[0] = 0
+    np.cumsum(ring_group_counts, out=polygon_offsets[1:])
+    return ContourBatch(contours.vertices[vertex_indices], offsets, polygon_offsets)
 
 
 def _polygon_ids_for_core(problem: MBOPCProblem, core_index: int) -> np.ndarray:
     """返回一个 core context 内可能受位移影响的稳定 Polygon ID。"""
-    members = problem.ownership.segments_for_core(core_index)
+    members = problem.segments_for_core(core_index)
     if not len(members):
         return np.empty(0, dtype=np.int64)
     edge_ids = problem.segments.edge_ids[members]
-    return np.unique(problem.segments.edges.polygon_ids[edge_ids]).astype(np.int64)
+    return np.unique(problem.segments.edge_polygon_ids[edge_ids]).astype(np.int64)
 
 
 class _TargetCache:
@@ -99,7 +97,7 @@ class _TargetCache:
             self.current_bytes -= removed.nbytes
 
 
-def _target_tile(problem: MBOPCProblem, core_index: int,
+def _target_tile(problem: MBOPCProblem, core_index: int, core: CoreSpec,
                  config: SimpleMBOPCConfig, cache: _TargetCache) -> np.ndarray:
     """读取或生成固定参考 mask 的 context 画布。"""
     cached = cache.get(core_index)
@@ -107,7 +105,7 @@ def _target_tile(problem: MBOPCProblem, core_index: int,
         # 缓存用 uint8 把每 tile 常驻内存降为 float32 的四分之一；命中时必须恢复
         # 到模型约定的 [0,1]，否则第二轮会把 255 当作 mask 强度并破坏光刻结果。
         return cached.astype(np.float32) / 255.0
-    context = problem.ownership.cores[core_index].context_box
+    context = core.context_box
     raster = rasterize_region_canvas(
         problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
     compact = np.rint(raster * 255.0).astype(np.uint8)
@@ -117,13 +115,13 @@ def _target_tile(problem: MBOPCProblem, core_index: int,
 
 def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
                   displacements: np.ndarray, core_index: int,
-                  polygon_ids: np.ndarray, target: np.ndarray,
+                  core: CoreSpec, polygon_ids: np.ndarray, target: np.ndarray,
                   config: SimpleMBOPCConfig) -> np.ndarray:
     """用参考 tile 加邻近 Polygon 差分生成当前 mask，不创建完整 reticle Region。"""
     if not len(polygon_ids):
         return target.copy()
-    context = problem.ownership.cores[core_index].context_box
-    members = problem.ownership.segments_for_core(core_index)
+    context = core.context_box
+    members = problem.segments_for_core(core_index)
     if not np.count_nonzero(displacements[members]):
         # 当前 core 能看到的 ownership/halo segment 全为精确零位移时，局部图形在数学
         # 上就是参考 Region。直接栅格化参考 Region 可跳过两次轮廓子集物化和三次
@@ -140,8 +138,8 @@ def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
 
 def _owner_indices(problem: MBOPCProblem) -> tuple[np.ndarray, ...]:
     """一次性建立每个 core 的 owner segment 索引，供所有轮次复用。"""
-    return tuple(np.flatnonzero(problem.ownership.owner_indices == core_index).astype(np.int32)
-                 for core_index in range(len(problem.ownership.cores)))
+    return tuple(np.flatnonzero(problem.owner_indices == core_index).astype(np.int32)
+                 for core_index in range(problem.core_count))
 
 
 def _ring_signed_areas2(contours: ContourBatch) -> np.ndarray:
@@ -162,8 +160,8 @@ def _preserves_reference_topology(reference: ContourBatch,
                                   reference_areas: np.ndarray | None = None) -> bool:
     """检查候选环未翻转，且每个 hole 仍完整包含在原所属 hull 内。"""
     if (candidate.ring_count != reference.ring_count or
-            not np.array_equal(candidate.ring_polygon_ids, reference.ring_polygon_ids) or
-            not np.array_equal(candidate.ring_is_hole, reference.ring_is_hole)):
+            not np.array_equal(candidate.polygon_ring_offsets,
+                               reference.polygon_ring_offsets)):
         return False
     expected_areas = (_ring_signed_areas2(reference) if reference_areas is None else
                       np.ascontiguousarray(reference_areas, dtype=np.float64))
@@ -173,14 +171,16 @@ def _preserves_reference_topology(reference: ContourBatch,
     if (len(expected_areas) != reference.ring_count or
             np.any(np.signbit(expected_areas) != np.signbit(candidate_areas))):
         return False
-    hole_ring_ids = np.flatnonzero(candidate.ring_is_hole)
+    ring_is_hole = np.ones(candidate.ring_count, dtype=np.bool_)
+    ring_is_hole[candidate.polygon_ring_offsets[:-1]] = False
+    hole_ring_ids = np.flatnonzero(ring_is_hole)
+    ring_polygon_ids = np.repeat(
+        np.arange(candidate.polygon_count, dtype=np.int64),
+        np.diff(candidate.polygon_ring_offsets))
     for hole_ring_id in hole_ring_ids:
-        polygon_id = candidate.ring_polygon_ids[hole_ring_id]
-        hull_ids = np.flatnonzero(
-            (candidate.ring_polygon_ids == polygon_id) & ~candidate.ring_is_hole)
-        if len(hull_ids) != 1:
-            return False
-        hull_start, hull_end = candidate.ring_offsets[hull_ids[0]:hull_ids[0] + 2]
+        polygon_id = ring_polygon_ids[hole_ring_id]
+        hull_id = candidate.polygon_ring_offsets[polygon_id]
+        hull_start, hull_end = candidate.ring_offsets[hull_id:hull_id + 2]
         hull = kdb.Region(kdb.Polygon([
             kdb.Point(int(x), int(y))
             for x, y in candidate.vertices[hull_start:hull_end]]))
@@ -199,7 +199,9 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
     """以 tile batch 评价当前状态，并在轮次屏障后统一发布 owner 更新。"""
     if config.canvas > model.config.canvas:
         raise ValueError("求解器 tile canvas 不能超过光刻模型 canvas")
-    cores = problem.ownership.cores
+    # 网格常驻只保存两轴切线；优化入口一次性展开 CoreSpec 并在所有轮次复用，
+    # 避免问题对象长期持有数百个可由切线和 halo 直接推导的 Python 小对象。
+    cores = problem.grid.cores()
     for core in cores:
         required_width = (core.context_box.width + config.pixel_dbu - 1) // config.pixel_dbu
         required_height = (core.context_box.height + config.pixel_dbu - 1) // config.pixel_dbu
@@ -234,12 +236,13 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
             masks: list[np.ndarray] = []
             ownership_masks: list[np.ndarray] = []
             for core_index in batch_indices:
-                target = _target_tile(problem, core_index, config, cache)
+                core = cores[core_index]
+                target = _target_tile(problem, core_index, core, config, cache)
                 targets.append(target)
                 masks.append(_current_tile(
-                    problem, current_contours, current, core_index, polygon_ids[core_index],
+                    problem, current_contours, current, core_index, core,
+                    polygon_ids[core_index],
                     target, config))
-                core = cores[core_index]
                 ownership_masks.append(ownership_canvas(
                     core.ownership_box, core.context_box, config.pixel_dbu, config.canvas))
             target_tensor = torch.as_tensor(np.stack(targets), device=model.device)

@@ -13,7 +13,6 @@ from geometry import (
     GeometryPatch,
     PatchSet,
     extract_contours,
-    extract_edge_batches,
     render_region_batch,
 )
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError, PatchWriter
@@ -45,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--diagnostics", action="store_true",
                         help="额外统计 ROI 中的 Box/Path/Polygon/Text/Edge；会增加一次遍历")
     parser.add_argument("--arrays", action="store_true",
-                        help="额外生成 ContourBatch/EdgeBatch 并报告数量")
+                        help="额外生成 ContourBatch 并报告 Polygon、Ring 和数学边数量")
     parser.add_argument("--output", type=Path,
                         help="把精确裁剪结果作为单 core Patch 写出到 .gds/.oas")
     parser.add_argument("--png", type=Path, help="把单个 Layer 的 ROI 保存为灰度覆盖率 PNG")
@@ -81,7 +80,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "layers": {},
         }
         contour_batches = extract_contours(batch) if args.arrays else {}
-        edge_batches = extract_edge_batches(contour_batches) if args.arrays else {}
         for layer in batch.layers:
             key = f"{layer.layer}/{layer.datatype}"
             region = batch.region(layer)
@@ -94,7 +92,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 layer_result.update(
                     vertex_count=len(contour_batches[layer].vertices),
                     ring_count=contour_batches[layer].ring_count,
-                    edge_count=edge_batches[layer].edge_count,
+                    # 闭合 ring 的每个顶点恰好对应一条数学边，诊断无需为计数构造
+                    # 完整的边起点、终点和归属数组。
+                    edge_count=len(contour_batches[layer].vertices),
                 )
             if args.diagnostics and batch.stats is not None:
                 stats = batch.stats.shapes[layer]

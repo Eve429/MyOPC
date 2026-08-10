@@ -160,8 +160,8 @@ def _demo_displacements(problem: MBOPCProblem,
     """为每个有 owner 边段的 core 选择一段并返回全局对齐位移及变化索引。"""
     values = np.zeros(problem.segments.segment_count, dtype=np.float64)
     changed: list[int] = []
-    for core_index in range(len(problem.ownership.cores)):
-        owned = np.flatnonzero(problem.ownership.owner_indices == core_index)
+    for core_index in range(problem.core_count):
+        owned = np.flatnonzero(problem.owner_indices == core_index)
         if not len(owned):
             continue
         segment_index = int(owned[len(owned) // 2])
@@ -262,7 +262,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     #    覆盖完整且没有正面积重叠，边段唯一 owner 则已由准备阶段单独保证。
     core_coverage = kdb.Region()
     core_area_sum = 0
-    for core in problem.ownership.cores:
+    cores = problem.grid.cores()
+    for core in cores:
         core_coverage.insert(core.ownership_box.to_native())
         core_area_sum += core.ownership_box.width * core.ownership_box.height
     core_coverage = core_coverage.merged()
@@ -292,8 +293,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     #     owner、采样点及 core 框；输出 PNG 用颜色和标记直观展示分段及归属关系。
     png_path = render_boundary_overlay(
         reconstructed, layer, batch.query_box, dbu_um, geometry.starts, geometry.ends,
-        geometry.normals, output_dir / "overview.png", problem.ownership.owner_indices,
-        inner, outer, problem.ownership.cores)
+        geometry.normals, output_dir / "overview.png", problem.owner_indices,
+        inner, outer, cores)
 
     # 14. 默认运行额外的多图形几何回归套件并把图片写入子目录；传入
     #     --skip-geometry-suite 时返回 None，用于只测当前输入的快速运行模式。
@@ -316,15 +317,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "requested_tile_size_nm": args.tile_size_nm,
         },
         "counts": {
-            "polygons": problem.physical_mask.contours.polygon_count,
-            "rings": problem.physical_mask.contours.ring_count,
-            "mathematical_edges": problem.segments.edges.edge_count,
+            "polygons": problem.segments.contours.polygon_count,
+            "rings": problem.segments.contours.ring_count,
+            "mathematical_edges": len(problem.segments.contours.vertices),
             "segments": problem.segments.segment_count,
-            "samples": len(inner) * 2, "cores": len(problem.ownership.cores),
-            "memberships": len(problem.ownership.member_segment_indices),
+            "samples": len(inner) * 2, "cores": problem.core_count,
+            "memberships": len(problem.member_segment_indices),
             "updated_segments": len(changed),
         },
-        "memory": {"segment_persistent_bytes": problem.segments.persistent_nbytes},
+        "memory": {"problem_persistent_bytes": problem.persistent_nbytes,
+                   "segment_persistent_bytes": problem.segments.persistent_nbytes},
         "timing_seconds": {
             "prepare": prepared - started, "update_sample_reconstruct": rebuilt - prepared,
             "artifact_output": finished - rebuilt, "total": finished - started,

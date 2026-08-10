@@ -34,34 +34,26 @@ def save_problem_npz(problem: MBOPCProblem, displacements: object,
     output = Path(output_path).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
-    segments, ownership = problem.segments, problem.ownership
+    segments = problem.segments
     try:
         # NPZ 仅用于一次前端验证内部的数值检查，不承诺跨重新分段恢复。写入二进制
         # 流可阻止 NumPy 自动追加扩展名；同卷 os.replace 保证异常时不会留下半文件。
         with temporary.open("wb") as stream:
             np.savez_compressed(
-                stream, format_version=np.array([2], dtype=np.int32),
+                stream, format_version=np.array([3], dtype=np.int32),
                 contour_vertices=segments.contours.vertices,
                 contour_ring_offsets=segments.contours.ring_offsets,
-                contour_polygon_ids=segments.contours.ring_polygon_ids,
-                contour_is_hole=segments.contours.ring_is_hole,
-                edge_starts=segments.edges.starts, edge_ends=segments.edges.ends,
-                edge_polygon_ids=segments.edges.polygon_ids,
-                edge_ring_ids=segments.edges.ring_ids, edge_normals=segments.edge_normals,
+                contour_polygon_ring_offsets=segments.contours.polygon_ring_offsets,
+                edge_next_ids=segments.edge_next_ids,
+                edge_polygon_ids=segments.edge_polygon_ids,
+                edge_normals=segments.edge_normals,
                 segment_ring_offsets=segments.ring_segment_offsets,
                 segment_edge_ids=segments.edge_ids, segment_t0=segments.t0,
                 segment_t1=segments.t1, segment_displacements=values,
-                owner_indices=ownership.owner_indices, core_offsets=ownership.core_offsets,
-                member_segment_indices=ownership.member_segment_indices,
-                core_ids=np.asarray([core.core_id for core in ownership.cores]),
-                core_boxes=np.asarray([
-                    [core.ownership_box.left, core.ownership_box.bottom,
-                     core.ownership_box.right, core.ownership_box.top]
-                    for core in ownership.cores], dtype=np.int64),
-                context_boxes=np.asarray([
-                    [core.context_box.left, core.context_box.bottom,
-                     core.context_box.right, core.context_box.top]
-                    for core in ownership.cores], dtype=np.int64))
+                owner_indices=problem.owner_indices, core_offsets=problem.core_offsets,
+                member_segment_indices=problem.member_segment_indices,
+                grid_x_cuts=problem.grid.x_cuts, grid_y_cuts=problem.grid.y_cuts,
+                grid_halo_dbu=np.array(problem.grid.halo_dbu, dtype=np.int64))
         os.replace(temporary, output)
     finally:
         temporary.unlink(missing_ok=True)
@@ -266,7 +258,7 @@ def run_geometry_suite(output_dir: str | Path, write_images: bool = True,
         maximum_length = float(lengths.max(initial=0.0))
         if xor_area or maximum_length > config.max_segment_length_dbu + 1e-12:
             raise ValueError(f"几何用例 {name} 验证失败")
-        if np.any(problem.ownership.owner_indices < 0):
+        if np.any(problem.owner_indices < 0):
             raise ValueError(f"几何用例 {name} 存在无 owner 边段")
         image_path = output / f"{name}.png"
         if write_images:
@@ -275,15 +267,15 @@ def run_geometry_suite(output_dir: str | Path, write_images: bool = True,
             render_boundary_overlay(
                 reconstructed, layer, batch.query_box, dbu_um, geometry.starts,
                 geometry.ends, geometry.normals, image_path,
-                problem.ownership.owner_indices, inner, outer, problem.ownership.cores,
+                problem.owner_indices, inner, outer, problem.grid.cores(),
                 max_labels=48, max_samples=240)
         results.append({
-            "name": name, "polygon_count": problem.physical_mask.contours.polygon_count,
-            "ring_count": problem.physical_mask.contours.ring_count,
-            "edge_count": problem.segments.edges.edge_count,
+            "name": name, "polygon_count": problem.segments.contours.polygon_count,
+            "ring_count": problem.segments.contours.ring_count,
+            "edge_count": len(problem.segments.contours.vertices),
             "segment_count": problem.segments.segment_count,
-            "core_count": len(problem.ownership.cores),
-            "membership_count": len(problem.ownership.member_segment_indices),
+            "core_count": problem.core_count,
+            "membership_count": len(problem.member_segment_indices),
             "maximum_segment_length_dbu": maximum_length,
             "probe_distance_dbu": float(probe_distance_dbu),
             "zero_displacement_xor_area": xor_area,

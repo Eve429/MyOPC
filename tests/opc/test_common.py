@@ -8,7 +8,7 @@ import numpy as np
 
 from layout import CellRef, DbuBox, LayerSpec, RegionBatch
 from opc.input import RectilinearCoreGrid, normalize_physical_mask
-from opc.input.edge import edge_probe_points
+from opc.input.edge import FragmentationConfig, edge_probe_points, prepare_problem
 
 
 def _batch(region: kdb.Region, layer: LayerSpec | None = None) -> RegionBatch:
@@ -26,7 +26,8 @@ def test_physical_mask_removes_overlap_cut_lines_and_keeps_corner_touch_separate
     mask = normalize_physical_mask(_batch(region), LayerSpec(1, 0))
     assert mask.region.area() == 17_500
     assert mask.region.count() == 2
-    assert mask.edges.edge_count == 8
+    problem = prepare_problem(_batch(region), LayerSpec(1, 0), FragmentationConfig(5, 20, 4))
+    assert len(problem.segments.contours.vertices) == 8
 
 
 def test_gds_keyhole_bridge_is_removed_before_edge_extraction() -> None:
@@ -45,10 +46,11 @@ def test_gds_keyhole_bridge_is_removed_before_edge_extraction() -> None:
         cell = loaded.top_cell()
         raw = kdb.Region(cell.begin_shapes_rec(loaded.layer(1, 0)))
         assert next(iter(raw)).num_points_hull() == 10
-        mask = normalize_physical_mask(_batch(raw), LayerSpec(1, 0))
-    assert mask.contours.ring_count == 2
-    assert mask.contours.ring_is_hole.tolist() == [False, True]
-    assert mask.edges.edge_count == 8
+        problem = prepare_problem(
+            _batch(raw), LayerSpec(1, 0), FragmentationConfig(5, 20, 4))
+    assert problem.segments.contours.ring_count == 2
+    assert problem.segments.contours.polygon_ring_offsets.tolist() == [0, 2]
+    assert len(problem.segments.contours.vertices) == 8
 
 
 def test_rectilinear_grid_uses_half_open_internal_and_closed_outer_boundaries() -> None:

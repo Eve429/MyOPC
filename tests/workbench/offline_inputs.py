@@ -23,16 +23,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from geometry import (
     ContourBatch,
-    EdgeBatch,
     contours_to_region,
-    extract_edges,
 )
 from layout import DbuBox, LayerSpec, LayoutDB
-from opc.input import CoreSpec, PhysicalMask, RectilinearCoreGrid
+from opc.input import PhysicalMask, RectilinearCoreGrid
 from opc.input.edge import (
     FragmentationConfig,
     MBOPCProblem,
-    OwnershipBatch,
     SegmentBatch,
     prepare_problem,
 )
@@ -41,7 +38,8 @@ from opc.input.raster import rasterize_region_canvas
 _GIB = 1024 ** 3
 _RASTER_FORMAT = "myopc.raster-input"
 _SEGMENT_FORMAT = "myopc.mbopc-input"
-_FORMAT_VERSION = 1
+_RASTER_VERSION = 1
+_SEGMENT_VERSION = 2
 
 
 def _output_npz(path: str | Path) -> Path:
@@ -308,7 +306,8 @@ def _archive_members(path: str | Path, max_archive_gib: float) -> tuple[Path, se
         raise ValueError(f"离线输入不是有效 NPZ：{source}") from exc
 
 
-def _metadata(data: np.lib.npyio.NpzFile, expected_format: str) -> dict[str, Any]:
+def _metadata(data: np.lib.npyio.NpzFile, expected_format: str,
+              expected_version: int) -> dict[str, Any]:
     """读取并验证无 pickle 的格式标识、版本和 JSON 元数据。"""
     try:
         format_name = str(data["format_name"].item())
@@ -316,9 +315,10 @@ def _metadata(data: np.lib.npyio.NpzFile, expected_format: str) -> dict[str, Any
         value = json.loads(str(data["metadata_json"].item()))
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("离线输入缺少有效格式标识或元数据") from exc
-    if format_name != expected_format or version != _FORMAT_VERSION:
+    if format_name != expected_format or version != expected_version:
+        suffix = "；请重新生成离线边段输入" if expected_format == _SEGMENT_FORMAT else ""
         raise ValueError(
-            f"不支持的离线输入格式：{format_name} version {version}")
+            f"不支持的离线输入格式：{format_name} version {version}{suffix}")
     if not isinstance(value, dict):
         raise TypeError("离线输入 metadata_json 必须是对象")
     return value
@@ -326,10 +326,10 @@ def _metadata(data: np.lib.npyio.NpzFile, expected_format: str) -> dict[str, Any
 
 def _post_prepare_bytes(problem: MBOPCProblem, source_bytes: int) -> int:
     """按实际构造出的数组数量复核准备结果的保守峰值估计。"""
-    contours, ownership = problem.segments.contours, problem.ownership
+    contours = problem.segments.contours
     return _estimated_peak_bytes(
         source_bytes, problem.physical_mask.region.count(), len(contours.vertices),
-        problem.segments.segment_count, len(ownership.member_segment_indices))
+        problem.segments.segment_count, len(problem.member_segment_indices))
 
 
 def prepare_raster_input(
@@ -379,7 +379,7 @@ def prepare_raster_input(
     }
     return _atomic_npz(output_path, {
         "format_name": np.array(_RASTER_FORMAT),
-        "format_version": np.array(_FORMAT_VERSION, dtype=np.int32),
+        "format_version": np.array(_RASTER_VERSION, dtype=np.int32),
         "metadata_json": np.array(json.dumps(metadata, ensure_ascii=False)),
         "mask": np.ascontiguousarray(mask, dtype=np.float32),
     }, compressed=True)
@@ -394,7 +394,7 @@ def load_raster_input(
     if not required <= members:
         raise ValueError(f"像素输入缺少字段：{', '.join(sorted(required - members))}")
     with np.load(source, allow_pickle=False) as data:
-        metadata = _metadata(data, _RASTER_FORMAT)
+        metadata = _metadata(data, _RASTER_FORMAT, _RASTER_VERSION)
         mask = np.ascontiguousarray(data["mask"], dtype=np.float32)
     try:
         canvas = int(metadata["canvas"])
@@ -458,8 +458,7 @@ def prepare_segment_input(
         raise ValueError(
             f"物化后实际规模估计 {actual_peak / _GIB:.3f} GiB 超过 "
             f"{max_estimated_gib} GiB 上限")
-    contours, edges = problem.segments.contours, problem.segments.edges
-    ownership = problem.ownership
+    contours, segments = problem.segments.contours, problem.segments
     metadata = {
         "source": str(source), "top_cell": selected_top,
         "layer": [selected_layer.layer, selected_layer.datatype],
@@ -476,38 +475,29 @@ def prepare_segment_input(
                    "halo_nm": float(halo_nm), "halo_dbu": halo_dbu,
                    "columns": grid.column_count, "rows": grid.row_count},
         "counts": {"polygons": contours.polygon_count, "rings": contours.ring_count,
-                   "edges": edges.edge_count, "segments": problem.segments.segment_count,
-                   "cores": len(ownership.cores),
-                   "memberships": len(ownership.member_segment_indices)},
+                   "edges": len(contours.vertices), "segments": segments.segment_count,
+                   "cores": problem.core_count,
+                   "memberships": len(problem.member_segment_indices)},
         "preflight": preflight, "post_prepare_estimated_peak_bytes": actual_peak,
     }
     arrays: dict[str, object] = {
         "format_name": np.array(_SEGMENT_FORMAT),
-        "format_version": np.array(_FORMAT_VERSION, dtype=np.int32),
+        "format_version": np.array(_SEGMENT_VERSION, dtype=np.int32),
         "metadata_json": np.array(json.dumps(metadata, ensure_ascii=False)),
         "contour_vertices": contours.vertices,
         "contour_ring_offsets": contours.ring_offsets,
-        "contour_polygon_ids": contours.ring_polygon_ids,
-        "contour_is_hole": contours.ring_is_hole,
-        "edge_starts": edges.starts, "edge_ends": edges.ends,
-        "edge_ring_ids": edges.ring_ids, "edge_polygon_ids": edges.polygon_ids,
-        "edge_is_hole": edges.is_hole,
-        "edge_normals": problem.segments.edge_normals,
-        "segment_ring_offsets": problem.segments.ring_segment_offsets,
-        "segment_edge_ids": problem.segments.edge_ids,
-        "segment_t0": problem.segments.t0, "segment_t1": problem.segments.t1,
-        "owner_indices": ownership.owner_indices,
-        "core_offsets": ownership.core_offsets,
-        "member_segment_indices": ownership.member_segment_indices,
-        "core_ids": np.asarray([core.core_id for core in ownership.cores], dtype=np.str_),
-        "core_boxes": np.asarray([
-            [core.ownership_box.left, core.ownership_box.bottom,
-             core.ownership_box.right, core.ownership_box.top]
-            for core in ownership.cores], dtype=np.int64),
-        "context_boxes": np.asarray([
-            [core.context_box.left, core.context_box.bottom,
-             core.context_box.right, core.context_box.top]
-            for core in ownership.cores], dtype=np.int64),
+        "contour_polygon_ring_offsets": contours.polygon_ring_offsets,
+        "edge_next_ids": segments.edge_next_ids,
+        "edge_polygon_ids": segments.edge_polygon_ids,
+        "edge_normals": segments.edge_normals,
+        "segment_ring_offsets": segments.ring_segment_offsets,
+        "segment_edge_ids": segments.edge_ids,
+        "segment_t0": segments.t0, "segment_t1": segments.t1,
+        "owner_indices": problem.owner_indices,
+        "core_offsets": problem.core_offsets,
+        "member_segment_indices": problem.member_segment_indices,
+        "grid_x_cuts": problem.grid.x_cuts, "grid_y_cuts": problem.grid.y_cuts,
+        "grid_halo_dbu": np.array(problem.grid.halo_dbu, dtype=np.int64),
     }
     # 大边段归档不压缩，避免一次性压缩整张 reticle 时增加 CPU 时间和临时内存；
     # 输入只准备一次，后续模型/迭代专项测试可以直接顺序读取连续数组。
@@ -516,11 +506,7 @@ def prepare_segment_input(
 
 def _validate_loaded_problem(problem: MBOPCProblem) -> None:
     """校验各数据类未覆盖的跨数组拓扑和 owner/membership 不变量。"""
-    contours, edges = problem.segments.contours, problem.segments.edges
-    expected_edges = extract_edges(contours)
-    for name in ("starts", "ends", "ring_ids", "polygon_ids", "is_hole"):
-        if not np.array_equal(getattr(edges, name), getattr(expected_edges, name)):
-            raise ValueError(f"边段输入 edge_{name} 与 contour 拓扑不一致")
+    contours = problem.segments.contours
     normals = problem.segments.edge_normals
     if len(normals) and not np.allclose(
             np.hypot(normals[:, 0], normals[:, 1]), 1.0, atol=1e-12, rtol=0.0):
@@ -539,18 +525,16 @@ def _validate_loaded_problem(problem: MBOPCProblem) -> None:
                            problem.segments.t0[1:][same_edge], atol=1e-12, rtol=0.0):
             raise ValueError("同一数学边的相邻 segment 参数区间存在空隙或重叠")
     offsets = problem.segments.ring_segment_offsets
+    edge_ring_ids = np.repeat(
+        np.arange(contours.ring_count, dtype=np.int64), np.diff(contours.ring_offsets))
     for ring_id, (start, end) in enumerate(pairwise(offsets)):
         selected = edge_ids[start:end]
-        if (not len(selected) or edges.ring_ids[selected[0]] != ring_id or
-                edges.ring_ids[selected[-1]] != ring_id):
+        if (not len(selected) or edge_ring_ids[selected[0]] != ring_id or
+                edge_ring_ids[selected[-1]] != ring_id):
             raise ValueError("segment ring offsets 与 edge ring 不一致")
-    owners, members = problem.ownership.owner_indices, problem.ownership.member_segment_indices
+    owners, members = problem.owner_indices, problem.member_segment_indices
     segment_count = problem.segments.segment_count
-    if len(owners) != segment_count or np.any(owners < 0):
-        raise ValueError("每个 segment 必须具有一个有效 owner")
-    if len(members) and np.any(members >= segment_count):
-        raise ValueError("member_segment_indices 超出 segment 范围")
-    core_lengths = np.diff(problem.ownership.core_offsets)
+    core_lengths = np.diff(problem.core_offsets)
     member_cores = np.repeat(np.arange(len(core_lengths), dtype=np.int32), core_lengths)
     same_core = member_cores[1:] == member_cores[:-1]
     if len(members) > 1 and np.any((members[1:] <= members[:-1]) & same_core):
@@ -568,19 +552,24 @@ def load_segment_input(
         max_archive_gib: float = 8.0) -> tuple[MBOPCProblem, dict[str, object]]:
     """读取离线边段归档并恢复现有 MBOPCProblem 公共数据结构。"""
     source, members = _archive_members(input_path, max_archive_gib)
+    header = {"format_name", "format_version", "metadata_json"}
+    if not header <= members:
+        raise ValueError(f"边段输入缺少字段：{', '.join(sorted(header - members))}")
     required = {
         "format_name", "format_version", "metadata_json", "contour_vertices",
-        "contour_ring_offsets", "contour_polygon_ids", "contour_is_hole",
-        "edge_starts", "edge_ends", "edge_ring_ids", "edge_polygon_ids",
-        "edge_is_hole", "edge_normals", "segment_ring_offsets",
+        "contour_ring_offsets", "contour_polygon_ring_offsets",
+        "edge_next_ids", "edge_polygon_ids", "edge_normals", "segment_ring_offsets",
         "segment_edge_ids", "segment_t0", "segment_t1", "owner_indices",
-        "core_offsets", "member_segment_indices", "core_ids", "core_boxes",
-        "context_boxes",
+        "core_offsets", "member_segment_indices", "grid_x_cuts", "grid_y_cuts",
+        "grid_halo_dbu",
     }
-    if not required <= members:
-        raise ValueError(f"边段输入缺少字段：{', '.join(sorted(required - members))}")
     with np.load(source, allow_pickle=False) as data:
-        metadata = _metadata(data, _SEGMENT_FORMAT)
+        metadata = _metadata(data, _SEGMENT_FORMAT, _SEGMENT_VERSION)
+        # 先判格式版本，再检查 v2 数组字段。真实 v1 本来就没有新缓存和 grid 字段，
+        # 若反过来检查只能得到误导性的“缺字段”，用户无法知道应重新生成输入。
+        missing = required - set(data.files)
+        if missing:
+            raise ValueError(f"边段输入缺少字段：{', '.join(sorted(missing))}")
         arrays = {name: np.ascontiguousarray(data[name]) for name in required
                   if name not in {"format_name", "format_version", "metadata_json"}}
     try:
@@ -597,29 +586,22 @@ def load_segment_input(
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise ValueError("边段输入的 Layer、ROI 或分段配置无效") from exc
     contours = ContourBatch(
-        layer, arrays["contour_vertices"], arrays["contour_ring_offsets"],
-        arrays["contour_polygon_ids"], arrays["contour_is_hole"])
-    edges = EdgeBatch(
-        layer, arrays["edge_starts"], arrays["edge_ends"],
-        arrays["edge_ring_ids"], arrays["edge_polygon_ids"], arrays["edge_is_hole"])
+        arrays["contour_vertices"], arrays["contour_ring_offsets"],
+        arrays["contour_polygon_ring_offsets"])
     segments = SegmentBatch(
-        contours, edges, arrays["edge_normals"], arrays["segment_ring_offsets"],
+        contours, arrays["edge_next_ids"], arrays["edge_polygon_ids"],
+        arrays["edge_normals"], arrays["segment_ring_offsets"],
         arrays["segment_edge_ids"], arrays["segment_t0"], arrays["segment_t1"])
-    core_ids = arrays["core_ids"]
-    core_boxes, context_boxes = arrays["core_boxes"], arrays["context_boxes"]
-    if (core_ids.ndim != 1 or core_boxes.shape != (len(core_ids), 4) or
-            context_boxes.shape != (len(core_ids), 4)):
-        raise ValueError("core ID、ownership box 和 context box 数量不一致")
-    cores = tuple(CoreSpec(
-        str(core_ids[index]), DbuBox(*(int(value) for value in core_boxes[index])),
-        DbuBox(*(int(value) for value in context_boxes[index])))
-        for index in range(len(core_ids)))
-    ownership = OwnershipBatch(
-        cores, arrays["owner_indices"], arrays["core_offsets"],
-        arrays["member_segment_indices"])
+    grid = RectilinearCoreGrid(
+        arrays["grid_x_cuts"], arrays["grid_y_cuts"],
+        int(arrays["grid_halo_dbu"].item()))
+    if grid.bounds != query_box:
+        raise ValueError("core grid 范围与离线 ROI 不一致")
     region = contours_to_region(contours)
-    physical = PhysicalMask(layer, region, contours, edges, query_box)
-    problem = MBOPCProblem(physical, config, segments, ownership)
+    physical = PhysicalMask(layer, region, query_box)
+    problem = MBOPCProblem(
+        physical, config, segments, grid, arrays["owner_indices"],
+        arrays["core_offsets"], arrays["member_segment_indices"])
     _validate_loaded_problem(problem)
     try:
         expected_counts = metadata["counts"]
@@ -627,8 +609,8 @@ def load_segment_input(
             raise TypeError("counts must be an object")
         actual_counts = {
             "polygons": contours.polygon_count, "rings": contours.ring_count,
-            "edges": edges.edge_count, "segments": segments.segment_count,
-            "cores": len(cores), "memberships": len(ownership.member_segment_indices),
+            "edges": len(contours.vertices), "segments": segments.segment_count,
+            "cores": problem.core_count, "memberships": len(problem.member_segment_indices),
         }
         archived_counts = {name: int(expected_counts[name]) for name in actual_counts}
         dbu_um = float(metadata["dbu_um"])

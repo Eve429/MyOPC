@@ -199,3 +199,13 @@
 - 工作台自身 statement/branch 综合覆盖率为 74%；主要未命中是三个可直接运行 CLI 的错误退出、低概率损坏归档分支和外部工作目录 bootstrap。核心成功路径、物化前保护、三类损坏输入及两个真实模型入口均已命中。
 - 最终异常入口审计发现 `metadata.counts` 缺键时原实现会在统一 try 块外泄漏 KeyError；已把计数结构/类型转换纳入同一校验并增加损坏 metadata 回归，没有保留兼容分支。
 - 从 `C:\Windows\Temp` 使用绝对脚本路径实际完成 raster 准备、CUDA 光刻和一轮 MB-OPC，三个入口退出码均为 0；深层脚本无需安装项目的 bootstrap 已由真实工作流验证。
+
+## MB-OPC Contract Subtraction
+- `PhysicalMask.contours/edges` and `SegmentBatch.contours/edges` currently share object references, so the duplicate fields do not copy arrays, but they create two apparent owners and make the preparation boundary unclear.
+- `EdgeBatch` is fully derived from `ContourBatch`: starts copy vertices, ends index the next ring vertex, and ring/polygon/hole vectors repeat contour topology. On `gcd_45nm`, its five arrays occupy 1,057,910 bytes.
+- The current `ContourBatch.layer` repeats the `LayerSpec` already carried by `PhysicalMask` or the mapping key. `ring_polygon_ids` and `ring_is_hole` can be replaced by `polygon_ring_offsets`, because extraction already emits each polygon hull followed by its holes.
+- A compact endpoint benchmark showed cached `edge_next_ids:int32` materialization at 15.826 ms median versus 15.718 ms for the current EdgeBatch; deriving closure every call rose to 19.515 ms. Retain the small cache to avoid a simplification-induced hot-path regression.
+- The solver repeatedly maps member segments to polygons, so retain `edge_polygon_ids:int32` as the second measured/useful edge cache. Ring IDs and hole flags are only needed during one-time preparation and can remain temporary.
+- `OwnershipBatch.cores` expands a 488-byte grid into roughly 200,380 bytes of Python objects for 870 cores. Store `RectilinearCoreGrid` in the problem and generate CoreSpec objects once locally only when iteration or diagnostics requests them.
+- Current unique NumPy storage on `gcd_45nm` is 10,688,650 bytes. Removing EdgeBatch, replacing it with two int32 caches, and removing persistent expanded cores is expected to save about 1.08 MB without endpoint-materialization regression.
+- The offline v1 archive currently persists all repeated contour/edge fields plus derivable core IDs/core/context boxes. Version 2 will store nested contour CSR, two edge caches, segment arrays, grid cuts and membership CSR only.

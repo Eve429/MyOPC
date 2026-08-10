@@ -84,7 +84,7 @@ def run_mbopc_iteration_test(
         preview_path = render_boundary_overlay(
             reconstructed, layer, box, dbu_um, geometry.starts, geometry.ends,
             geometry.normals, output / "mbopc_result.png",
-            problem.ownership.owner_indices, inner, outer, problem.ownership.cores)
+            problem.owner_indices, inner, outer, problem.grid.cores())
     finished = perf_counter()
     summary: dict[str, Any] = {
         "input": str(Path(input_path).expanduser().resolve()),

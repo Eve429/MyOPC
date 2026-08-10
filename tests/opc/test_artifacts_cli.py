@@ -30,7 +30,7 @@ def test_direct_runner_writes_all_artifacts_and_validates_round_trips(tmp_path: 
     with np.load(tmp_path / "segments.npz", allow_pickle=False) as arrays:
         assert len(arrays["segment_edge_ids"]) == summary["counts"]["segments"]
         assert "segment_keys" not in arrays.files
-        assert arrays["format_version"].tolist() == [2]
+        assert arrays["format_version"].tolist() == [3]
     layout = kdb.Layout()
     layout.read(str(tmp_path / "reconstruction.gds"))
     assert sorted(cell.name for cell in layout.top_cells()) == ["RECONSTRUCTED", "REFERENCE"]

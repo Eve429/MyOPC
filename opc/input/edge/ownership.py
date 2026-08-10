@@ -6,18 +6,18 @@ import numpy as np
 
 from opc.input import RectilinearCoreGrid
 
-from .types import OwnershipBatch, SegmentBatch
+from .types import SegmentBatch
 
 
-def build_ownership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> OwnershipBatch:
+def _build_ownership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> tuple[np.ndarray, ...]:
     """利用网格切线直接展开每段覆盖的有限 core 范围。"""
     # ownership 只需要参考端点，不使用迭代阶段才需要的外法向。这里直接由数学边和
     # 参数区间批量生成端点，避免 materialize 额外复制 Sx2 normals 和构造临时对象；
     # 全部数组仍按全局 segment 顺序对齐，因此 owner 与 CSR membership 语义不变。
     edge_ids = segments.edge_ids
-    edge_starts = segments.edges.starts[edge_ids].astype(np.float64)
-    vectors = (segments.edges.ends[edge_ids] - segments.edges.starts[edge_ids]).astype(
-        np.float64)
+    vertices = segments.contours.vertices
+    edge_starts = vertices[edge_ids].astype(np.float64)
+    vectors = (vertices[segments.edge_next_ids[edge_ids]] - vertices[edge_ids]).astype(np.float64)
     starts = edge_starts + vectors * segments.t0[:, None]
     ends = edge_starts + vectors * segments.t1[:, None]
     # 端点生成后立即释放两张 Sx2 中间表；否则 Python 局部引用会一直保留到 CSR
@@ -59,4 +59,4 @@ def build_ownership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> Owners
     core_offsets = np.empty(grid.core_count + 1, dtype=np.int64)
     core_offsets[0] = 0
     np.cumsum(np.bincount(sorted_cores, minlength=grid.core_count), out=core_offsets[1:])
-    return OwnershipBatch(grid.cores(), owners, core_offsets, members[order])
+    return owners, core_offsets, members[order]

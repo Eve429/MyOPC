@@ -11,50 +11,42 @@ from numpy.typing import NDArray
 from layout.types import DbuBox, LayerSpec
 
 IntArray = NDArray[np.int64]
-BoolArray = NDArray[np.bool_]
-
-
-def _bool_vector(value: object, name: str) -> BoolArray:
-    """把布尔元数据规范化为连续的一维数组。"""
-    array = np.ascontiguousarray(value, dtype=np.bool_)
-    if array.ndim != 1:
-        raise ValueError(f"{name} must be one-dimensional")
-    return array
 
 
 @dataclass(frozen=True, slots=True)
 class ContourBatch:
-    """使用连续整数数组保存单个 Layer 中的全部 Polygon 环。"""
+    """用两级 CSR 连续数组保存 Polygon、轮廓环和整数顶点。"""
 
-    layer: LayerSpec
     vertices: IntArray
     ring_offsets: IntArray
-    ring_polygon_ids: IntArray
-    ring_is_hole: BoolArray
+    polygon_ring_offsets: IntArray
 
     def __post_init__(self) -> None:
-        """规范化内存布局，并校验 CSR 风格的环编码是否自洽。"""
+        """规范化内存布局，并校验 Polygon/Ring 两级 CSR 编码。"""
         vertices = np.ascontiguousarray(self.vertices, dtype=np.int64)
-        offsets = np.ascontiguousarray(self.ring_offsets, dtype=np.int64)
-        polygon_ids = np.ascontiguousarray(self.ring_polygon_ids, dtype=np.int64)
-        holes = _bool_vector(self.ring_is_hole, "ring_is_hole")
+        ring_offsets = np.ascontiguousarray(self.ring_offsets, dtype=np.int64)
+        polygon_offsets = np.ascontiguousarray(self.polygon_ring_offsets, dtype=np.int64)
         if vertices.ndim != 2 or vertices.shape[1] != 2:
             raise ValueError("vertices must have shape (N, 2)")
-        if offsets.ndim != 1 or len(offsets) == 0 or offsets[0] != 0:
+        if ring_offsets.ndim != 1 or len(ring_offsets) == 0 or ring_offsets[0] != 0:
             raise ValueError("ring_offsets must be a vector starting at zero")
-        if offsets[-1] != len(vertices) or np.any(offsets[1:] < offsets[:-1]):
+        if ring_offsets[-1] != len(vertices) or np.any(np.diff(ring_offsets) < 0):
             raise ValueError("ring_offsets must be monotonic and end at vertex count")
-        ring_count = len(offsets) - 1
-        if len(polygon_ids) != ring_count or len(holes) != ring_count:
-            raise ValueError("ring metadata length must equal ring count")
-        if ring_count and np.any(np.diff(offsets) < 3):
+        ring_count = len(ring_offsets) - 1
+        if ring_count and np.any(np.diff(ring_offsets) < 3):
             raise ValueError("every ring must contain at least three vertices")
-        if np.any(polygon_ids < 0):
-            raise ValueError("polygon IDs must be non-negative")
+        if (polygon_offsets.ndim != 1 or len(polygon_offsets) == 0 or
+                polygon_offsets[0] != 0):
+            raise ValueError("polygon_ring_offsets must be a vector starting at zero")
+        # 每个 Polygon 必须至少有一个 ring；约定首 ring 为 hull，后续 ring 为 hole。
+        # 该结构直接表达原先 polygon_id/is_hole 两组重复元数据，避免为每个 ring
+        # 常驻保存可由连续范围推导的信息。
+        if (polygon_offsets[-1] != ring_count or
+                (len(polygon_offsets) > 1 and np.any(np.diff(polygon_offsets) < 1))):
+            raise ValueError("every polygon must own at least one contour ring")
         object.__setattr__(self, "vertices", vertices)
-        object.__setattr__(self, "ring_offsets", offsets)
-        object.__setattr__(self, "ring_polygon_ids", polygon_ids)
-        object.__setattr__(self, "ring_is_hole", holes)
+        object.__setattr__(self, "ring_offsets", ring_offsets)
+        object.__setattr__(self, "polygon_ring_offsets", polygon_offsets)
 
     @property
     def ring_count(self) -> int:
@@ -64,42 +56,7 @@ class ContourBatch:
     @property
     def polygon_count(self) -> int:
         """返回当前局部批次的 Polygon 数量。"""
-        return 0 if not len(self.ring_polygon_ids) else int(self.ring_polygon_ids.max()) + 1
-
-
-@dataclass(frozen=True, slots=True)
-class EdgeBatch:
-    """单个 Layer 的数学边集合；OPC 分段策略仍由算法层负责。"""
-
-    layer: LayerSpec
-    starts: IntArray
-    ends: IntArray
-    ring_ids: IntArray
-    polygon_ids: IntArray
-    is_hole: BoolArray
-
-    def __post_init__(self) -> None:
-        """规范化数组，使其可直接交给 NumPy、C++ 或 CUDA 使用。"""
-        starts = np.ascontiguousarray(self.starts, dtype=np.int64)
-        ends = np.ascontiguousarray(self.ends, dtype=np.int64)
-        ring_ids = np.ascontiguousarray(self.ring_ids, dtype=np.int64)
-        polygon_ids = np.ascontiguousarray(self.polygon_ids, dtype=np.int64)
-        holes = _bool_vector(self.is_hole, "is_hole")
-        if starts.ndim != 2 or starts.shape[1] != 2 or ends.shape != starts.shape:
-            raise ValueError("starts and ends must have equal shape (N, 2)")
-        count = len(starts)
-        if any(array.ndim != 1 or len(array) != count for array in (ring_ids, polygon_ids, holes)):
-            raise ValueError("edge metadata vectors must match edge count")
-        object.__setattr__(self, "starts", starts)
-        object.__setattr__(self, "ends", ends)
-        object.__setattr__(self, "ring_ids", ring_ids)
-        object.__setattr__(self, "polygon_ids", polygon_ids)
-        object.__setattr__(self, "is_hole", holes)
-
-    @property
-    def edge_count(self) -> int:
-        """返回数学边数量。"""
-        return len(self.starts)
+        return len(self.polygon_ring_offsets) - 1
 
 @dataclass(frozen=True, slots=True)
 class ValidationIssue:

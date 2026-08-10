@@ -129,7 +129,7 @@ def test_segment_round_trip_preserves_cross_core_topology(tmp_path: Path) -> Non
     assert counts["segments"] == problem.segments.segment_count
     assert counts["cores"] == 8
     assert counts["memberships"] > counts["segments"]
-    assert np.unique(problem.ownership.owner_indices).size > 1
+    assert np.unique(problem.owner_indices).size > 1
     assert int((reconstructed ^ problem.physical_mask.region).area()) == 0
     assert reconstructed.has_valid_polygons()
 
@@ -142,7 +142,7 @@ def test_segment_loader_rejects_missing_and_out_of_range_members(
         source, tmp_path / "valid.npz", layer=LayerSpec(1, 0),
         box=DbuBox(0, 0, 256, 128), tile_size_nm=128.0,
         halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
-    missing = _rewrite_npz(archive, tmp_path / "missing.npz", "edge_is_hole", None)
+    missing = _rewrite_npz(archive, tmp_path / "missing.npz", "edge_next_ids", None)
     with pytest.raises(ValueError, match="缺少字段"):
         load_segment_input(missing)
     with np.load(archive, allow_pickle=False) as data:
@@ -153,6 +153,22 @@ def test_segment_loader_rejects_missing_and_out_of_range_members(
         archive, tmp_path / "corrupt.npz", "member_segment_indices", members)
     with pytest.raises(ValueError, match="超出 segment 范围"):
         load_segment_input(corrupt)
+
+
+def test_segment_loader_rejects_v1_with_regeneration_message(tmp_path: Path) -> None:
+    """旧 v1 生成物必须明确提示重新生成，不保留隐式兼容转换分支。"""
+    source = _write_workbench_layout(tmp_path / "version_source.gds")
+    archive = prepare_segment_input(
+        source, tmp_path / "version_v2.npz", layer=LayerSpec(1, 0),
+        box=DbuBox(0, 0, 256, 128), tile_size_nm=128.0,
+        halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
+    missing_v2_field = _rewrite_npz(
+        archive, tmp_path / "version_v1_fields.npz", "edge_next_ids", None)
+    legacy = _rewrite_npz(
+        missing_v2_field, tmp_path / "version_v1.npz", "format_version",
+        np.array(1, dtype=np.int32))
+    with pytest.raises(ValueError, match="重新生成离线边段输入"):
+        load_segment_input(legacy)
 
 
 def test_segment_loader_normalizes_invalid_count_metadata(tmp_path: Path) -> None:

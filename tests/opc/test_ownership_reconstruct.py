@@ -9,7 +9,6 @@ from opc.input import RectilinearCoreGrid
 from opc.input.edge import (
     FragmentationConfig,
     SegmentBatch,
-    build_ownership,
     prepare_problem,
     reconstruct_region,
 )
@@ -34,18 +33,17 @@ def test_cross_core_segment_has_one_owner_and_both_context_memberships() -> None
         (np.minimum(geometry.starts[:, 0], geometry.ends[:, 0]) < 53) &
         (np.maximum(geometry.starts[:, 0], geometry.ends[:, 0]) > 53))
     assert len(crossing)
-    left = set(problem.ownership.segments_for_core(0).tolist())
-    right = set(problem.ownership.segments_for_core(1).tolist())
+    left = set(problem.segments_for_core(0).tolist())
+    right = set(problem.segments_for_core(1).tolist())
     for segment_index in crossing:
-        assert int(problem.ownership.owner_indices[segment_index]) in (0, 1)
+        assert int(problem.owner_indices[segment_index]) in (0, 1)
         assert int(segment_index) in left & right
 
 
 def test_ownership_does_not_materialize_unused_segment_normals(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """ownership 准备不得物化只供迭代使用的逐段法向，且结果必须保持一致。"""
-    problem, _ = _rectangle_problem()
-    expected = problem.ownership
+    problem, config = _rectangle_problem()
     grid = RectilinearCoreGrid(np.array([0, 53, 100]), np.array([0, 60]), 10)
 
     def reject_materialization(*args: object, **kwargs: object) -> None:
@@ -53,18 +51,19 @@ def test_ownership_does_not_materialize_unused_segment_normals(
         raise AssertionError("ownership 不应调用 SegmentBatch.materialize")
 
     monkeypatch.setattr(SegmentBatch, "materialize", reject_materialization)
-    actual = build_ownership(problem.segments, grid)
-    assert np.array_equal(actual.owner_indices, expected.owner_indices)
-    assert np.array_equal(actual.core_offsets, expected.core_offsets)
-    assert np.array_equal(actual.member_segment_indices, expected.member_segment_indices)
+    batch = _batch(kdb.Region(kdb.Box(0, 0, 100, 60)), LayerSpec(1, 0))
+    actual = prepare_problem(batch, LayerSpec(1, 0), config, grid)
+    assert np.array_equal(actual.owner_indices, problem.owner_indices)
+    assert np.array_equal(actual.core_offsets, problem.core_offsets)
+    assert np.array_equal(actual.member_segment_indices, problem.member_segment_indices)
 
 
 def test_owner_index_update_synchronizes_all_context_views() -> None:
     """唯一 owner 写入全局位移后，所有 context 应读取同一移动边段。"""
     problem, _ = _rectangle_problem()
-    segment_index = int(problem.ownership.segments_for_core(0)[0])
-    owner = int(problem.ownership.owner_indices[segment_index])
-    assert segment_index in problem.ownership.segments_for_core(owner)
+    segment_index = int(problem.segments_for_core(0)[0])
+    owner = int(problem.owner_indices[segment_index])
+    assert segment_index in problem.segments_for_core(owner)
     values = np.zeros(problem.segments.segment_count)
     values[segment_index] = 2.0
     current = problem.segments.materialize(values)
@@ -88,7 +87,7 @@ def test_independent_fragment_move_creates_valid_jogs_without_mutating_reference
     problem, _ = _rectangle_problem()
     values = np.zeros(problem.segments.segment_count)
     edge_counts = np.bincount(problem.segments.edge_ids,
-                              minlength=problem.segments.edges.edge_count)
+                              minlength=len(problem.segments.contours.vertices))
     edge_id = int(np.argmax(edge_counts))
     indices = np.flatnonzero(problem.segments.edge_ids == edge_id)
     values[int(indices[len(indices) // 2])] = 4.0

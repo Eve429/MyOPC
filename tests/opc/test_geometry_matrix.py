@@ -75,5 +75,5 @@ def test_hierarchy_path_array_rotation_and_mirror_reach_mbopc(tmp_path: Path) ->
         # 随后只依赖自己的 Region 副本和 NumPy 紧凑数组，可脱离源文件复用。
         problem = prepare_problem(batch, layer, FragmentationConfig(5, 20, 8))
     rebuilt = reconstruct_region(problem, np.zeros(problem.segments.segment_count))
-    assert problem.physical_mask.contours.polygon_count > 1
+    assert problem.segments.contours.polygon_count > 1
     assert (rebuilt ^ problem.physical_mask.region).area() == 0

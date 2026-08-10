@@ -178,3 +178,31 @@ Keep LayoutDB hierarchical and read-only, use lazy ROI queries, and convert to N
 - **Notes**: 已补损坏 counts 回归并统一抛出 ValueError。
 
 ---
+
+## [LRN-20260810-002] best_practice
+
+**Logged**: 2026-08-10T15:45:00+08:00
+**Priority**: high
+**Status**: promoted
+**Area**: backend
+
+### Summary
+共享引用虽然不增加数组内存，仍可能造成领域所有权重复；持久结构应只保存当前热路径无法廉价推导的数据。
+
+### Details
+`PhysicalMask`、`SegmentBatch` 同时暴露 contour/edge 会让调用方无法判断准备阶段的权威来源；`EdgeBatch` 又持久保存完全可由轮廓推导的五组数组。收敛设计应区分原生 Region、通用轮廓、OPC 控制边段和完整问题四个真实职责，同时保留经基准证明有价值的最小缓存。
+
+### Suggested Action
+新增数据结构前同时检查实际数组所有权、字段推导成本和当前调用方；不要只以“引用没有复制”为理由保留重复领域入口。
+
+### Metadata
+- Source: user_feedback
+- Related Files: geometry/types.py, opc/input/mask.py, opc/input/edge/types.py
+- Tags: architecture, ownership, performance, overdesign
+- Pattern-Key: myopc.single_authority_minimal_cache
+- Recurrence-Count: 1
+- First-Seen: 2026-08-10
+- Last-Seen: 2026-08-10
+- Promoted: AGENTS.md
+
+---

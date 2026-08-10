@@ -44,10 +44,12 @@ def reconstruct_contours(problem: MBOPCProblem, displacements: object) -> Contou
     bevel = np.zeros(count, dtype=np.bool_)
     corners = ~same_edge
     if np.any(corners):
-        first_vectors = (segments.edges.ends[previous_edges[corners]] -
-                         segments.edges.starts[previous_edges[corners]]).astype(np.float64)
-        second_vectors = (segments.edges.ends[current_edges[corners]] -
-                          segments.edges.starts[current_edges[corners]]).astype(np.float64)
+        vertices = segments.contours.vertices
+        first_ids, second_ids = previous_edges[corners], current_edges[corners]
+        first_vectors = (vertices[segments.edge_next_ids[first_ids]] -
+                         vertices[first_ids]).astype(np.float64)
+        second_vectors = (vertices[segments.edge_next_ids[second_ids]] -
+                          vertices[second_ids]).astype(np.float64)
         delta = current_starts[corners] - previous_ends[corners]
         cross = first_vectors[:, 0] * second_vectors[:, 1] - first_vectors[:, 1] * second_vectors[:, 0]
         parallel = np.isclose(cross, 0.0, atol=1e-12, rtol=0.0)
@@ -55,7 +57,7 @@ def reconstruct_contours(problem: MBOPCProblem, displacements: object) -> Contou
         factor = (delta[:, 0] * second_vectors[:, 1] -
                   delta[:, 1] * second_vectors[:, 0]) / safe_cross
         intersections = previous_ends[corners] + factor[:, None] * first_vectors
-        original = segments.edges.ends[previous_edges[corners]].astype(np.float64)
+        original = vertices[segments.edge_next_ids[first_ids]].astype(np.float64)
         distance = np.linalg.norm(intersections - original, axis=1)
         scale = np.maximum.reduce((np.abs(values[previous[corners]]),
                                    np.abs(values[corners]), np.ones(np.count_nonzero(corners))))
@@ -93,10 +95,9 @@ def reconstruct_contours(problem: MBOPCProblem, displacements: object) -> Contou
     clean_offsets = np.empty(len(clean_counts) + 1, dtype=np.int64)
     clean_offsets[0] = 0
     np.cumsum(clean_counts, out=clean_offsets[1:])
-    contours = ContourBatch(segments.contours.layer, vertices[keep], clean_offsets,
-                            segments.contours.ring_polygon_ids,
-                            segments.contours.ring_is_hole)
-    report = validate_contours(contours)
+    contours = ContourBatch(vertices[keep], clean_offsets,
+                            segments.contours.polygon_ring_offsets)
+    report = validate_contours(contours, problem.physical_mask.layer)
     if not report.is_valid:
         codes = ", ".join(issue.code for issue in report.issues)
         raise ReconstructionError(f"reconstructed contours are invalid: {codes}")

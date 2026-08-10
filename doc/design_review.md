@@ -1,5 +1,46 @@
 # MyOPC 架构评审：过度设计与缺失能力
 
+## 0. 复核更新（2026-08-09）：代码已按本评审推进
+
+用户在本评审之后实施了一轮重构，沿 design review 的方向落地了大量工作。本节记录各条目的**处置状态**与复核中新发现的问题；**原文第 1–7 节为评审时（代码变更前）的判断，保留作历史记录**，其中的“文件:行号”引用对应变更前代码。本节引用的 commit 均为本地 `master`。复核时质量门全绿：`ruff`（限定范围）、`compileall`、`pytest`（114 项）均通过。
+
+### 0.1 处置状态总表
+
+| 评审条目 | 现状 | 处置方式 / 证据 |
+|---|---|---|
+| 3.1 `GeometryEngine` | **已删除** | `geometry/region.py` 整体移除，`geometry/__init__.py` 不再导出；`layout/types.py` 的 `backend` 硬编码字段同步删除（`6a2f353`） |
+| 3.2 `UniformGridIndex` | **已删除** | `geometry/spatial.py` 与 `tests/geometry/test_spatial.py` 移除（`6a2f353`） |
+| 3.3 `OwnershipPolicy` Protocol + 显式 core | **已删除** | 收敛为单一 `build_ownership`；`prepare_problem` 第 4 参由 `cores`+`ownership_policy` 改为可选 `grid: RectilinearCoreGrid 或 None`，默认用 `query_box` 建单 core、走与多 core 完全相同的规则网格代码，消除第二套显式 core 校验语义（`09f898f`，`builder.py:15`） |
+| 3.4 128-bit key + 每轮 argsort | **已移出热路径** | `SegmentBatch` 不再持有 `lookup_keys`/token；`splitmix64`/`merge_owner_updates`/`updates.py` 删除；solver 改为预分配 `next_values` + `written` 布尔位直接 scatter，正落地 AGENTS.md 第 20 行“不得每轮全局排序”（`09f898f` + `7485204`） |
+| 4.1 分块/流式编排 | **部分处置** | 流式落在**求解器评价层**：`optimize()`（`opc/iteration/mbopc/solver.py`）按 `batch_size` 流式取 core、`_current_tile` 用 `(mask − 参考) + 当前` 局部差分不重建整张 reticle Region。但 `prepare_problem`→`normalize_physical_mask` **仍是单批单层一次性全局 `merged()`**（`mask.py:34`），“整 reticle 装不进内存”的硬约束在**前端物化层尚未流式**（`7485204`） |
+| 4.2 跨 tile `d_current`/`d_next` + owner-only 写 | **核心语义已落地（部分）** | solver 内 `current`/`next_values` 为全局数组，owner 唯一写、运行时 `written` 重复写硬失败、整轮屏障后才 `current=next_values`，与 AGENTS.md 第 18 行一致。**未达**：仍是单进程单次 `optimize()` 内的“逻辑跨 tile”，无跨调用/跨进程持久位移存储，去重用布尔数组而非 epoch 号（`7485204`） |
+| 4.3 几何安全/位移可行性 | **部分处置** | `_preserves_reference_topology`（环数/polygon_id/is_hole 不变 + 有符号面积不翻转 + 每个 hole 仍被原 hull 包含）在发布屏障前检查，非法则**整轮回滚**（`a822efe`）。**未覆盖**：最小宽度、环自交；矩形左右穿越仅以“绕向翻转”间接覆盖 |
+| 4.4 采样有效性 | **基本处置（探针级）** | 求解器评价改用 `edge_probe_points` 的 inner/outer 探针；`evaluate_edge_probes` 以 `target_inner`/`target_outer` 判定探针是否穿过对侧边界并标记 `valid`，无效探针不计入方向（`test_two_dbu_hollow_wall_invalid_long_edge_probes...` 验证 2 DBU 壁 + 8 DBU 探针距） |
+| 4.5 受控 remesh API | **未处置** | `SegmentBatch` 仍由 `fragment_edges` 一次性生成，无重切入口 |
+| 4.6 层级 source 追溯与输出复用 | **未处置** | 物化仍把 occurrence 扁平化到 top 全局坐标，丢失 cell/instance 信息 |
+| 4.7 求解器/模型/指标 | **已落地（首版）** | `opc/iteration/mbopc/`（流式 simple solver）+ `lithography/iccad13.py`（OpenILT ICCAD13 Hopkins 三工艺角）+ `evaluation/metrics.py`（L2/PVBand/EPE），三者经 `MBOPCProblem` 与输入前端交互，未下沉进 `opc.input`（`7485204` + `6cf885a`） |
+| 4.8 checkpoint 读回端 | **未处置** | NPZ 写出迁移至 `opc/diagnostics.py:save_problem_npz`，仍无加载器/续算路径 |
+| 4.9 多层假设 | **未处置** | `prepare_problem` 仍接受单个 `layer` |
+| 3.5 `HierarchySummary` planner | **未处置** | planner 仍不存在；`6a2f353` 的“统一 ROI 语义”调整了 layout 查询，但层级仍只用于统计 |
+
+### 0.2 复核新发现（本轮新增，原文档未涉及）
+
+**A. 迭代语义 off-by-one（待确认）【中】**
+`solver.optimize` 主循环在末轮 `if iteration == config.iterations − 1: break`（`solver.py:312`）**早于**提交语句 `current = next_values`（`:319`），导致最后一轮算出的位移永远不提交、也不进入 `best_displacements` 候选。后果：`iterations=1` 提交 **0** 次位移（仅评估参考态），`iterations=N` 最多提交 **N−1** 次。`best_displacements = current.copy()`（`:287`）本身正确（score 反映被评估的 `current`），问题纯粹是末轮 `next_values` 被丢弃。建议二选一：(a) 文档明确“iterations = 评估轮数，返回最佳已评估态”；(b) 末轮也做拓扑检查并提交，使 `iterations=N` 实际应用 N 步。属语义选择，需用户拍板。
+
+**B. ICCAD13 FFT 归一化是移植不变量（移植脆弱点）【中】**
+`lithography/iccad13.py` 的 `_aerial` 对 `fft2`/`ifft2` **均**用 `norm="forward"`（`:171`/`:172`），两者叠加使 aerial 相对标准卷积多一个 1/N 因子。当前自洽**完全依赖**随附的 OpenILT `.pt` scale 在同一约定下生成。建议加一条“对已知 OpenILT 参考 aerial image 校验绝对强度”的锚定断言，防止日后重生成资产或改 `norm=` 时静默失真。非 bug，是移植校准脆弱点。
+
+**C. 拓扑 hole 检查是每轮 Python+KLayout 循环【低】**
+`_preserves_reference_topology`（`solver.py:167-185`）对每个 hole ring 单独建 `kdb.Region` 做 `(hole − hull).is_empty()`。当前仅带孔 polygon 才进入此路径，可接受；若将来出现密集 hole 版图，该检查会成为每轮热点。代码注释已标注为第一版。
+
+### 0.3 复核结论
+
+- **过度设计（第 3 节）已清零**：3.1/3.2/3.3 删除，3.4 移出热路径——`AGENTS.md`“新抽象必须有当前调用方”的违规全部消除。
+- **缺失（第 4 节）过半落地**：4.7（本体）、4.1/4.2（流式 + owner/barrier 核心语义）、4.4（探针有效性）已处置或部分处置；4.3 拓扑守卫部分到位。
+- **仍待推进**：4.5 remesh、4.6 层级追溯/复用、4.8 checkpoint 读回为完全未决；4.1 的前端物化层流式、4.2 的跨进程持久状态、4.3 的最小宽度/自交为部分项的剩余部分。
+- 新发现 **A 需用户决策**，**B/C** 为记录性提示。
+
 ## 1. 评审范围与方法
 
 本文评审 `layout/`、`geometry/`、`opc/input/`（含 `opc/input/edge/`）三个基础包，判断在“**完整 reticle 的 OPC 处理**”这一最终目标下，哪些设计属于过度设计，哪些能力缺失、需要被增加。评审结论与 `AGENTS.md` 的“未来优化内容”路线图逐条对照（见第 5 节），以区分“我自己独立得出的判断”与“项目已声明但尚未实现的方向”。

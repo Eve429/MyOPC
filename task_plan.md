@@ -48,6 +48,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 27. Regression, performance and reports | complete | Full geometry/solver/CLI regressions, gcd_45nm comparison, audits, reports and local milestone commits |
 | 28. Layout/geometry subtraction | complete | Removed user-authorized backend/index overdesign, unified exact ROI semantics, and passed regression/performance/full-flow gates |
 | 29. Edge preparation and zero-displacement hot paths | complete | Removed unused ownership materialization and skipped mathematically unchanged reconstruction without changing tiling semantics |
+| 30. Offline input contracts and safety preflight | complete | Versioned raster/segment archives, strict size guards and four callable interfaces |
+| 31. Independent lithography and OPC runners | complete | Direct Python entry points consuming only saved offline inputs |
+| 32. Offline workbench verification | complete | Multi-geometry, corruption, memory-guard and end-to-end regressions plus real simple.gds runs |
+| 33. Reports, simplify audit and local commits | in_progress | Manuals/reports/planning sync, final audits and two local milestone commits |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -122,6 +126,11 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 后续删除符号搜索再次把 `run_*.py` 当成 Windows 路径 | 1 | 明确记录此重复命令错误；最终审计改为搜索仓库根目录并用 `--glob 'run_*.py'` 过滤 |
 | 基准调用点探查顺带读取两个不存在的猜测测试路径 | 1 | `rg` 已确认没有 benchmark API 测试调用；不再猜文件名，后续以 `rg --files` 的实际清单为准 |
 | 统一 ROI 相交首次复跑丢失带属性 Polygon 的属性 | 1 | 使用 KLayout `Region.and_(..., NoPropertyConstraint)` 在原生批量裁剪时继承左侧属性，并把属性回归改为同时跨 ROI 边界 |
+| 离线工作台探查沿用旧的 `fragment.py`/`model.py` 文件名 | 1 | 先列出 `opc/input/edge` 实际文件，再读取 `fragmentation.py` 和 `types.py`；未修改任何文件 |
+| KLayout API 探针误用了不存在依赖的旧 Miniforge 路径 | 1 | 从 `conda env list` 定位 `D:\\app\\miniforge\\envs\\myopc`，后续统一使用该解释器 |
+| 递归搜索 Python 解释器在输出 Conda 环境后超时 | 1 | 停止宽范围磁盘递归；直接使用 Conda 返回的确定环境路径 |
+| 阶段 30 首次 Ruff 检查报告 9 项导入/类型/遍历风格问题 | 1 | 不运行 formatter，手工整理导入并采用明确异常与 `pairwise`；功能和归档契约不变 |
+| 两个离线运行入口各残留一个未使用的 `json` 导入 | 1 | 直接删除无效导入，不增加占位引用；compileall 已通过 |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -151,3 +160,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - Phase 29 scope is limited to ownership endpoint preparation and unchanged-geometry fast paths. Sparse active-core planning, macro partitioning, gradient OPC, and changes under `layout/` or `geometry/` are explicitly excluded.
 - Phase 29 planning update initially used one shared end-of-file anchor for `findings.md` and `progress.md`; the latter differed, so the atomic patch made no change. Subsequent updates use verified per-file anchors.
 - Phase 29 baseline initially invoked the Miniforge base `python`, which has no pytest module; rerun all Python checks with the repository's established `myopc` environment interpreter.
+- Phase 30 keeps all new code under `tests/workbench`; `layout/` and `geometry/` are protected again for this task and may not change without a new explicit decision.
+- Offline raster input is one model-ready bottom-left `float32` canvas; oversize ROI is rejected instead of silently tiled.
+- Offline segment input is a separate restorable versioned contract, not an extension of the diagnostic-only `save_problem_npz` format.
+- Strict preflight accepts a deliberate second layout read so raw hierarchical shape/vertex/segment complexity can be rejected before Region materialization.

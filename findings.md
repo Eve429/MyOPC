@@ -184,3 +184,16 @@
 - target LRU 使用 uint8 常驻，而历史 current mask 保留浮点像素覆盖率；零位移 core 因此不能直接返回 target。当前快路直接栅格化参考 Region，只跳过轮廓子集与 Region 差分，保持原评价数值语义。
 - 零位移局部等价微基准（500 polygons/11,000 segments）像素逐项相同，中位耗时 `44.35 -> 11.06 ms`；`gcd_45nm` 三轮 CUDA 的 EPE/L2/PVBand 等全部指标与阶段 28 逐项一致，总耗时 `85.892 -> 79.117 s`，GPU 峰值仍为 271,544,320 bytes。
 - 阶段 29 最终审计覆盖 72 个第一方 Python 文件和 20 份 Markdown：中文模块/函数 docstring、链接、代码围栏、diff whitespace 均无问题；没有新增生产抽象、死函数、重复字段或异常兼容分支，`layout/`、`geometry/` 无差异。
+- 离线光刻输入必须复用 `opc.input.raster.rasterize_region_canvas`，其数组原点在左下；现有 `geometry.render_region_batch` 是顶部向下的显示图，不能作为模型输入归档。
+- 现有 `opc.diagnostics.save_problem_npz` 是不可恢复的 version 2 诊断快照，缺少 DBU、Layer、query box、分段配置和完整 `EdgeBatch.is_hole`，不应兼容性扩张为离线问题格式。
+- `MBOPCProblem` 的可恢复最小状态是 `PhysicalMask + FragmentationConfig + SegmentBatch + OwnershipBatch`；原始 Region 可由 contour 批量重建，因此加载后不需要源 GDS。
+- 物化前只能对原始层级图形复杂度做保守估算；KLayout 布尔合并产生的新交点无法在不构造 Region 的情况下完全精确预测，所以还需要物化后的实际数组上限复核。
+- 测试脚本位于 `tests/workbench` 时，直接运行的 `sys.path[0]` 不是仓库根；入口需用文件位置一次性加入项目根路径，才能满足不安装包且从外部工作目录运行。
+- `simple.gds` 完整 bbox 在 8 nm/256 canvas 下需要 225×413 像素，像素准备函数按设计在物化前拒绝；真实光刻验证必须给出明确小 ROI 或使用更大像素，不能绕过 canvas 契约。
+- `simple.gds` 以 512 nm core/256 nm halo 生成的离线问题包含 10 polygons、14 rings、107 edges、885 segments、28 cores、3305 memberships；关闭源版图后加载并零位移重建 XOR 面积为 0。
+- `simple.gds` 显式 ROI `[-2000,-1100,-200,948]` 在 8 nm 下生成 225×256 有效像素，CUDA 光刻前向 0.477 s、峰值 34,026,496 bytes，三工艺角 PNG/NPZ 均成功保存。
+- 512/256 nm core/halo 的完整离线迭代加载耗时 0.023 s，三轮 EPE 339→212→112，总计 1.578 s，GPU 峰值 271,531,520 bytes，结果 Region 合法。
+- 人工查看 nominal PNG：坐标方向正确，孔洞未被填平；查看 OPC overlay：跨 core 外轮廓连续，斜边端点相接，owner 色与 inner/outer 探针方向可辨。全图标签密集但不影响诊断数据。
+- 默认 1024/512 nm core/halo 离线复跑恢复为 8 cores、2658 memberships，三轮 EPE 338→203→113，与既有 `run_mbopc.py` 历史基准逐项一致；归档加载 0.021 s，总流程 1.513 s。
+- 全仓库最终功能基线为 Ruff/compileall 通过、126 tests passed in 29.05 s；新增 9 项工作台测试后原有 117 项无回归。
+- 工作台自身 statement/branch 综合覆盖率为 73%；主要未命中是三个可直接运行 CLI 的错误退出、低概率损坏归档分支和外部工作目录 bootstrap。核心成功路径、物化前保护、两类损坏输入及两个真实模型入口均已命中。

@@ -26,6 +26,126 @@
 
 ---
 
+## [ERR-20260810-001] stale_edge_module_guess
+
+**Logged**: 2026-08-10T10:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+离线工作台探查时直接猜测了已经不存在的边段模块文件名。
+
+### Error
+`Get-Content: Cannot find path 'opc/input/edge/fragment.py'` 与 `model.py`。
+
+### Context
+- 当前目录重构后真实文件是 `fragmentation.py` 和 `types.py`。
+- 失败命令只读，未影响仓库文件。
+
+### Suggested Fix
+读取实现前先用 `rg --files` 或目录清单确认真实路径，不依据旧架构记忆猜测文件名。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/input/edge
+
+### Resolution
+- **Resolved**: 2026-08-10T10:05:00+08:00
+- **Notes**: 已改为先列目录再读取确定文件。
+
+---
+
+## [ERR-20260810-002] wrong_myopc_interpreter_probe
+
+**Logged**: 2026-08-10T10:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+KLayout API 探针使用了错误的 Miniforge 路径，随后宽范围递归搜索又发生超时。
+
+### Error
+`ModuleNotFoundError: No module named 'klayout'`；递归文件搜索在输出 Conda 环境清单后超时。
+
+### Context
+- 错误路径位于 `C:\\Users\\23158\\miniforge3`，项目环境实际位于 `D:\\app\\miniforge\\envs\\myopc`。
+- 两次操作均只读，没有修改源代码或环境。
+
+### Suggested Fix
+先执行 `conda env list` 获取确定环境根，不在整块磁盘递归搜索解释器。
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md
+
+### Resolution
+- **Resolved**: 2026-08-10T10:15:00+08:00
+- **Notes**: 后续验证统一使用已确认的 myopc 解释器。
+
+---
+
+## [ERR-20260810-003] offline_inputs_initial_ruff
+
+**Logged**: 2026-08-10T10:40:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+离线输入模块首次静态检查发现 9 项导入、类型和遍历风格问题。
+
+### Error
+Ruff `I001`、`RUF100`、`PYI041`、`TRY004`、`RUF007`。
+
+### Context
+- compileall 已通过，问题不涉及归档行为。
+- 项目要求紧凑排版，未运行自动 formatter。
+
+### Suggested Fix
+新增深层直跑脚本后立即执行单文件 Ruff，并手工整理第一方导入和相邻 offset 遍历。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/workbench/offline_inputs.py
+
+### Resolution
+- **Resolved**: 2026-08-10T10:45:00+08:00
+- **Notes**: 已手工修正并保留紧凑格式。
+
+---
+
+## [ERR-20260810-004] workbench_runner_unused_imports
+
+**Logged**: 2026-08-10T11:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+两个新离线入口首次 Ruff 检查各发现一个未使用的 JSON 导入。
+
+### Error
+Ruff `F401 json imported but unused`。
+
+### Context
+- 两个脚本均通过 compileall。
+- JSON 保存已由共享 `_atomic_json` 处理，本地不需要直接导入 json。
+
+### Suggested Fix
+入口复用共享保存函数时同步删除原本计划中的直接模块导入。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/workbench/run_lithography.py, tests/workbench/run_mbopc_iteration.py
+
+### Resolution
+- **Resolved**: 2026-08-10T11:02:00+08:00
+- **Notes**: 已删除两个无效导入。
+
+---
+
 ## [ERR-20260809-028] direct_python_nvrtc_dll_search
 
 **Logged**: 2026-08-09T23:50:00+08:00

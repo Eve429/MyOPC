@@ -133,3 +133,22 @@
 - 最终 Ruff、compileall 和全仓库 117 tests（19.49 s）通过；OPC/光刻/评价 77 tests、综合 statement/branch coverage 92%。
 - 代码与回归已本地提交 `56fd33d`；开发/测试手册、调用关系和两份专项报告已同步，用户 `doc/design_review.md` 保持未暂存。
 - 阶段 29 两项授权优化、详细验证、过度设计复查和交付文档全部完成；稀疏 core 方案继续保持未实施。
+- 阶段 30 开始：实现可独立保存/加载版图像素和完整 MB-OPC 问题的测试工作台；锁定单 canvas 拒绝、严格原生预检和完整 OPC 结果产物。
+- 已确认实现仅新增 `tests/workbench`、测试和文档，不修改 `layout/`、`geometry/`，也不改变现有生产数据结构。
+- 已核对当前公开链路：`rasterize_region_canvas` 生成模型方向数组，`prepare_problem` 生成 `MBOPCProblem`，`optimize` 直接消费该问题，`reconstruct_region` 输出全局矢量结果。
+- 已新增 `tests/workbench/offline_inputs.py`：包含四个约定接口、版本化 NPZ、原子写入、归档解压上限、KLayout 层级复杂度预检和完整 MBOPCProblem 恢复校验。
+- 边段归档显式保存 hole、配置、DBU、ROI、core/context 和 CSR；加载后由 contour 重建 Region，并交叉验证 edge、segment ring 及 owner membership 不变量。
+- 首次 compileall 通过；Ruff 报告 9 项可维护性问题，均为导入顺序、冗余 union、异常类型和相邻 offset 遍历，已手工修正且未运行自动格式化。
+- 已新增两个可直接运行入口：光刻入口保存连续三工艺角 NPZ/JSON/可选 PNG；迭代入口加载既有 problem 后保存最佳位移 NPZ、GDS、JSON 和可选标注图。
+- 两个入口都返回现有 `LithographyResult`/`SimpleMBOPCResult`，没有引入第二套结果结构或空的算法接口。
+- 入口首次 Ruff 仅发现两个未使用 `json` 导入，已直接删除；未保留只为静态检查服务的虚假引用。
+- 真实 `simple.gds` 边段准备/加载冒烟通过：885 segments、28 cores，加载后的零位移全局重建 XOR 为 0 且 Region 合法。
+- 真实整图像素准备在 8 nm 下正确报告 225×413 超过 256 canvas，证明超限检查发生在预期入口；后续实测使用显式 ROI。
+- 已增加 9 项工作台回归，覆盖像素等价、物化前双重保护、跨 core/孔洞/斜边/引用恢复、损坏归档、读取上限、两个真实模型入口和仓库外直接启动。
+- 阶段 30–31 完成：聚焦 Ruff 与 9 项工作台测试通过（16.41 s），其中包含真实 ICCAD13 CPU 前向和加载归档后的一轮跨 core MB-OPC。
+- 真实 `simple.gds` 离线光刻和三轮 CUDA OPC 全流程通过，所有约定 NPZ/JSON/PNG/GDS 产物生成；已人工检查 nominal 与边段/core/probe 标注图。
+- 512/256 nm 切分下 EPE 为 339→212→112；该切分不同于历史默认，报告前将按 1024/512 nm 再跑可直接对照的正式基准。
+- 默认 1024/512 nm 正式复跑得到 EPE 338→203→113，与历史完整入口一致；离线恢复没有改变 owner、采样或轮次屏障语义。
+- 提交前强化加载审计：校验 segment 参数区间连续覆盖、core membership 严格递增无重复，以及 metadata 计数/DBU 与真实数组一致。
+- 阶段 32 完成：Ruff、compileall、全仓库 126 tests（29.05 s）通过；工作台聚焦 9 tests（14.65 s）及自身 statement/branch coverage 73%。
+- 覆盖率未命中集中于 CLI 错误出口和低概率归档损坏分支；已审计核心四接口、两运行入口和所有用户要求场景均有执行证据，进入文档与精简审计。

@@ -51,7 +51,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 30. Offline input contracts and safety preflight | complete | Versioned raster/segment archives, strict size guards and four callable interfaces |
 | 31. Independent lithography and OPC runners | complete | Direct Python entry points consuming only saved offline inputs |
 | 32. Offline workbench verification | complete | Multi-geometry, corruption, memory-guard and end-to-end regressions plus real simple.gds runs |
-| 33. Reports, simplify audit and local commits | in_progress | Manuals/reports/planning sync, final audits and two local milestone commits |
+| 33. Reports, simplify audit and local commits | complete | Manuals/reports/planning sync, final audits and two local milestone commits |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -131,6 +131,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 递归搜索 Python 解释器在输出 Conda 环境后超时 | 1 | 停止宽范围磁盘递归；直接使用 Conda 返回的确定环境路径 |
 | 阶段 30 首次 Ruff 检查报告 9 项导入/类型/遍历风格问题 | 1 | 不运行 formatter，手工整理导入并采用明确异常与 `pairwise`；功能和归档契约不变 |
 | 两个离线运行入口各残留一个未使用的 `json` 导入 | 1 | 直接删除无效导入，不增加占位引用；compileall 已通过 |
+| 最终异常审计发现损坏 `metadata.counts` 会泄漏 KeyError | 1 | 在统一校验块内规范化全部计数并补回归，加载器现在稳定抛 ValueError |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.

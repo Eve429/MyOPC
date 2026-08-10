@@ -210,3 +210,27 @@ flowchart TD
 | 新输入表达 | `opc/input/` 下有实际调用方的模块 | 未实现方法的注册器 |
 
 当前结构刻意不提供空基类、插件注册器、外部 key 更新层或多种 owner policy。需要第二个真实实现时，再从两个真实调用方提取最小公共接口。
+
+## 11. 离线专项工作台调用关系
+
+```mermaid
+flowchart TD
+    A[GDS/OASIS + Layer + ROI] --> B[原生层级复杂度预检]
+    B -->|像素路径| C[LayoutDB.query.materialize]
+    C --> D[rasterize_region_canvas]
+    D --> E[raster_input.npz]
+    E --> F[load_raster_input]
+    F --> G[ICCAD13Lithography]
+    G --> H[三工艺角 NPZ/PNG/JSON]
+    B -->|边段路径| I[LayoutDB.query.materialize]
+    I --> J[prepare_problem]
+    J --> K[mbopc_input.npz]
+    K --> L[load_segment_input]
+    L --> M[恢复原 MBOPCProblem]
+    M --> N[optimize]
+    N --> O[best displacement/GDS/PNG/JSON]
+```
+
+`prepare_*` 的输入是源版图、Layer、ROI 和离散化配置，输出是一个原子保存的 version 1 NPZ。`load_raster_input` 输出 `(mask, metadata)`；`load_segment_input` 输出 `(MBOPCProblem, metadata)`。metadata 只保存报告和物理单位信息，迭代权威数据仍是现有 problem 字段，不复制 owner 或 segment 状态到新结构。
+
+边段加载按以下顺序恢复并校验：`ContourBatch → extract_edges 对照 → SegmentBatch → CoreSpec/OwnershipBatch → contours_to_region → PhysicalMask → MBOPCProblem`。完成后迭代入口直接调用现有 `optimize`；它不读取源 GDS，也不重新分段或重新分配 owner。

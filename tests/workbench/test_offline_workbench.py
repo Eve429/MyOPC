@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -151,6 +152,23 @@ def test_segment_loader_rejects_missing_and_out_of_range_members(
     corrupt = _rewrite_npz(
         archive, tmp_path / "corrupt.npz", "member_segment_indices", members)
     with pytest.raises(ValueError, match="超出 segment 范围"):
+        load_segment_input(corrupt)
+
+
+def test_segment_loader_normalizes_invalid_count_metadata(tmp_path: Path) -> None:
+    """损坏的 counts 对象必须转换为统一 ValueError，不能让 KeyError 泄漏到 CLI。"""
+    source = _write_workbench_layout(tmp_path / "metadata_source.gds")
+    archive = prepare_segment_input(
+        source, tmp_path / "metadata_valid.npz", layer=LayerSpec(1, 0),
+        box=DbuBox(0, 0, 256, 128), tile_size_nm=128.0,
+        halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
+    with np.load(archive, allow_pickle=False) as data:
+        metadata = json.loads(str(data["metadata_json"].item()))
+    metadata["counts"] = {"segments": 1}
+    corrupt = _rewrite_npz(
+        archive, tmp_path / "metadata_corrupt.npz", "metadata_json",
+        np.array(json.dumps(metadata, ensure_ascii=False)))
+    with pytest.raises(ValueError, match="缺少有效计数"):
         load_segment_input(corrupt)
 
 

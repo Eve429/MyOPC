@@ -1,0 +1,66 @@
+# 离线光刻与 MB-OPC 工作台开发报告
+
+## 1. 目标与结果
+
+本阶段在 `tests/workbench/` 建立可直接运行的离线专项工作台。版图像素化或边段构造只执行一次，后续可以单独修改、分析和计时光刻模型或 OPC 迭代，不重复读取 GDS、物化 Region 或切分边段。
+
+实现没有修改 `layout/`、`geometry/` 和现有 OPC 数据结构；加载边段归档后直接恢复 `MBOPCProblem`。功能提交为 `34b9c92`，未推送远端。
+
+## 2. 公共测试接口
+
+| 接口 | 输入 | 输出 | 主要约束 |
+|---|---|---|---|
+| `prepare_raster_input` | GDS/OASIS、Layer、ROI、pixel/canvas | raster version 1 NPZ | ROI 必须直接放入单个 canvas |
+| `load_raster_input` | raster NPZ | `float32` mask、metadata | 左下原点、值域 `[0,1]`、禁止 pickle |
+| `prepare_segment_input` | 版图、ROI、分段与 core 配置 | MBOPC version 1 NPZ | 预检后才物化和构造 owner |
+| `load_segment_input` | MBOPC NPZ | `MBOPCProblem`、metadata | 不依赖源 GDS，不重新分段 |
+
+`run_lithography_test` 返回现有 `LithographyResult`；`run_mbopc_iteration_test` 返回现有 `SimpleMBOPCResult`。没有为工作台新增结果结构、算法基类、注册器或占位方法目录。
+
+## 3. 数据格式
+
+像素归档保存固定 `float32[canvas,canvas]` mask、有效宽高、Layer、ROI、DBU、pixel 和 `bottom_left` 方向。模型输入不执行 PNG 的上下翻转；只有保存人眼图片时才 `flipud`。
+
+边段归档保存：
+
+- contour 顶点、ring offsets、polygon ID 和 hole 标志；
+- edge 起终点、ring/polygon ID、hole 标志和单位外法向；
+- segment 的 ring offsets、edge ID、`t0/t1`；
+- core ownership/context box、唯一 owner 和 membership CSR；
+- Layer、ROI、DBU、分段配置、tile/halo 与规模统计。
+
+边段 NPZ 不压缩，避免大版图保存时同时承担压缩 CPU 和临时内存；像素数组固定较小且通常稀疏，使用压缩 NPZ。两者都在同目录写临时文件后用 `os.replace` 原子发布。
+
+现有 `save_problem_npz` 继续是不可恢复诊断快照。工作台没有修改其 version 2 语义，也没有把跨版本 remesh 身份问题塞入新归档。
+
+## 4. 内存与异常边界
+
+准备前依次执行：
+
+1. 源文件大小上限，默认 4 GiB；
+2. 像素 ROI 的精确宽高，默认不得超过 256×256；
+3. KLayout 原生递归迭代统计层级展开图形和顶点；
+4. 按当前 `fragment_edges` 公式估算 segment；
+5. 按原始边 bbox、规则网格和 halo 估算 membership 上界；
+6. 按文件解析、原生几何和 NumPy 临时数组估算峰值，默认上限 8 GiB。
+
+严格预检额外读取一次版图，但不会构造目标 Region；通过后才使用现有 `LayoutDB` 公共路径正式读取。这个额外 I/O 只发生在一次性测试数据准备，不进入模型或迭代热路径。物化后的真实数组规模还会二次复核。
+
+读取端先利用 ZIP 成员声明检查总解压量，再以 `allow_pickle=False` 读取。恢复时检查 contour/edge 等价、单位法向、segment 全局顺序、每条边的 `[0,1]` 连续覆盖、ring 归属、membership 越界/重复、owner context 唯一出现和 metadata 计数。
+
+## 5. 直接运行与性能路径
+
+三个文件均用自身路径解析仓库根，可从外部工作目录直接执行，不需要 `pip install`。离线光刻入口只把保存的 mask 送入 GPU；离线迭代入口只加载 problem 和配置，之后保持原求解器的 `current/next` 轮次屏障、唯一 owner 写入和 halo 只读语义。
+
+模型输出和 tile tensor 仍按 batch 释放；新增工作台不会把整张 reticle tensor 常驻 GPU。最佳结果继续通过全局参考边一次重建，不按 core 裁剪拼接。
+
+## 6. 过度设计复查
+
+- 只新增一个数据模块、两个当前可运行入口和一组测试，没有生产目录或空接口；
+- metadata 使用普通字典，不新增与 `MBOPCProblem` 重复字段的数据类；
+- 预检 helper 均有当前像素或边段准备调用方，归档 helper 同时服务两个入口；
+- 没有修改生产 runner，也没有为测试工作台建立第二套迭代流程；
+- 加载器的额外分支均对应内存安全或“损坏文件静默算错”的明确风险；
+- 完成调用点和重复实现审计后，没有发现仅为修复旧错误保留的包装或变量。
+
+测试和实测细节见 [离线工作台测试报告](offline_workbench_test_report.md)。

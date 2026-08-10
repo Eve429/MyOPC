@@ -623,16 +623,19 @@ def load_segment_input(
     _validate_loaded_problem(problem)
     try:
         expected_counts = metadata["counts"]
+        if not isinstance(expected_counts, dict):
+            raise TypeError("counts must be an object")
         actual_counts = {
             "polygons": contours.polygon_count, "rings": contours.ring_count,
             "edges": edges.edge_count, "segments": segments.segment_count,
             "cores": len(cores), "memberships": len(ownership.member_segment_indices),
         }
+        archived_counts = {name: int(expected_counts[name]) for name in actual_counts}
         dbu_um = float(metadata["dbu_um"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("边段输入缺少有效计数或 dbu_um 元数据") from exc
     if (not np.isfinite(dbu_um) or dbu_um <= 0.0 or
-            any(int(expected_counts[name]) != value for name, value in actual_counts.items())):
+            archived_counts != actual_counts):
         raise ValueError("边段输入元数据计数或 dbu_um 与数组不一致")
     return problem, metadata
 

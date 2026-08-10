@@ -148,3 +148,33 @@ Keep LayoutDB hierarchical and read-only, use lazy ROI queries, and convert to N
 - Last-Seen: 2026-08-09
 
 ---
+## [LRN-20260810-001] harden_input_validation
+
+**Logged**: 2026-08-10T12:30:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+归档 metadata 的字段读取和跨字段比较必须处于同一个异常规范化边界内。
+
+### Details
+首次实现只在 try 块内取得 `counts` 对象，却在 try 块外逐键访问。损坏归档缺键时会泄漏 KeyError，绕过 CLI 对 ValueError 的统一处理。
+
+### Suggested Action
+先在统一校验块内把外部 metadata 完整转换为内部标量字典，再进行无异常的结构比较。
+
+### Metadata
+- Source: simplify-and-harden
+- Related Files: tests/workbench/offline_inputs.py
+- Tags: archive, validation, exception-boundary
+- Pattern-Key: harden.input_validation
+- Recurrence-Count: 1
+- First-Seen: 2026-08-10
+- Last-Seen: 2026-08-10
+
+### Resolution
+- **Resolved**: 2026-08-10T12:35:00+08:00
+- **Notes**: 已补损坏 counts 回归并统一抛出 ValueError。
+
+---

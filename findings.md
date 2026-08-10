@@ -195,5 +195,7 @@
 - 512/256 nm core/halo 的完整离线迭代加载耗时 0.023 s，三轮 EPE 339→212→112，总计 1.578 s，GPU 峰值 271,531,520 bytes，结果 Region 合法。
 - 人工查看 nominal PNG：坐标方向正确，孔洞未被填平；查看 OPC overlay：跨 core 外轮廓连续，斜边端点相接，owner 色与 inner/outer 探针方向可辨。全图标签密集但不影响诊断数据。
 - 默认 1024/512 nm core/halo 离线复跑恢复为 8 cores、2658 memberships，三轮 EPE 338→203→113，与既有 `run_mbopc.py` 历史基准逐项一致；归档加载 0.021 s，总流程 1.513 s。
-- 全仓库最终功能基线为 Ruff/compileall 通过、126 tests passed in 29.05 s；新增 9 项工作台测试后原有 117 项无回归。
-- 工作台自身 statement/branch 综合覆盖率为 73%；主要未命中是三个可直接运行 CLI 的错误退出、低概率损坏归档分支和外部工作目录 bootstrap。核心成功路径、物化前保护、两类损坏输入及两个真实模型入口均已命中。
+- 全仓库最终功能基线为 Ruff/compileall 通过、127 tests passed in 26.84 s；新增 10 项工作台测试后原有 117 项无回归。
+- 工作台自身 statement/branch 综合覆盖率为 74%；主要未命中是三个可直接运行 CLI 的错误退出、低概率损坏归档分支和外部工作目录 bootstrap。核心成功路径、物化前保护、三类损坏输入及两个真实模型入口均已命中。
+- 最终异常入口审计发现 `metadata.counts` 缺键时原实现会在统一 try 块外泄漏 KeyError；已把计数结构/类型转换纳入同一校验并增加损坏 metadata 回归，没有保留兼容分支。
+- 从 `C:\Windows\Temp` 使用绝对脚本路径实际完成 raster 准备、CUDA 光刻和一轮 MB-OPC，三个入口退出码均为 0；深层脚本无需安装项目的 bootstrap 已由真实工作流验证。

@@ -76,7 +76,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
   run_layout_geometry.py run_mbopc_frontend.py run_mbopc.py
 ```
 
-当前结果：全仓库 117 项通过；OPC/光刻/评价专项 77 项通过，综合语句/分支覆盖率 92%；Layout/Geometry 专项 38 项通过，综合覆盖率 91%。阶段 29 新增 3 项热路径回归，分别锁定 ownership 不物化法向、零位移不重建 contour/Region，以及 current mask 不被 uint8 target 偷换。
+当前结果：全仓库 127 项通过；OPC/光刻/评价专项历史基线 77 项、综合语句/分支覆盖率 92%；Layout/Geometry 专项 38 项、综合覆盖率 91%。阶段 30–33 新增 10 项离线工作台回归，覆盖四个数据接口、两个直接运行入口、物化前限制、损坏归档和多图形跨 core 恢复。
 
 ## 5. 严格性能基准
 
@@ -137,3 +137,37 @@ PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改�
 ## 9. 最终交付审计
 
 交付前执行：完整 diff、`git diff --check`、受保护目录差异、删除符号调用点、AST 中文 docstring、未调用函数/重复实现/异常入口、覆盖率未命中分支和 Markdown 链接/代码围栏检查。用户 GDS、图片和无关工作树修改不得进入提交。
+
+## 10. 离线光刻与迭代专项测试
+
+准备一次输入：
+
+```powershell
+& $python tests\workbench\offline_inputs.py raster TestReticle\simple.gds `
+  output\workbench\raster_input.npz --box -2000 -1100 -200 948 `
+  --pixel-nm 8 --canvas 256
+& $python tests\workbench\offline_inputs.py segments TestReticle\simple.gds `
+  output\workbench\mbopc_input.npz --tile-size-nm 1024 --halo-nm 512
+```
+
+独立运行模型或迭代：
+
+```powershell
+& $python tests\workbench\run_lithography.py `
+  output\workbench\raster_input.npz --output-dir output\workbench\lithography --save-png
+& $python tests\workbench\run_mbopc_iteration.py `
+  output\workbench\mbopc_input.npz --output-dir output\workbench\iteration `
+  --iterations 3 --preview
+```
+
+像素输入超过模型 canvas、源文件/图形/顶点/估计内存超限时，准备函数必须在公共 Region 物化前失败。读取测试还要覆盖缺字段、错误版本、越界 membership、错误参数区间和归档解压总量限制。
+
+聚焦回归命令：
+
+```powershell
+& $python -m pytest tests\workbench\test_offline_workbench.py -q
+& $python -m pytest tests\workbench\test_offline_workbench.py `
+  --cov=tests.workbench --cov-branch --cov-report=term-missing -q
+```
+
+当前聚焦结果为 10 项通过；工作台自身综合 statement/branch coverage 为 74%。未命中主要是三个 CLI 的错误退出、外部工作目录 bootstrap 和低概率损坏归档分支；四个核心接口、两个真实模型成功路径、两种物化前保护和主要损坏输入均已覆盖。详细矩阵与真实数据见 [离线工作台测试报告](offline_workbench_test_report.md)。

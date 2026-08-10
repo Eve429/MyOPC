@@ -152,3 +152,10 @@
 - 提交前强化加载审计：校验 segment 参数区间连续覆盖、core membership 严格递增无重复，以及 metadata 计数/DBU 与真实数组一致。
 - 阶段 32 完成：Ruff、compileall、全仓库 126 tests（29.05 s）通过；工作台聚焦 9 tests（14.65 s）及自身 statement/branch coverage 73%。
 - 覆盖率未命中集中于 CLI 错误出口和低概率归档损坏分支；已审计核心四接口、两运行入口和所有用户要求场景均有执行证据，进入文档与精简审计。
+- 已同步开发手册、测试手册和函数调用关系，补充离线 prepare/load 接口、坐标方向、安全上限、直接运行命令与恢复调用图。
+- 已新增 `offline_workbench_development_report.md` 和 `offline_workbench_test_report.md`，记录归档字段、内存估算、9 项矩阵、126 项全量结果和两组 simple.gds 实测数据。
+- 最终异常审计发现并修复损坏 `metadata.counts` 泄漏 KeyError；新增第 10 项回归，统一转换为带原因的 ValueError。
+- 修正后最终 Ruff、compileall 和全仓库 127 tests（26.84 s）通过；工作台 10 tests（14.91 s）、自身 statement/branch coverage 74%。
+- 仓库外真实直跑通过：在 `C:\Windows\Temp` 依次准备像素、执行 CUDA 光刻和一轮离线 MB-OPC，均无需安装项目且退出码 0。
+- 最终静态审计通过：75 个第一方 Python 文件中文 docstring 无缺失，18 份 Markdown 无断链/围栏错误，diff whitespace、保护目录、函数调用点和重复结构审计均通过。
+- 阶段 30–33 功能、测试、实测、报告和简化审计全部完成；准备提交最终文档与 metadata 异常回归。

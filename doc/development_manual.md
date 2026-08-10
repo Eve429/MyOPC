@@ -116,3 +116,20 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 - 保留层级与局部 ROI，跨 Python/KLayout 边界必须批处理；迭代数据要缓存，诊断默认关闭。
 - 每个 bug 必须有回归测试，修复后搜索并删除仅服务于旧错误的包装、变量和分支。
 - 关键节点只做本地 Git commit，未经明确授权不得 push。
+
+## 9. 离线专项测试工作台
+
+`tests/workbench/offline_inputs.py` 把“版图输入构造”和“模型/迭代优化”解耦。它提供四个稳定测试接口：
+
+- `prepare_raster_input`：把一个明确 ROI 保存成模型左下原点的 `float32[canvas,canvas]`；
+- `load_raster_input`：校验版本、方向、范围和数值后读取 mask；
+- `prepare_segment_input`：一次性完成物化、规范化、切分和 owner/context 构造；
+- `load_segment_input`：恢复现有 `MBOPCProblem`，不创建第二套 problem 类型。
+
+像素归档只对应一个可直接送入模型的 canvas，超限 ROI 必须缩小，不隐式切 tile。边段归档是可恢复的 version 1 输入协议，与 `opc.diagnostics.save_problem_npz` 的不可恢复诊断快照完全分离。后者仍只用于同次前端检查，不承担跨进程恢复。
+
+准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检有意额外读取一次版图：第一次只扫描并拒绝危险输入，第二次才通过现有 `LayoutDB` 公共接口物化。布尔合并可能产生的新交点无法在物化前完全预测，因此准备完成后还会按真实 segment/membership 数量复核内存估计。
+
+`tests/workbench/run_lithography.py` 只消费像素归档，输出三工艺角连续数组和可选 PNG；`tests/workbench/run_mbopc_iteration.py` 只消费边段归档，输出最佳位移、迭代 JSON、GDS 和可选标注图。两个入口均可从任意工作目录直接运行，不需要安装本项目。
+
+详细字段、内存边界和设计审计见 [离线工作台开发报告](offline_workbench_development_report.md)。

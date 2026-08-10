@@ -1,29 +1,29 @@
 {
-  "source": "D:\\00_WorkSpace\\02_CodeStorage\\01_OPC\\MyOPC\\TestReticle\\simple.gds",
+  "source": "D:\\00_WorkSpace\\02_CodeStorage\\01_OPC\\MyOPC\\TestReticle\\JustPoly.gds",
   "layer": "1/0",
   "top_cell": null,
   "dbu_um": 0.001,
   "box_dbu": [
-    -2000,
-    -1100,
-    -200,
-    2200
+    -1300,
+    0,
+    -600,
+    700
   ],
   "device": "cuda:0",
   "tiling": {
-    "columns": 2,
-    "rows": 4,
+    "columns": 1,
+    "rows": 1,
     "tile_size_nm": 1024.0,
     "halo_nm": 512.0,
     "pixel_nm": 8.0
   },
   "counts": {
-    "polygons": 10,
-    "rings": 14,
-    "edges": 107,
-    "segments": 885,
-    "cores": 8,
-    "memberships": 2658
+    "polygons": 3,
+    "rings": 5,
+    "edges": 22,
+    "segments": 220,
+    "cores": 1,
+    "memberships": 220
   },
   "optimization": {
     "best_iteration": 4,
@@ -32,107 +32,82 @@
       {
         "iteration": 0,
         "step_dbu": 8.0,
-        "epe": 338,
-        "l2": 2822.466064453125,
-        "pvband": 388.9281005859375,
-        "valid_probes": 880,
+        "epe": 108,
+        "l2": 830.6585693359375,
+        "pvband": 83.263916015625,
+        "valid_probes": 220,
         "ambiguous_probes": 0,
-        "moved_segments": 338,
+        "moved_segments": 108,
         "rejected_segments": 0,
-        "elapsed_seconds": 0.7123767999000847
+        "elapsed_seconds": 0.9924136002082378
       },
       {
         "iteration": 1,
         "step_dbu": 8.0,
-        "epe": 203,
-        "l2": 1766.54052734375,
-        "pvband": 415.5947570800781,
-        "valid_probes": 880,
+        "epe": 78,
+        "l2": 490.4815368652344,
+        "pvband": 89.25214385986328,
+        "valid_probes": 220,
         "ambiguous_probes": 0,
-        "moved_segments": 203,
+        "moved_segments": 78,
         "rejected_segments": 0,
-        "elapsed_seconds": 0.08689709985628724
+        "elapsed_seconds": 0.01982199982739985
       },
       {
         "iteration": 2,
         "step_dbu": 8.0,
-        "epe": 113,
-        "l2": 1309.4219970703125,
-        "pvband": 436.14422607421875,
-        "valid_probes": 880,
+        "epe": 43,
+        "l2": 329.6925048828125,
+        "pvband": 97.09520721435547,
+        "valid_probes": 220,
         "ambiguous_probes": 0,
-        "moved_segments": 113,
+        "moved_segments": 43,
         "rejected_segments": 0,
-        "elapsed_seconds": 0.08838650002144277
+        "elapsed_seconds": 0.0179022999946028
       },
       {
         "iteration": 3,
         "step_dbu": 8.0,
-        "epe": 78,
-        "l2": 1171.194091796875,
-        "pvband": 453.3854675292969,
-        "valid_probes": 880,
+        "epe": 29,
+        "l2": 292.6686706542969,
+        "pvband": 104.56314086914062,
+        "valid_probes": 220,
         "ambiguous_probes": 0,
-        "moved_segments": 7,
+        "moved_segments": 2,
         "rejected_segments": 0,
-        "elapsed_seconds": 0.0872687001246959
+        "elapsed_seconds": 0.017578300088644028
       },
       {
         "iteration": 4,
         "step_dbu": 4.0,
-        "epe": 73,
-        "l2": 1166.2037353515625,
-        "pvband": 453.08905029296875,
-        "valid_probes": 880,
-        "ambiguous_probes": 0,
-        "moved_segments": 1,
-        "rejected_segments": 0,
-        "elapsed_seconds": 0.09199009998701513
-      },
-      {
-        "iteration": 5,
-        "step_dbu": 4.0,
-        "epe": 73,
-        "l2": 1166.2564697265625,
-        "pvband": 453.08697509765625,
-        "valid_probes": 880,
-        "ambiguous_probes": 0,
-        "moved_segments": 1,
-        "rejected_segments": 0,
-        "elapsed_seconds": 0.09047750011086464
-      },
-      {
-        "iteration": 6,
-        "step_dbu": 4.0,
-        "epe": 73,
-        "l2": 1166.427734375,
-        "pvband": 453.0837097167969,
-        "valid_probes": 880,
+        "epe": 26,
+        "l2": 291.8519287109375,
+        "pvband": 104.4057388305664,
+        "valid_probes": 220,
         "ambiguous_probes": 0,
         "moved_segments": 0,
         "rejected_segments": 0,
-        "elapsed_seconds": 0.09161550016142428
+        "elapsed_seconds": 0.01663720002397895
       }
     ]
   },
   "memory": {
-    "segment_persistent_bytes": 51284,
+    "segment_persistent_bytes": 4800,
     "target_cache_limit_bytes": 536870912,
-    "gpu_peak_allocated_bytes": 271534080
+    "gpu_peak_allocated_bytes": 34356736
   },
   "timing_seconds": {
-    "layout_load": 0.018750700168311596,
-    "frontend_prepare": 0.004129299893975258,
-    "iterations": 1.5660077999345958,
-    "final_reconstruct_and_output": 0.1828201999887824,
-    "total": 1.771707999985665
+    "layout_load": 0.009059600066393614,
+    "frontend_prepare": 0.006791799794882536,
+    "iterations": 1.5161805001553148,
+    "final_reconstruct_and_output": 0.3096045998390764,
+    "total": 1.8416364998556674
   },
   "verification": {
     "reconstructed_valid": true
   },
   "artifacts": {
     "summary": "D:\\00_WorkSpace\\02_CodeStorage\\01_OPC\\MyOPC\\output\\mbopc\\summary.json",
-    "npz": "D:\\00_WorkSpace\\02_CodeStorage\\01_OPC\\MyOPC\\output\\mbopc\\mbopc_result.npz",
     "gds": "D:\\00_WorkSpace\\02_CodeStorage\\01_OPC\\MyOPC\\output\\mbopc\\mbopc_result.gds",
     "preview": "D:\\00_WorkSpace\\02_CodeStorage\\01_OPC\\MyOPC\\output\\mbopc\\mbopc_result.png"
   }

@@ -183,7 +183,7 @@ Keep LayoutDB hierarchical and read-only, use lazy ROI queries, and convert to N
 
 **Logged**: 2026-08-10T15:45:00+08:00
 **Priority**: high
-**Status**: promoted
+**Status**: resolved
 **Area**: backend
 
 ### Summary
@@ -203,6 +203,9 @@ Keep LayoutDB hierarchical and read-only, use lazy ROI queries, and convert to N
 - Recurrence-Count: 1
 - First-Seen: 2026-08-10
 - Last-Seen: 2026-08-10
-- Promoted: AGENTS.md
+
+### Resolution
+- **Resolved**: 2026-08-10T18:20:00+08:00
+- **Notes**: 已落实为单一轮廓/owner 权威和两个实测 edge cache；项目既有“新抽象必须有当前调用方”规则已经覆盖该原则，因此没有重复修改 AGENTS.md。
 
 ---

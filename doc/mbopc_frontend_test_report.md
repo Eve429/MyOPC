@@ -6,10 +6,13 @@
 
 新增架构回归包括：
 
-- `PhysicalMask` 与 `SegmentBatch` 共享轮廓/边对象，不发生深复制；
+- `PhysicalMask` 不再持有数值轮廓，`SegmentBatch` 是 `ContourBatch` 唯一所有者；
+- `ContourBatch` 的两级 CSR 可精确恢复多 Polygon 和 hole；
+- edge next/polygon 两个缓存必须与 contour 拓扑完全一致；
+- `MBOPCProblem` 直接校验唯一 owner 与 membership CSR；
 - `SegmentBatch` 不再暴露 key、edge offset 或持久长度；
 - probe 距离独立于 corner fragmentation 长度；
-- 前端 NPZ 为格式 v2 且不含 `segment_keys`；
+- 前端诊断 NPZ 为格式 v3，离线 segment 归档为 v2 且明确拒绝 v1；
 - 完整 runner 不生成 NPZ。
 
 ## 2. 严格合成基准
@@ -30,10 +33,12 @@
 
 ## 4. 真实 `gcd_45nm` 验证
 
-Layer 11/0：1,776 polygons、21,590 edges、223,553 segments。常驻 segment 数组 4,830,716 bytes，较旧实现 12,675,300 bytes 减少 61.89%；prepare 152.82 ms，总诊断流程 2.308 s；零位移 XOR、core coverage gap、core overlap 均为 0。
+2026-08-10 使用 1024 nm tile、512 nm halo 的有界实测：Layer 11/0 为 1,776 polygons、21,590 edges、223,553 segments、870 cores、880,801 memberships。完整 problem 常驻 NumPy 数组 9,802,180 bytes，较本次重构前同口径 10,688,650 bytes 减少 886,470 bytes（8.29%）；`SegmentBatch` 自有数组为 5,003,436 bytes。prepare 233.34 ms，同机重构前只读基线为约 266 ms。
 
-JSON、key-free v2 NPZ、GDS 和 PNG 均成功生成。人工查看 `gcd_45nm_overview.png`，左右 owner 分区清楚，跨 core 图形连续，inner/outer 点与法向方向一致。
+同一进程、同一 problem 的 30 次对照显示：模拟旧 `EdgeBatch` 数组访问中位数 28.229 ms，新 nested-next 访问中位数 28.205 ms，P95 31.082 ms，没有物化速度退化。零位移重建 5 次中位数 234.115 ms；XOR、core coverage gap、core overlap 均为 0。
+
+JSON、key-free v3 诊断 NPZ、GDS 和 PNG 均成功生成。旧 v1 离线 segment 归档在检查新字段前即提示重新生成，不存在兼容转换分支。
 
 ## 5. 结论
 
-前端在删除稳定身份与外部更新链后，几何结果没有变化，准备、物化、重建和内存指标均改善；当前数组下标身份足以支持进程内同步求解。
+前端完成第二次数据契约减法后，几何结果没有变化，完整问题数组内存下降 8.29%，同口径物化没有速度退化；当前数组下标身份足以支持进程内同步求解。

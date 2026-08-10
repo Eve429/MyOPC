@@ -38,7 +38,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 该入口验证规范化、分段、唯一 owner、halo membership、固定参考位移、全局重建和 core 覆盖。输出为：
 
 - `summary.json`：计数、耗时、内存和几何一致性；
-- `segments.npz`：格式版本 2、无稳定 key、按全局 segment 下标对齐；
+- `segments.npz`：诊断格式版本 3、无稳定 key、按全局 segment 下标对齐；
 - `overview.png`：core/owner/法向/inner/outer probe 标注；
 - `reconstruction.gds`：参考与重建结果。
 
@@ -96,7 +96,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 基准不再测试 key lookup，因为生产迭代直接使用数组下标且已删除该路径。
 
-补充热点等价基准：11 万 segment 的 `build_ownership` 中位耗时从 40.20 ms 降到
+补充热点等价基准：11 万 segment 的内部 `_build_ownership` 中位耗时从 40.20 ms 降到
 37.15 ms，tracemalloc 峰值从 24.56 MiB 降到 17.85 MiB，三组归属数组逐项一致；
 500 polygons/11,000 segments 的零位移 `_current_tile` 从 44.35 ms 降到 11.06 ms，
 输出像素逐项一致。`zero reconstruct` 仍保留为显式诊断/最终输出 API，但已从求解器零位移初始化路径移除。
@@ -128,7 +128,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 ## 8. 真实版图验收基线
 
-`gcd_45nm.gds` Layer 11/0 前端结果：1,776 polygons、21,590 edges、223,553 segments；常驻 segment 数组 4,830,716 bytes，相比旧实现 12,675,300 bytes 减少 61.89%；阶段 28 prepare 152.82 ms；重建 XOR 为 0。
+`gcd_45nm.gds` Layer 11/0 最新前端结果：1,776 polygons、21,590 edges、223,553 segments、870 cores、880,801 memberships；完整 problem 常驻 NumPy 数组 9,802,180 bytes，相比本次结构重构前同口径 10,688,650 bytes 减少 8.29%；prepare 233.34 ms；零位移重建、core coverage 和 overlap 校验均为 0。
 
 阶段 29 再次执行三轮 CUDA 完整流程：870 cores、880,801 memberships；EPE `129645 -> 74592 -> 48348`，L2 `1038629.522 -> 563335.522 -> 440251.431`；GPU 峰值分配 271,544,320 bytes；总耗时 79.117 s（阶段 28 为 85.892 s）；结果 GDS 合法且无全流程 NPZ。
 

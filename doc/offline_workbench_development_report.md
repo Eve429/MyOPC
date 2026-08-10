@@ -4,7 +4,7 @@
 
 本阶段在 `tests/workbench/` 建立可直接运行的离线专项工作台。版图像素化或边段构造只执行一次，后续可以单独修改、分析和计时光刻模型或 OPC 迭代，不重复读取 GDS、物化 Region 或切分边段。
 
-实现没有修改 `layout/`、`geometry/` 和现有 OPC 数据结构；加载边段归档后直接恢复 `MBOPCProblem`。功能提交为 `34b9c92`，未推送远端。
+初版没有修改 `layout/`、`geometry/` 和现有 OPC 数据结构；后续在用户授权的数据契约收敛中同步升级边段归档，加载后仍直接恢复唯一的 `MBOPCProblem`，没有建立兼容 problem 类型。
 
 ## 2. 公共测试接口
 
@@ -12,7 +12,7 @@
 |---|---|---|---|
 | `prepare_raster_input` | GDS/OASIS、Layer、ROI、pixel/canvas | raster version 1 NPZ | ROI 必须直接放入单个 canvas |
 | `load_raster_input` | raster NPZ | `float32` mask、metadata | 左下原点、值域 `[0,1]`、禁止 pickle |
-| `prepare_segment_input` | 版图、ROI、分段与 core 配置 | MBOPC version 1 NPZ | 预检后才物化和构造 owner |
+| `prepare_segment_input` | 版图、ROI、分段与 core 配置 | MBOPC version 2 NPZ | 预检后才物化和构造 owner |
 | `load_segment_input` | MBOPC NPZ | `MBOPCProblem`、metadata | 不依赖源 GDS，不重新分段 |
 
 `run_lithography_test` 返回现有 `LithographyResult`；`run_mbopc_iteration_test` 返回现有 `SimpleMBOPCResult`。没有为工作台新增结果结构、算法基类、注册器或占位方法目录。
@@ -23,15 +23,15 @@
 
 边段归档保存：
 
-- contour 顶点、ring offsets、polygon ID 和 hole 标志；
-- edge 起终点、ring/polygon ID、hole 标志和单位外法向；
+- contour 顶点、ring offsets 和 polygon ring offsets；
+- edge next/polygon 两个 `int32` 缓存和单位外法向；
 - segment 的 ring offsets、edge ID、`t0/t1`；
-- core ownership/context box、唯一 owner 和 membership CSR；
+- grid x/y cuts、halo、唯一 owner 和 membership CSR；
 - Layer、ROI、DBU、分段配置、tile/halo 与规模统计。
 
 边段 NPZ 不压缩，避免大版图保存时同时承担压缩 CPU 和临时内存；像素数组固定较小且通常稀疏，使用压缩 NPZ。两者都在同目录写临时文件后用 `os.replace` 原子发布。
 
-现有 `save_problem_npz` 继续是不可恢复诊断快照。工作台没有修改其 version 2 语义，也没有把跨版本 remesh 身份问题塞入新归档。
+`save_problem_npz` 继续是不可恢复诊断快照，当前为 version 3。工作台 segment version 2 是独立的可恢复协议；version 1 明确提示重新生成，不把跨版本 remesh 身份问题塞入转换分支。
 
 ## 4. 内存与异常边界
 
@@ -46,7 +46,7 @@
 
 严格预检额外读取一次版图，但不会构造目标 Region；通过后才使用现有 `LayoutDB` 公共路径正式读取。这个额外 I/O 只发生在一次性测试数据准备，不进入模型或迭代热路径。物化后的真实数组规模还会二次复核。
 
-读取端先利用 ZIP 成员声明检查总解压量，再以 `allow_pickle=False` 读取。恢复时检查 contour/edge 等价、单位法向、segment 全局顺序、每条边的 `[0,1]` 连续覆盖、ring 归属、membership 越界/重复、owner context 唯一出现和 metadata 计数。
+读取端先利用 ZIP 成员声明检查总解压量，再以 `allow_pickle=False` 读取。恢复时先检查格式版本，再验证 nested contour CSR、两个 edge cache、单位法向、segment 全局顺序、每条边的 `[0,1]` 连续覆盖、ring 归属、membership 越界/重复、owner context 唯一出现和 metadata 计数。
 
 ## 5. 直接运行与性能路径
 

@@ -32,7 +32,7 @@
 
 ## 4. 真实版图前端
 
-`gcd_45nm.gds` Layer 11/0：223,553 segments；常驻数组由 12,675,300 降到 4,830,716 bytes，减少 61.89%；阶段 28 prepare 152.82 ms；总诊断流程 2.308 s；零位移 XOR/core gap/core overlap 均为 0。v2 NPZ 不含 segment key。
+该阶段历史口径为：`gcd_45nm.gds` Layer 11/0 共 223,553 segments，`SegmentBatch` 自有数组由 12,675,300 降到 4,830,716 bytes。后续数据契约收敛加入两个必要 edge cache 后，`SegmentBatch` 自有数组为 5,003,436 bytes；更完整且不重复的 problem 口径由 10,688,650 降到 9,802,180 bytes（-8.29%）。诊断 NPZ 当前为 v3。
 
 人工检查标注图确认 owner 分区、探针方向和跨 core 连续性正确。
 
@@ -52,7 +52,7 @@ GPU 峰值 271,544,320 bytes 与历史一致；授权精简后总耗时 85.892 s
 
 搜索确认生产 Python 不再引用：稳定 key、key lookup、external update batch/result、sample template/batch、选择性 materialize、持久 edge lengths/offsets 和旧 reconstruction 签名。
 
-诊断代码只有根入口显式调用；输入包不再导出诊断函数。剩余结构体均有当前生产调用方，重复几何字段通过对象身份回归证明是共享引用。未发现为了旧错误保留的 wrapper、兼容分支或变量。
+诊断代码只有根入口显式调用；输入包不再导出诊断函数。后续审计删除了 `EdgeBatch`、`OwnershipBatch` 和重复几何入口，剩余结构体均有当前生产调用方。未发现为了旧错误保留的 wrapper、v1 兼容分支或变量。
 
 同时确认生产代码不再引用固定 backend、`GeometryEngine`、`UniformGridIndex`、`CoordinateSystemError`、edge bbox 或 `DbuBox.overlaps`。历史 `design_review.md` 保留为修改前的审计记录，不当作当前 API 手册。`hierarchy_summary` 是明确交付的只读层级检查能力，有外部 planner 使用价值且无热路径成本，因此保留。
 

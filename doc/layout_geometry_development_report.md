@@ -18,7 +18,7 @@ GDS/OASIS
   -> LayoutDB（一次读取、保留层级）
   -> ShapeQuery（Cell + Layer[] + ROI）
   -> RegionBatch（每层一个精确裁到 ROI 的 KLayout Region）
-     -> ContourBatch / EdgeBatch（明确请求才转连续数组）
+     -> ContourBatch（明确请求才转两级 CSR 连续数组）
      -> 灰度 raster（明确请求才生成）
      -> GeometryPatch / PatchSet / PatchWriter（独立输出）
 ```
@@ -35,8 +35,8 @@ GDS/OASIS
 
 ### 2.2 Geometry
 
-- `ContourBatch` 用 `int64` 顶点、CSR ring offsets、polygon ID 和 hole 标记保存轮廓；
-- `EdgeBatch` 向量化生成闭环数学边，OPC 切段策略不进入基础层；
+- `ContourBatch` 用 `int64` 顶点、ring offsets 和 polygon ring offsets 保存两级 CSR 轮廓；
+- 数学边的闭环索引和 OPC 分段缓存位于 `opc.input.edge`，不再由通用几何层持久保存；
 - `validate_contours` 检查空边、重复点、ring 数量和拓扑输入不变量；
 - `render_region_batch`/`render_layout_region` 使用 KLayout 面积栅格，输出顶部朝上的 `uint8` 图；
 - `PatchSet` 按 Layer 累计原生 ownership Region，拒绝正面积冲突，并精确裁剪 patch；
@@ -51,6 +51,7 @@ GDS/OASIS
 - `RegionBatch.backend` 和 `BackendMismatchError`：所有数据类型都直接持有 `kdb.Region`，不存在第二后端；
 - `CoordinateSystemError`：只服务已删除门面；
 - `EdgeBatch.bboxes`：只服务已删除索引；
+- `EdgeBatch` 及 `geometry/edge.py`：全部字段都可由两级 CSR 轮廓推导，唯一生产消费者已经位于边段输入层；
 - `DbuBox.overlaps`：只是无调用方的 `intersection(...) is not None` 糖衣；
 - 对应的 2 个模块、2 份测试及空间索引 benchmark/CLI 参数。
 
@@ -62,7 +63,7 @@ GDS/OASIS
 
 1. 层级优先：AREF/SREF 不 flatten；
 2. ROI 优先：原生层级筛选后每 Layer 一次精确 Region 相交；
-3. 数组按需：只有重复数值计算才提取轮廓/边；
+3. 数组按需：通用层只提取轮廓，边段方法在自身输入层建立最小热路径缓存；
 4. 诊断显式：默认不进行图形分类、PNG 或完整几何物化；
 5. 栅格分块：原生临时 float 像素约束在 1,000,000 以内，最终只保留 `uint8`；
 6. 输出隔离：源版图只读，结果写独立 GDS/OASIS。
@@ -72,13 +73,13 @@ GDS/OASIS
 ## 5. 当前公共入口
 
 - `layout.LayoutDB`、`DbuBox`、`LayerSpec`、`RegionBatch`、`PatchWriter`；
-- `geometry.extract_contours`、`extract_edges`、`extract_edge_batches`、`contours_to_region`；
+- `geometry.extract_contour`、`extract_contours`、`contours_to_region`；
 - `geometry.validate_contours`、`render_region_batch`、`render_layout_region`；
 - `geometry.GeometryPatch`、`PatchSet`。
 
 ## 6. OPC/ILT 复用边界
 
-MB-OPC 使用精确 ROI `RegionBatch`、轮廓和数学边；ILT 可复用层级查询、Region 和 raster，不必依赖边段；Patch/output 对所有方法通用。任何方法都不应直接长期持有 Python polygon 列表。
+MB-OPC 使用精确 ROI `RegionBatch` 和轮廓，并在 `opc.input.edge` 建立数学边缓存；ILT 可复用层级查询、Region 和 raster，不必依赖边段；Patch/output 对所有方法通用。
 
 版图层只表达数据和查询，不预建 GPU/求解器接口。几何层只提供当前使用的 Region、数组、验证、栅格和 patch 能力，不再为假设中的后端或邻域算法保留空抽象。
 

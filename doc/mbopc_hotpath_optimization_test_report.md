@@ -45,9 +45,10 @@ strict failures 为空。
 
 ## 4. 真实版图验证
 
-`gcd_45nm.gds` Layer 11/0 前端保持 1,776 polygons、21,590 edges、223,553
-segments、4,830,716 persistent bytes；2-core 验证的 XOR、core coverage gap、overlap
-均为 0，重建 Region 合法。
+该阶段 `gcd_45nm.gds` Layer 11/0 前端保持 1,776 polygons、21,590 edges、223,553
+segments、4,830,716 SegmentBatch 自有 bytes；后续数据契约收敛加入两个必要 edge cache 后
+该口径为 5,003,436 bytes，完整 problem 口径为 9,802,180 bytes。XOR、core coverage
+gap、overlap 仍均为 0，重建 Region 合法。
 
 三轮 CUDA 整图仍为 870 cores、880,801 memberships：
 

@@ -21,7 +21,7 @@ layout -> geometry -> opc.input -> opc.iteration.mbopc
 | 路径 | 当前职责 |
 |---|---|
 | `layout/` | 层级版图加载、Layer/ROI 查询 |
-| `geometry/` | Region、轮廓/边数组、栅格化、输出 patch |
+| `geometry/` | Region、两级 CSR 轮廓、栅格化、输出 patch |
 | `opc/input/` | 物理 mask、规则 core 网格等共享输入 |
 | `opc/input/edge/` | 边段切分、唯一 owner、探针坐标、全局矢量重建 |
 | `opc/iteration/mbopc/` | simple MB-OPC 的流式同步迭代 |
@@ -37,37 +37,39 @@ layout -> geometry -> opc.input -> opc.iteration.mbopc
 
 ### 3.1 `PhysicalMask`
 
-保存规范化后的 `Region`、轮廓、数学边、查询框和 Layer。轮廓与数学边在输入阶段一次生成，后续只读。
+只保存规范化后的原生 `Region`、查询框和 Layer，是 MB-OPC、ILT 等方法可以共享的最小物理输入。它不提前提取轮廓或数学边，避免不使用边段的方法承担无关时间和内存。
 
-### 3.2 `SegmentBatch`
+### 3.2 `ContourBatch`
+
+由 `SegmentBatch` 唯一持有，使用 `vertices`、`ring_offsets` 和 `polygon_ring_offsets` 两级 CSR 表达 `Polygon -> ring -> vertex`。每个 Polygon 范围的首 ring 是 hull，后续 ring 是 hole，因此不再重复保存 Layer、逐 ring Polygon ID 和 hole 布尔列。
+
+### 3.3 `SegmentBatch`
 
 只常驻求解所需字段：
 
-- `contours`、`edges`：与 `PhysicalMask` 共享不可变数组引用，不复制数据；
+- `contours`：固定参考轮廓的唯一数值所有者；
+- `edge_next_ids`、`edge_polygon_ids`：经实测保留的两个 `int32` 热路径缓存；
 - `edge_normals`、`ring_segment_offsets`：边法向和每个 ring 的分段范围；
 - `edge_ids`、`t0`、`t1`：每段在固定参考数学边上的索引和参数区间。
 
 边段身份就是当前 problem 内的全局数组下标。已经删除无当前调用方的稳定 key、排序查找表、外部更新批次、持久化边长和边偏移表。`materialize(displacements)` 一次性用 NumPy 生成所有当前端点和法向；诊断需要长度时临时计算，不进入迭代常驻内存。
 
-### 3.3 `OwnershipBatch`
-
-`owner_indices[i]` 是 segment `i` 的唯一写入 core 下标；CSR 形式的 membership 保存哪些 core 的 halo 需要只读该 segment。规则 `RectilinearCoreGrid` 采用内部半开、版图最大外边界闭合的归属规则，避免共享边界重复 owner 或最外沿无 owner。
-
 ### 3.4 `MBOPCProblem`
 
-聚合 `PhysicalMask`、`FragmentationConfig`、`SegmentBatch` 和 `OwnershipBatch`。它持有固定参考几何；每轮变化量只有与全局 segment 下标对齐的一维位移向量。
+聚合 `PhysicalMask`、`FragmentationConfig`、`SegmentBatch`、紧凑 `RectilinearCoreGrid` 以及 owner/membership CSR。`owner_indices[i]` 是 segment `i` 的唯一写入 core；`core_offsets/member_segment_indices` 表达 owner 与只读 halo context。展开的 `CoreSpec` 只在 solver 或诊断明确需要时生成一次，不再常驻 problem。
 
 ## 4. 输入构造和重建
 
 `prepare_problem(batch, layer, config, grid)` 顺序执行：
 
 1. `normalize_physical_mask` 合并重叠、清理属性并恢复合法孔洞；
-2. `fragment_edges` 按角段和最大段长向量化切分数学边；
-3. `build_ownership` 用规则网格批量计算唯一 owner 和 halo membership；
-4. 返回只读参考 problem，不预生成图片、文件或探针缓存。
+2. `extract_contour` 一次生成两级 CSR 数值轮廓；
+3. `fragment_edges` 生成最小边缓存、法向和参数化控制段；
+4. 内部 `_build_ownership` 用规则网格批量计算唯一 owner 和 halo membership；
+5. 返回只读参考 problem，不预生成图片、文件或探针缓存。
 
-`build_ownership` 只需要参考端点和中点，不需要迭代阶段的逐段法向。实现直接由
-`edges + edge_ids + t0/t1` 向量化生成端点，并在展开 CSR membership 前释放端点临时表；
+内部归属构造只需要参考端点和中点，不需要迭代阶段的逐段法向。实现直接由
+`contours + edge_next_ids + edge_ids + t0/t1` 向量化生成端点，并在展开 CSR membership 前释放端点临时表；
 不得为此调用 `SegmentBatch.materialize()`，否则会额外复制法向并抬高准备阶段峰值内存。
 
 `edge_probe_points(starts, ends, normals, distance_dbu)` 是求解器和诊断共用的唯一探针坐标实现：以当前 segment 中点为基准，`inner = midpoint - normal * distance`，`outer = midpoint + normal * distance`。探针距离来自迭代配置，不与角段长度绑定。
@@ -103,7 +105,7 @@ target 缓存为降低常驻内存使用 `uint8`，而 current mask 保留浮点
 ## 7. 输出约定
 
 - `run_mbopc.py`：保存 `summary.json`、结果 GDS 和可选 PNG；不保存整轮 tensor，也不生成 NPZ。
-- `run_mbopc_frontend.py`：用于人工检查输入契约，保存 key-free、按全局 segment 下标对齐的格式 v2 NPZ，并可保存 GDS/PNG/JSON。
+- `run_mbopc_frontend.py`：用于人工检查输入契约，保存 key-free、按全局 segment 下标对齐的格式 v3 NPZ，并可保存 GDS/PNG/JSON。
 - `opc.diagnostics`：只有调用者明确要求时才物化诊断长度、图片、GDS 或测试图集。
 
 NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久身份协议。显式 remesh 必须重新分段、重新建立 owner，并由调用者重建优化状态。
@@ -126,7 +128,7 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 - `prepare_segment_input`：一次性完成物化、规范化、切分和 owner/context 构造；
 - `load_segment_input`：恢复现有 `MBOPCProblem`，不创建第二套 problem 类型。
 
-像素归档只对应一个可直接送入模型的 canvas，超限 ROI 必须缩小，不隐式切 tile。边段归档是可恢复的 version 1 输入协议，与 `opc.diagnostics.save_problem_npz` 的不可恢复诊断快照完全分离。后者仍只用于同次前端检查，不承担跨进程恢复。
+像素归档只对应一个可直接送入模型的 canvas，超限 ROI 必须缩小，不隐式切 tile。边段归档是可恢复的 version 2 输入协议，保存两级 contour CSR、两个 edge cache、segment 数组、grid cuts 和 membership CSR；version 1 明确提示重新生成，不保留转换分支。它与 `opc.diagnostics.save_problem_npz` 的不可恢复 v3 诊断快照完全分离。
 
 准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检有意额外读取一次版图：第一次只扫描并拒绝危险输入，第二次才通过现有 `LayoutDB` 公共接口物化。布尔合并可能产生的新交点无法在物化前完全预测，因此准备完成后还会按真实 segment/membership 数量复核内存估计。
 

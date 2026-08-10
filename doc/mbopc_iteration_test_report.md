@@ -28,7 +28,7 @@ OPC/光刻/评价专项 74 项通过，综合语句/分支覆盖率 92%；授权
 
 EPE 与 L2 下降；PVBand 上升，已原样记录。结果与重构前历史运行数值一致。
 
-常驻 segment 数组 4,830,716 bytes；GPU 峰值分配 271,544,320 bytes；阶段 28 总耗时 85.892 s，相比历史 84.708 s 差 1.40%，属于运行波动。结果 Region 合法，GDS/JSON/PNG 成功生成，且没有全流程 NPZ。
+该轮次历史运行的常驻 segment 数组为 4,830,716 bytes；后续数据契约收敛加入两个必要 edge cache 后为 5,003,436 bytes，完整 problem 数组为 9,802,180 bytes。GPU 历史峰值分配 271,544,320 bytes；结果 Region 合法，GDS/JSON/PNG 成功生成，且没有全流程 NPZ。
 
 ## 4. 内存结论
 

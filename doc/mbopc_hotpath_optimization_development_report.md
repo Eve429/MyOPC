@@ -2,7 +2,7 @@
 
 ## 1. 开发范围
 
-本阶段只实施两项已经确认的优化：`build_ownership` 不再为归属计算完整物化
+本阶段只实施两项已经确认的优化：内部 `_build_ownership` 不再为归属计算完整物化
 `SegmentGeometry`；simple MB-OPC 的零位移初态和局部未变化 core 不再执行无意义的
 轮廓/Region 重建。稀疏活跃 core、宏分块、梯度 OPC、remesh，以及 `layout/`、
 `geometry/` 修改均明确排除。
@@ -10,8 +10,9 @@
 ## 2. ownership 准备路径
 
 旧路径调用 `SegmentBatch.materialize()`，同时生成 starts、ends、normals 和
-`SegmentGeometry`，但归属只读取端点。新路径直接用 `edges.starts/ends`、`edge_ids`、
-`t0/t1` 批量生成参考端点和中点，之后继续使用原有 midpoint owner、bbox+halo 与 CSR
+`SegmentGeometry`，但归属只读取端点。新路径直接用 `contours.vertices`、
+`edge_next_ids/edge_ids`、`t0/t1` 批量生成参考端点和中点，之后继续使用原有
+midpoint owner、bbox+halo 与 CSR
 membership 算法。
 
 端点构造完成后立即释放数学边起点/向量，四条 bbox 边界形成后再释放 starts、ends、

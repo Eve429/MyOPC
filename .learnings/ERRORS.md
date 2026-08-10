@@ -1518,3 +1518,189 @@ owner/v1 校验收敛的多文件补丁使用了与已迁移代码不一致的�
 - **Notes**: 短锚点补丁成功，23 项聚焦测试和全仓库回归均通过。
 
 ---
+
+## [ERR-20260810-011] documentation_rg_windows_glob
+
+**Logged**: 2026-08-10T18:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+文档旧符号搜索把根目录 `*.md` 当作 rg 路径参数，在 Windows 上返回非法路径。
+
+### Error
+`rg: *.md: 文件名、目录名或卷标语法不正确。 (os error 123)`
+
+### Context
+- doc 目录结果已经正常返回，命令末尾因根通配符失败。
+- 这是已知 PowerShell/rg 路径通配符模式的再次出现。
+
+### Suggested Fix
+始终传固定目录并使用 `rg --glob '*.md'` 过滤文件。
+
+### Metadata
+- Reproducible: yes
+- Related Files: doc/
+- See Also: ERR-20260809-034, ERR-20260810-004
+
+### Resolution
+- **Resolved**: 2026-08-10T18:12:00+08:00
+- **Notes**: 后续文档审计均使用固定 doc 路径和 `--glob`。
+
+---
+
+## [ERR-20260810-012] powershell_markdown_fence_escape
+
+**Logged**: 2026-08-10T18:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+复合 PowerShell 审计命令把 Markdown 围栏反引号放入双引号参数，导致字符串解析失败。
+
+### Error
+`The string is missing the terminator: ".`
+
+### Context
+- 命令仅用于只读搜索，没有修改文件。
+- PowerShell 会在双引号字符串内把反引号解释为转义符。
+
+### Suggested Fix
+不要把 Markdown 围栏文字直接嵌入 PowerShell 双引号；改用 Python 读取文本计数，或使用不含反引号的独立命令。
+
+### Metadata
+- Reproducible: yes
+- Related Files: doc/function_call_architecture.md
+- See Also: ERR-20260810-011
+
+### Resolution
+- **Resolved**: 2026-08-10T18:21:00+08:00
+- **Notes**: 后续改用 Python 文档审计脚本，避免 shell 转义参与。
+
+---
+
+## [ERR-20260810-013] conda_pipe_access_denied
+
+**Logged**: 2026-08-10T18:24:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+通过 PowerShell 管道向 `conda run` 传递只读审计脚本时，受管环境返回 Access is denied。
+
+### Error
+`Access is denied.`
+
+### Context
+- 脚本尚未执行，没有修改仓库。
+- 项目已有确定的 `myopc` 环境解释器路径，无需继续经过 conda 包装器。
+
+### Suggested Fix
+后续只读内联审计直接调用 `D:\\app\\miniforge\\envs\\myopc\\python.exe`。
+
+### Metadata
+- Reproducible: unknown
+- Related Files: task_plan.md
+- See Also: ERR-20260810-003
+
+### Resolution
+- **Resolved**: 2026-08-10T18:25:00+08:00
+- **Notes**: 改用项目环境的确定解释器路径执行同一脚本。
+
+---
+
+## [ERR-20260810-014] learning_patch_weak_anchor
+
+**Logged**: 2026-08-10T18:28:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: docs
+
+### Summary
+学习日志补丁只以通用 Status/Promoted 行为锚点，误改了文件中更早的学习条目。
+
+### Error
+目标 `LRN-20260810-002` 未变化，`LRN-20260809-005` 被错误替换。
+
+### Context
+- 检查 diff 时发现并在提交前修正。
+- 生产代码和测试没有受影响。
+
+### Suggested Fix
+修改多条相似 Markdown 记录时，补丁上下文必须包含唯一条目 ID。
+
+### Metadata
+- Reproducible: yes
+- Related Files: .learnings/LEARNINGS.md
+- See Also: ERR-20260810-010
+
+### Resolution
+- **Resolved**: 2026-08-10T18:29:00+08:00
+- **Notes**: 恢复原条目的 promoted 状态，并用两个明确学习 ID 精确更新目标条目。
+
+---
+
+## [ERR-20260810-015] parallel_rg_expected_no_match
+
+**Logged**: 2026-08-10T18:31:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+并行调用点审计中，一个预期可能无命中的 `rg` 返回 1，使聚合工具把整组只读搜索标记为失败。
+
+### Error
+`Exit code: 1`，没有文件或代码错误输出。
+
+### Context
+- `rg` 用退出码 1 表示无匹配；这是审计结果，不是执行异常。
+- 后续用单一 alternation 模式复查，定位到三个测试覆盖的公共 API；`forward` 由 PyTorch 框架调度。
+
+### Suggested Fix
+预期允许无命中的符号审计应使用一个合并查询，并单独解释结果，不把多条 `rg` 的退出码聚合为功能门失败。
+
+### Metadata
+- Reproducible: yes
+- Related Files: geometry/raster.py, layout/database.py, layout/types.py, lithography/iccad13.py
+- See Also: ERR-20260809-031
+
+### Resolution
+- **Resolved**: 2026-08-10T18:32:00+08:00
+- **Notes**: 已完成合并查询和逐项调用语义核对，无需删除有效接口。
+
+---
+
+## [ERR-20260810-016] final_report_patch_stale_finding_anchor
+
+**Logged**: 2026-08-10T18:34:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+最终报告的多文件原子补丁使用了 findings 中并不存在的英文概括句，校验失败。
+
+### Error
+`apply_patch verification failed`，未找到预期的 final same-process 行。
+
+### Context
+- 原子补丁没有产生部分修改。
+- 实际 findings 使用更具体的 `A same-process 30-run comparison` 表述。
+
+### Suggested Fix
+先读取各文件尾部，再按已存在的唯一短锚点更新。
+
+### Metadata
+- Reproducible: yes
+- Related Files: findings.md, progress.md, task_plan.md
+- See Also: ERR-20260810-014
+
+### Resolution
+- **Resolved**: 2026-08-10T18:35:00+08:00
+- **Notes**: 使用精确尾部锚点完成报告、计划和进度更新。
+
+---

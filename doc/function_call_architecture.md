@@ -54,21 +54,25 @@ flowchart TD
 flowchart LR
     A[RegionBatch] --> B[normalize_physical_mask]
     B --> C[PhysicalMask]
-    C --> D[fragment_edges]
-    D --> E[SegmentBatch]
-    E --> F[build_ownership]
-    G[RectilinearCoreGrid] --> F
-    F --> H[OwnershipBatch]
-    C --> I[MBOPCProblem]
-    E --> I
-    H --> I
+    C --> D[extract_contour]
+    D --> E[ContourBatch]
+    E --> F[fragment_edges]
+    F --> G[SegmentBatch]
+    G --> H[_build_ownership]
+    I[RectilinearCoreGrid] --> H
+    H --> J[owner / membership CSR]
+    C --> K[MBOPCProblem]
+    G --> K
+    I --> K
+    J --> K
 ```
 
 | 调用 | 输入 | 输出 | 作用 |
 |---|---|---|---|
-| `normalize_physical_mask` | ROI `RegionBatch`、Layer | `PhysicalMask` | 合并覆盖、规范孔洞、一次提取轮廓和数学边 |
-| `fragment_edges` | `PhysicalMask`、`FragmentationConfig` | `SegmentBatch` | 用 edge ID 和 `t0/t1` 表示控制段，不复制每段参考端点 |
-| `build_ownership` | `SegmentBatch`、规则 grid | `OwnershipBatch` | 由参数化参考端点直接确定唯一 owner 并建立 CSR halo membership；不物化逐段法向 |
+| `normalize_physical_mask` | ROI `RegionBatch`、Layer | `PhysicalMask` | 合并覆盖、规范孔洞，只保存 Layer/Region/ROI |
+| `extract_contour` | 规范 Region | `ContourBatch` | 一次生成 Polygon/Ring 两级 CSR，不重复保存 Layer、polygon ID 或 hole 列 |
+| `fragment_edges` | `ContourBatch`、`FragmentationConfig` | `SegmentBatch` | 建立两个紧凑 edge cache，并用 edge ID 和 `t0/t1` 表示控制段 |
+| `_build_ownership` | `SegmentBatch`、规则 grid | 三组归属数组 | 由参数化参考端点确定唯一 owner 并建立 CSR halo membership；私有构造步骤 |
 | `prepare_problem` | 上述输入 | `MBOPCProblem` | 提供唯一公共构造入口；不产生诊断文件 |
 
 未传 grid 时，构造覆盖查询框的 1×1 `RectilinearCoreGrid`；没有另一套 explicit-core 分支。
@@ -79,17 +83,16 @@ flowchart LR
 flowchart TD
     P[MBOPCProblem] --> M[PhysicalMask]
     P --> S[SegmentBatch]
-    P --> O[OwnershipBatch]
+    P --> G[RectilinearCoreGrid]
     P --> C[FragmentationConfig]
-    M --> MC[contours]
-    M --> ME[edges]
-    S -. 同一不可变引用 .-> MC
-    S -. 同一不可变引用 .-> ME
-    S --> SP[edge_normals / ring offsets / edge_ids / t0 / t1]
-    O --> OP[owner_indices / core CSR memberships]
+    M --> MR[layer / Region / query_box]
+    S --> MC[ContourBatch]
+    MC --> MT[vertices / ring offsets / polygon ring offsets]
+    S --> SP[next/polygon cache / normals / segment intervals]
+    P --> OP[owner_indices / core CSR memberships]
 ```
 
-`PhysicalMask` 与 `SegmentBatch` 同时暴露 `contours`/`edges` 是领域入口的浅别名，不是两份数组：测试使用对象身份断言保证它们共享引用。这样重建代码可以只接收 problem，同时不产生内存重复。
+`PhysicalMask` 是原生物理覆盖，`SegmentBatch` 是数值控制自由度，二者不再重复暴露轮廓或数学边。`ContourBatch` 用 `polygon_ring_offsets` 表达每个 Polygon 的 hull/hole ring 范围；`SegmentBatch` 只持有热路径需要的 `edge_next_ids` 和 `edge_polygon_ids` 两个 `int32` 缓存。
 
 `SegmentBatch.materialize(displacements)` 的输入是可选、长度等于 segment 数的浮点位移向量；输出 `SegmentGeometry(starts, ends, normals)`。该对象是当前计算批次，不常驻 problem，也不保存未使用的 lengths 或 indices。
 
@@ -180,7 +183,7 @@ flowchart TD
     C --> D[_demo_displacements]
     D --> E[materialize + edge_probe_points]
     D --> F[reconstruct_region]
-    C --> G[save_problem_npz v2]
+    C --> G[save_problem_npz v3]
     E --> H[render_boundary_overlay]
     F --> I[write_debug_gds]
     F --> J[summary.json]
@@ -192,7 +195,7 @@ flowchart TD
 
 `opc.diagnostics` 包含：
 
-- `save_problem_npz`：前端专用 v2 数值快照；
+- `save_problem_npz`：前端专用 v3 数值快照；
 - `write_debug_gds`：参考/重建 GDS；
 - `render_boundary_overlay`：标注图；
 - `build_geometry_cases`、`run_geometry_suite`：多图形专项验证。
@@ -231,6 +234,6 @@ flowchart TD
     N --> O[best displacement/GDS/PNG/JSON]
 ```
 
-`prepare_*` 的输入是源版图、Layer、ROI 和离散化配置，输出是一个原子保存的 version 1 NPZ。`load_raster_input` 输出 `(mask, metadata)`；`load_segment_input` 输出 `(MBOPCProblem, metadata)`。metadata 只保存报告和物理单位信息，迭代权威数据仍是现有 problem 字段，不复制 owner 或 segment 状态到新结构。
+`prepare_*` 的输入是源版图、Layer、ROI 和离散化配置。raster 仍为 version 1，segment 归档为 version 2；`load_raster_input` 输出 `(mask, metadata)`，`load_segment_input` 输出 `(MBOPCProblem, metadata)`。metadata 只保存报告和物理单位信息，迭代权威数据仍是现有 problem 字段。
 
-边段加载按以下顺序恢复并校验：`ContourBatch → extract_edges 对照 → SegmentBatch → CoreSpec/OwnershipBatch → contours_to_region → PhysicalMask → MBOPCProblem`。完成后迭代入口直接调用现有 `optimize`；它不读取源 GDS，也不重新分段或重新分配 owner。
+边段加载按以下顺序恢复并校验：`ContourBatch → SegmentBatch edge cache 校验 → RectilinearCoreGrid → contours_to_region → PhysicalMask → MBOPCProblem owner/membership CSR`。version 1 在读取新字段前即明确提示重新生成。完成后迭代入口直接调用现有 `optimize`；它不读取源 GDS，也不重新分段或重新分配 owner。

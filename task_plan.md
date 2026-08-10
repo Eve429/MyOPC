@@ -56,7 +56,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 35. Generic contour topology cleanup | complete | Replaced repeated layer/polygon/hole metadata with nested CSR and removed EdgeBatch |
 | 36. Edge-input and ownership consolidation | complete | SegmentBatch owns edge caches and MBOPCProblem owns grid/CSR membership |
 | 37. Offline archive v2 migration | complete | Saves/loads only the new minimal problem contract and rejects v1 clearly |
-| 38. Regression, performance and reports | in_progress | Full tests, real-layout benchmark, simplification audit, manuals/reports and local commits |
+| 38. Regression, performance and reports | completed | 130 tests, bounded real-layout benchmark, static/simplification audit, synchronized reports and two local milestones |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.
@@ -146,6 +146,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 全量回归发现诊断版本断言和层级测试仍使用旧结构 | 1 | 更新为诊断 v3 和 `problem.segments.contours`，不保留旧字段兼容属性 |
 | 全量回归中的独立 CUDA 子进程报告设备 busy/unavailable | 1 | 判定为环境资源状态；在 CPU/OPC 修正后单独复跑 CUDA 测试，不修改光刻代码 |
 | owner/v1 校验收敛补丁因一个已变化的离线校验锚点失败 | 1 | 读取精确上下文后拆分短锚点；原子补丁未产生部分修改 |
+| 文档旧符号搜索再次把 `*.md` 当作 Windows rg 路径 | 1 | 搜索固定 `doc` 目录并用 `--glob '*.md'`；不再混用 shell 路径通配符 |
 
 ## Decisions
 - Backend: KLayout 0.30.x C++ Region plus NumPy arrays.
@@ -184,3 +185,4 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - `SegmentBatch` keeps only two measured edge caches (`edge_next_ids`, `edge_polygon_ids`) plus normals/fragment intervals; all other mathematical-edge metadata is derived transiently.
 - `OwnershipBatch` is deleted. `MBOPCProblem` directly owns the compact grid and owner/membership CSR arrays and exposes core access helpers.
 - Offline segment archives move directly to version 2; version 1 is rejected with a regenerate-input message rather than maintained through a conversion branch.
+- The final same-process endpoint comparison is the performance authority: old EdgeBatch-style access 28.229 ms median versus nested-next 28.205 ms; earlier 15.7 ms figures measured a narrower expression and are not used as the final gate.

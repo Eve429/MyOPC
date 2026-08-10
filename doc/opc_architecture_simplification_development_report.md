@@ -25,22 +25,24 @@
 - 删除 3 个独立诊断文件，将显式输出合并到 `opc/diagnostics.py`；连同外部更新模块共删除 4 个旧模块；
 - `SimpleMBOPCConfig` 删除重复的最大位移与打印阈值权威；
 - `QualityMetrics` 删除未使用的 pixel count 及额外设备同步；
-- 完整 runner 停止输出 NPZ，前端验证器保留 key-free v2 NPZ。
+- 完整 runner 停止输出 NPZ；该阶段前端验证器为 key-free v2，后续数据契约收敛已升级为 v3。
 
 核心提交：`09f898f refactor(opc): 精简边段输入与诊断架构`，净变化为新增 651 行、删除 1,034 行（其中包含测试、计划与新诊断模块）。
 
-## 4. 为什么保留现有结构体
+## 4. 后续数据契约收敛
 
-| 结构 | 保留理由 |
+本报告原阶段曾保留 `EdgeBatch`、`OwnershipBatch` 以及 `PhysicalMask/SegmentBatch` 的共享浅引用。后续调用和内存审计证明：浅引用虽不复制数组，仍形成重复的领域权威；`EdgeBatch` 自身五组数组也全部可推导。因此当前结构进一步收敛如下：
+
+| 当前结构 | 保留理由 |
 |---|---|
-| `PhysicalMask` | 共享方法需要的规范物理覆盖和参考边界 |
-| `SegmentBatch` | MB 类方法的控制自由度，与物理数学边不是同一概念 |
-| `OwnershipBatch` | owner/halo CSR 属于计算划分，不属于几何本身 |
-| `MBOPCProblem` | 将一次准备、跨多轮复用的只读状态作为单一参数传递 |
+| `PhysicalMask` | 只保存 Layer/Region/ROI，是边段 OPC 与 ILT 的共享物理输入 |
+| `ContourBatch` | 两级 CSR 数值拓扑，是 Region 与多轮数值边界之间的必要转换 |
+| `SegmentBatch` | 唯一持有 contour，并保存控制段和两个有实测收益的 edge cache |
+| `MBOPCProblem` | 直接持有 grid 与 owner/membership CSR，作为完整迭代输入 |
 | `SegmentGeometry` | 明确标记短生命周期物化数组，避免混入常驻 batch |
 | `SimpleMBOPCConfig/Result/Record` | 分别表达运行输入、最终输出和逐轮审计数据 |
 
-`PhysicalMask` 与 `SegmentBatch` 的 `contours/edges` 是同一对象的浅引用，当前实测不重复分配。去掉这些字段会让重建函数反复拆装 problem，收益为零而可读性变差，因此保留是有意设计。
+`EdgeBatch`、`OwnershipBatch` 及其公共构造包装已经删除；离线 segment 归档直接升级 v2，不保留 v1 转换。详细数据与验证见 [MB-OPC 数据契约收敛开发报告](mbopc_contract_subtraction_development_report.md)。
 
 ## 5. 扩展性结论
 

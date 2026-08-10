@@ -8,7 +8,7 @@
 - 真实文件：`TestReticle/simple.gds`，Layer 1/0，DBU 0.001 µm；
 - 自动测试：`tests/workbench/test_offline_workbench.py`。
 
-测试不修改用户 GDS，不把 `output/` 产物纳入 Git。`layout/`、`geometry/` 在本阶段保持零差异。
+测试不修改用户 GDS，不把 `output/` 产物纳入 Git。本次用户授权的结构收敛修改了 `geometry` 轮廓契约，并由完整几何/OPC 回归覆盖。
 
 ## 2. 自动测试矩阵
 
@@ -18,8 +18,9 @@
 | canvas 保护 | 4096×4096 DBU ROI/4 nm 在公开物化前拒绝 | 通过 |
 | 复杂度保护 | 层级展开图形上限为 1，在 Region 物化前拒绝 | 通过 |
 | 多图形恢复 | 矩形、孔洞、斜边、层级引用、跨 2×4 core | XOR 0、合法 |
-| 归档损坏 | 缺少 hole 字段 | 加载时明确拒绝 |
+| 归档损坏 | 缺少 edge next cache | 加载时明确拒绝 |
 | 索引损坏 | membership 等于 segment count | 加载时明确拒绝 |
+| 版本迁移 | 带旧字段缺失特征的 segment v1 | 在字段检查前提示重新生成 |
 | 元数据损坏 | counts 缺少必需字段 | 统一转换为 ValueError |
 | 读取内存 | 极小 `max_archive_gib` | NumPy 分配前拒绝 |
 | 光刻入口 | CPU ICCAD13 + 数值 NPZ + 四张 PNG | 通过 |
@@ -35,12 +36,12 @@
 ```text
 Ruff: All checks passed
 compileall: passed
-pytest: 127 passed in 26.84 s
-workbench: 10 passed in 14.91 s
+pytest: 130 passed in 24.75 s
+workbench/相关契约: 23 passed in 12.60 s
 workbench statement/branch coverage: 74%
 ```
 
-新增测试后全仓库由 117 项增至 127 项，原测试无回归。工作台覆盖率未命中主要是 CLI 错误退出、外部工作目录 bootstrap 和低概率格式损坏分支；成功路径、两种物化前保护、主要损坏输入、真实光刻和真实迭代均已运行。
+结构迁移后全仓库 130 项全部通过。成功路径、两种物化前保护、v1 拒绝、主要损坏输入、真实光刻和真实迭代均已运行。
 
 ## 4. `simple.gds` 像素与光刻实测
 
@@ -87,7 +88,7 @@ workbench statement/branch coverage: 74%
 ## 6. 最终审计
 
 - `git diff --check` 通过；
-- `layout/`、`geometry/` 无差异；
+- `geometry/` 的授权差异仅为两级 CSR 与删除 EdgeBatch，`layout/` 无差异；
 - 新增模块、函数、测试函数均有中文 docstring；
 - 所有 helper 有当前调用方，无注册器、空基类或重复 problem/result 结构；
 - 归档写入原子化，读取禁止 pickle 并有解压尺寸限制；

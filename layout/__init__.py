@@ -19,7 +19,6 @@ from .types import (
     MaterializationStats,
     RegionBatch,
 )
-from .writer import PatchWriter
 
 __all__ = [
     "AmbiguousTopCellError",
@@ -36,7 +35,6 @@ __all__ = [
     "LayoutError",
     "LayoutOpenError",
     "MaterializationStats",
-    "PatchWriter",
     "RegionBatch",
     "ShapeQuery",
 ]

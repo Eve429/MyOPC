@@ -186,3 +186,27 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - `OwnershipBatch` is deleted. `MBOPCProblem` directly owns the compact grid and owner/membership CSR arrays and exposes core access helpers.
 - Offline segment archives move directly to version 2; version 1 is rejected with a regenerate-input message rather than maintained through a conversion branch.
 - The final same-process endpoint comparison is the performance authority: old EdgeBatch-style access 28.229 ms median versus nested-next 28.205 ms; earlier 15.7 ms figures measured a narrower expression and are not used as the final gate.
+- 本轮用户确认直接收敛 Layout API：`PatchWriter` 移入 `geometry`，删除 `layout/writer.py` 与 `layout/layer.py`，不保留 `layout.PatchWriter` 兼容别名。
+- 光刻三工艺角允许逐像素最大绝对误差不超过 `5e-6`；EPE、移动计数、停止原因保持完全一致，逐轮 L2/PVBand 使用 `rtol=5e-4, atol=1.0`。
+- 大 reticle 稀疏 active-core、macro ROI 和跨 macro 去重只形成独立设计文档，本轮不实现。
+
+## 阶段 39–43：代码优化与可读性收敛
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 39 | 已完成 | 锁定当前契约、功能基线、性能基线和可接受数值误差 |
+| 40 | 已完成 | 收敛 Layout/Geometry API，删除反向依赖与无调用文件，优化轮廓/栅格热路径 |
+| 41 | 待开始 | 复用光刻频谱与工艺角强度，压缩 OPC tile 批处理内存并优化 owner 索引 |
+| 42 | 待开始 | 执行聚焦/全量/真实版图/性能/覆盖率验证并核对所有验收门槛 |
+| 43 | 待开始 | 编写大 reticle 独立方案及开发/测试报告，完成冗余、调用点和依赖审计并提交 |
+
+## 本轮新增错误记录
+
+| 错误 | 次数 | 处理 |
+|---|---:|---|
+| 调用点审计把 `run_*.py` 当作 PowerShell 路径 | 1 | 后续只搜索仓库目录并用 `--glob 'run_*.py'` 过滤 |
+| 真实 `gcd_45nm` owner 微基准未在时限内完成 | 2 | 终止残留子进程，改用有界合成基准与正式整图流程验证 |
+| 合成 membership 首版随机数据包含重复项 | 1 | 生成严格递增、无重复的 CSR membership |
+| 光刻对照脚本把 `LithographyResult` 当作可迭代对象 | 1 | 按三个具名工艺角字段逐项比较 |
+| 工作台探查猜测了不存在的入口文件 | 1 | 以 `rg --files` 为准，实际入口为 `tests/workbench/run_lithography.py` |
+| MB-OPC 前端基准仍引用已删除字段 | 1 | 本轮修正当前紧凑契约并增加直接 CLI 回归 |

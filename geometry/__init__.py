@@ -6,7 +6,7 @@ from .errors import (
     PatchConflictError,
     RasterizationError,
 )
-from .patch import PatchSet
+from .patch import PatchSet, PatchWriter
 from .raster import render_layout_region, render_region_batch
 from .types import (
     ContourBatch,
@@ -22,6 +22,7 @@ __all__ = [
     "GeometryPatch",
     "PatchConflictError",
     "PatchSet",
+    "PatchWriter",
     "RasterizationError",
     "ValidationIssue",
     "ValidationReport",

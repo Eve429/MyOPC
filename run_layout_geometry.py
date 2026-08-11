@@ -12,10 +12,11 @@ from geometry import (
     GeometryError,
     GeometryPatch,
     PatchSet,
+    PatchWriter,
     extract_contours,
     render_region_batch,
 )
-from layout import DbuBox, LayerSpec, LayoutDB, LayoutError, PatchWriter
+from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 
 
 def parse_layer(value: str) -> LayerSpec:
@@ -60,9 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """执行一次单文件、单 ROI 的完整 Layout 到 Geometry 数据流。"""
-    # 打开gds文件
+    # LayoutDB 在 with 生命周期内唯一持有原生版图；后续所有 Region、轮廓和输出
+    # 都在关闭前生成，避免惰性查询访问已经释放的 KLayout 对象。
     with LayoutDB.open(args.layout, top_cell=args.top) as database:
-        # 设置参数layers以及查询范围
+        # 未显式传参时使用现有全部 Layer 和 top bbox；空 top 没有可推导 ROI，
+        # 必须在进入几何物化前拒绝，避免生成边界不明确的空 Patch。
         layers = tuple(args.layers) if args.layers else database.layers()
         query_box = DbuBox(*args.box) if args.box else database.bbox()
         if query_box is None:

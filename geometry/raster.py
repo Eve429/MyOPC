@@ -75,11 +75,16 @@ def _rasterize(region: kdb.Region, box: DbuBox, pixel_dbu: int,
             origin = kdb.Point(box.left + x0 * pixel_dbu, box.bottom + y0 * pixel_dbu)
             areas = np.asarray(region.rasterize(
                 origin, kdb.Vector(pixel_dbu, pixel_dbu), columns, rows), dtype=np.float64)
-            coverage = np.rint(np.clip(areas / pixel_area, 0.0, 1.0) * 255.0).astype(np.uint8)
+            # 面积矩阵是当前块唯一的大型浮点临时量；在原数组上归一化、裁界和取整，
+            # 避免表达式链为每个百万像素块再产生两到三份 float64 中间数组。
+            areas /= pixel_area
+            np.clip(areas, 0.0, 1.0, out=areas)
+            areas *= 255.0
+            np.rint(areas, out=areas)
             # 图片第 0 行位于顶部，而版图栅格第 0 行位于底部。块内翻转后再映射到
             # 全局反向行区间，保证 planner 坐标系的 +Y 在最终图片中仍然朝上。
             top = height - y0 - rows
-            pixels[top:height - y0, x0:x0 + columns] = np.flipud(coverage)
+            pixels[top:height - y0, x0:x0 + columns] = np.flipud(areas).astype(np.uint8)
     return pixels
 
 

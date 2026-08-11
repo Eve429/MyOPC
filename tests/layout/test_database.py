@@ -1,5 +1,7 @@
 """版图单次加载、所有权和层级元数据回归测试。"""
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,3 +61,11 @@ def test_closed_database_invalidates_lazy_query(tmp_path: Path) -> None:
     db.close()
     with pytest.raises(ClosedLayoutError):
         query.materialize()
+
+
+def test_importing_layout_does_not_load_geometry() -> None:
+    """基础版图层不得因公共导入而反向加载几何输出层。"""
+    command = "import sys, layout; assert not any(n == 'geometry' or n.startswith('geometry.') for n in sys.modules)"
+    completed = subprocess.run([sys.executable, "-c", command], check=False, capture_output=True,
+                               text=True)
+    assert completed.returncode == 0, completed.stderr

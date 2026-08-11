@@ -15,7 +15,6 @@ from .errors import (
     LayoutOpenError,
 )
 from .hierarchy import HierarchySummary, build_hierarchy_summary
-from .layer import normalize_layers
 from .query import ShapeQuery
 from .types import CellRef, DbuBox, LayerSpec
 
@@ -28,10 +27,10 @@ class LayoutDB:
         self._layout: kdb.Layout | None = layout
         self._source_path = source_path
         self._top_cell = CellRef(top_cell.name, top_cell.cell_index())
-        self._layer_indexes = {
-            LayerSpec(layout.get_info(index).layer, layout.get_info(index).datatype): index
-            for index in layout.layer_indexes()
-        }
+        self._layer_indexes: dict[LayerSpec, int] = {}
+        for index in layout.layer_indexes():
+            info = layout.get_info(index)
+            self._layer_indexes[LayerSpec(info.layer, info.datatype)] = index
 
     @classmethod
     def open(cls, path: str | Path, top_cell: str | None = None) -> Self:
@@ -64,26 +63,21 @@ class LayoutDB:
     @property
     def dbu_um(self) -> float:
         """返回每个整数 DBU 对应的微米值，仅供配置换算和报告使用。"""
-        self._assert_open()
         return self._native_layout.dbu
 
     @property
     def top_cell(self) -> CellRef:
         """返回已经选择的顶层 Cell 引用。"""
-        self._assert_open()
+        _ = self._native_layout
         return self._top_cell
 
     @property
     def _native_layout(self) -> kdb.Layout:
         """仅向同级实现模块暴露底层对象，不作为公共算法接口。"""
-        self._assert_open()
-        assert self._layout is not None
-        return self._layout
-
-    def _assert_open(self) -> None:
-        """数据库关闭后立即失败，避免惰性查询继续访问失效对象。"""
-        if self._layout is None:
+        layout = self._layout
+        if layout is None:
             raise ClosedLayoutError("LayoutDB is closed")
+        return layout
 
     def _native_cell(self, cell: CellRef) -> kdb.Cell:
         """把已经校验的 CellRef 解析为原生 Cell 对象。"""
@@ -101,7 +95,7 @@ class LayoutDB:
 
     def layers(self) -> tuple[LayerSpec, ...]:
         """按确定顺序列出所有已有 Layer。"""
-        self._assert_open()
+        _ = self._native_layout
         return tuple(sorted(self._layer_indexes))
 
     def cell(self, name: str) -> CellRef:
@@ -125,8 +119,12 @@ class LayoutDB:
               box: DbuBox, cell: CellRef | str | None = None,
               preserve_properties: bool = False) -> ShapeQuery:
         """校验少量元数据后创建惰性的 Cell/Layer/ROI 查询。"""
-        self._assert_open()
-        normalized = normalize_layers(layers)
+        # Layer 只在查询入口规范化一次；集合去重后排序，使缓存键、诊断和测试输出
+        # 与调用顺序无关。空集合在接触 KLayout 前失败，避免产生语义不明的空查询。
+        normalized = tuple(sorted({item if isinstance(item, LayerSpec) else LayerSpec(*item)
+                                   for item in layers}))
+        if not normalized:
+            raise ValueError("at least one layer must be requested")
         for layer in normalized:
             self._native_layer_index(layer)
         selected = self._top_cell if cell is None else self.cell(cell) if isinstance(cell, str) else cell
@@ -140,7 +138,7 @@ class LayoutDB:
 
     def __enter__(self) -> Self:
         """支持按 OPC 任务生命周期使用上下文管理器。"""
-        self._assert_open()
+        _ = self._native_layout
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:

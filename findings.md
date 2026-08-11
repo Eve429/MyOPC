@@ -214,3 +214,14 @@
 - A same-process 30-run comparison is the valid materialize gate: old EdgeBatch-style arrays 28.229 ms median, nested-next 28.205 ms median. The earlier 15.7 ms microbenchmark measured a narrower endpoint expression and should not be compared directly to full `SegmentGeometry` materialization.
 - Zero-displacement reconstruction on the full problem was 234.115 ms median over five runs; prepare through the direct frontend was 233.339 ms versus the current-task pre-change read-only baseline of roughly 266 ms.
 - Final delivery audit covers 76 first-party Python files and 20 Markdown reports with zero missing Chinese docstrings, broken relative links or unbalanced fences. The only names without another production reference are three tested public APIs and PyTorch's `forward` callback, so none are accidental dead wrappers.
+
+## 本轮代码优化审计
+
+- 百万逻辑实例 ROI 查询中位数为 0.10375 ms、P95 为 0.13689 ms、RSS 增量约 0.48 MB；2048×2048 栅格化为 502.317 ms、RSS 增量约 7.14 MB。这两项作为 Layout/Geometry 不退化基线。
+- 20,000 个矩形轮廓提取中，逐 ring NumPy 小数组再拼接约 563.74 ms、峰值 6,679,859 bytes；单次 `array('q')` 连续缓冲约 456.30 ms、峰值 1,845,632 bytes，峰值下降约 72%。
+- CUDA 256×256、batch=8 下，当前三次 mask FFT 路径约 25.615 ms；共享一次频谱并按 dose 平方缩放约 16.750 ms，提升 1.529 倍，最大逐像素差约 2.95e-6，GPU 峰值略降。
+- CUDA batch=64 的目标 tile 路径中，逐 tile 转 float32 后堆叠约 20.565 ms；先堆叠 uint8、一次传 GPU 并原位归一化约 9.582 ms，提升 2.146 倍，CPU 临时批内存由 32 MiB 降至 4 MiB。
+- owner 索引利用严格递增且唯一的 membership CSR 过滤，可避免每个 core 全局扫描 segment owner；223,553 segment/870 core 合成基准由 45.908 ms 降至 13.178 ms。
+- `layout/writer.py` 反向依赖 `geometry.patch.PatchSet`，`layout/layer.py` 只有一个单调用函数；用户已确认直接移除并把 `PatchWriter` 归入 `geometry`。
+- `benchmarks/benchmark_mbopc_frontend.py` 仍读取已删除的 `segments.edges` 和 `problem.ownership`，小规模直跑会抛 `AttributeError`；需要回归覆盖。
+- 本轮不实现稀疏大 reticle 数据结构。密集 core、全 ROI 物化和 macro 间 segment 身份问题将在独立方案中说明。

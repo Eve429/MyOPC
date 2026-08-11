@@ -5,8 +5,8 @@ from pathlib import Path
 import klayout.db as kdb
 import pytest
 
-from geometry import GeometryPatch, PatchConflictError, PatchSet
-from layout import DbuBox, LayerSpec, LayoutDB, PatchWriter
+from geometry import GeometryPatch, PatchConflictError, PatchSet, PatchWriter
+from layout import DbuBox, LayerSpec, LayoutDB
 
 
 def test_one_polygon_crossing_adjacent_cores_is_split_without_loss() -> None:

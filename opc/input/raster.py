@@ -32,7 +32,10 @@ def rasterize_region_canvas(region: kdb.Region, box: DbuBox, pixel_dbu: int,
     areas = np.asarray(clipped.rasterize(
         kdb.Point(box.left, box.bottom), kdb.Vector(pixel_dbu, pixel_dbu),
         width, height), dtype=np.float32)
-    np.clip(areas / float(pixel_dbu * pixel_dbu), 0.0, 1.0, out=areas)
+    # 当前 tile 的面积矩阵直接原位归一化；避免在每轮、每个 core 上额外分配同尺寸
+    # float32 临时数组。最终画布仍是固定大小，超出有效 ROI 的区域保持为零。
+    areas /= float(pixel_dbu * pixel_dbu)
+    np.clip(areas, 0.0, 1.0, out=areas)
     result[:height, :width] = areas
     return result
 

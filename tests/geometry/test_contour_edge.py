@@ -16,6 +16,8 @@ def test_polygon_hole_round_trip_and_nested_offsets() -> None:
     contours = extract_contours(region_batch({layer: donut}))[layer]
     assert contours.vertices.dtype == np.int64
     assert contours.vertices.flags.c_contiguous
+    assert contours.vertices.base is not None
+    assert contours.ring_offsets.base is not None
     assert (contours.polygon_count, contours.ring_count) == (1, 2)
     assert contours.ring_offsets.tolist() == [0, 4, 8]
     assert contours.polygon_ring_offsets.tolist() == [0, 2]

@@ -206,12 +206,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     else:
         # 传入真实版图时，将路径展开并绝对化，避免摘要依赖启动目录；此字符串
         # 仅用于记录，不参与几何计算。_load_database_batch 输出与演示分支一致。
-        source = str(args.layout.expanduser().resolve()) # 输出gds文件路径
+        source = str(args.layout.expanduser().resolve())
         # KLayout 的物化 Region 仍依赖打开的 Layout；因此必须在上下文内
         # 完成物理合并和紧凑数组构建。离开 with 后文件会关闭，而 problem 中
         # 保留的均为自有 Region/NumPy 数据，之后的迭代与输出不再读取源文件。
-        with LayoutDB.open(args.layout, top_cell=None) as database: # 打开gds文件
-            batch, layer, dbu_um = _load_database_batch(args, database) # 物化后的局部批次
+        with LayoutDB.open(args.layout, top_cell=None) as database:
+            batch, layer, dbu_um = _load_database_batch(args, database)
             # 真实版图读取和查询不计入 prepare，计时专注于可重复执行的前端构建，
             # 便于比较不同分段、采样和 core 配置本身的性能。
             started = perf_counter()

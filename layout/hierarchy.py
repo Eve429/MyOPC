@@ -32,7 +32,6 @@ class HierarchySummary:
 
 def build_hierarchy_summary(db: LayoutDB) -> HierarchySummary:
     """读取 Cell 与实例记录，同时保持底层图形存储完全不动。"""
-    db._assert_open()
     layout = db._native_layout
     infos: list[CellInfo] = []
     for cell in layout.each_cell():

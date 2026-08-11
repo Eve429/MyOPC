@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
+from typing import TYPE_CHECKING
 
 import klayout.db as kdb
 
@@ -16,12 +17,15 @@ from .types import (
     RegionBatch,
 )
 
+if TYPE_CHECKING:
+    from .database import LayoutDB
+
 
 @dataclass(frozen=True, slots=True)
 class ShapeQuery:
     """轻量查询描述，仅在调用方明确请求时才物化几何数据。"""
 
-    database: object
+    database: LayoutDB
     cell: CellRef
     layers: tuple[LayerSpec, ...]
     box: DbuBox
@@ -30,7 +34,6 @@ class ShapeQuery:
     def materialize(self, diagnostics: bool = False) -> RegionBatch:
         """通过 KLayout C++ 迭代器按层物化可转为 Polygon 的图形。"""
         db = self.database
-        db._assert_open()
         layout, native_cell = db._native_layout, db._native_cell(self.cell)
         native_box = self.box.to_native()
         clip_region = kdb.Region(native_box)

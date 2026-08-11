@@ -161,6 +161,19 @@ PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改�
   --iterations 20 --device cuda
 ```
 
+光刻和 SimpleILT 也可以跳过输入 NPZ，直接读取版图 ROI：
+
+```powershell
+& $python main\run_lithography.py TestReticle\simple.gds `
+  --box -2000 -1100 -200 948 --pixel-nm 8 --device cuda `
+  --output-dir output\workbench\lithography_direct --save-png
+& $python main\run_simpleilt.py TestReticle\simple.gds `
+  --box -2000 -1100 -200 948 --pixel-nm 8 --iterations 20 --device cuda `
+  --output-dir output\workbench\simpleilt_direct
+```
+
+若版图有多个 Layer，必须追加 `--layer LAYER/DATATYPE`；多顶层版图还要指定 `--top-cell`。直接模式仍在 Region 物化前执行相同 canvas、层级复杂度和预计内存保护，并且不会生成隐藏的输入 NPZ。
+
 像素输入超过模型 canvas、源文件/图形/顶点/估计内存超限时，准备函数必须在公共 Region 物化前失败。读取测试还要覆盖缺字段、错误版本、越界 membership、错误参数区间和归档解压总量限制。
 
 聚焦回归命令：
@@ -171,7 +184,7 @@ PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改�
   --cov=tests.workbench --cov-branch --cov-report=term-missing -q
 ```
 
-当前工作台回归包含光刻、MB-OPC 与 SimpleILT 三个真实模型成功路径，以及四个 `main/` 工作台脚本的仓库外 `--help` 启动。详细矩阵与真实数据见 [离线工作台测试报告](offline_workbench_test_report.md)和[可微光刻/ILT 测试报告](lithography_ilt_evaluation_test_report.md)。
+当前工作台回归包含光刻、MB-OPC 与 SimpleILT 三个真实模型成功路径、版图/NPZ 像素一致性、直接版图光刻结果一致性、直接版图 SimpleILT，以及四个 `main/` 工作台脚本的仓库外启动。详细矩阵与真实数据见 [离线工作台测试报告](offline_workbench_test_report.md)和[可微光刻/ILT 测试报告](lithography_ilt_evaluation_test_report.md)。
 
 最终还对用户 `TestReticle/simple.gds` 执行 CPU 冒烟：独立光刻 256² 输出成功；SimpleILT 一轮 binary L2=1900；完整 MB-OPC 一轮得到 885 segments、8 cores、EPE/L2/PVBand=`338/3936/1607`、shot=325，GDS 可生成且 Region 合法。
 

@@ -1,4 +1,4 @@
-"""直接读取离线像素输入并独立运行 ICCAD13 光刻模型。"""
+"""直接读取 GDS/OASIS 或像素 NPZ 并运行 ICCAD13 光刻模型。"""
 
 from __future__ import annotations
 
@@ -15,12 +15,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from layout import DbuBox, LayerSpec
 from lithography import ICCAD13Lithography
 from main.offline_inputs import (
     _atomic_json,
     _atomic_npz,
     _atomic_png,
-    load_raster_input,
+    add_layout_source_arguments,
+    resolve_raster_input,
 )
 
 
@@ -31,9 +33,23 @@ def _cpu_array(tensor: torch.Tensor) -> np.ndarray:
 
 def run_lithography_test(
         input_path: str | Path, output_dir: str | Path | None = None, *,
-        device: str = "auto", save_png: bool = False) -> dict[str, torch.Tensor]:
-    """仅从已保存 mask 运行光刻模型，并按需保存数值与 PNG 结果。"""
-    mask, metadata = load_raster_input(input_path)
+        device: str = "auto", save_png: bool = False,
+        layer: LayerSpec | None = None, top_cell: str | None = None,
+        box: DbuBox | tuple[int, int, int, int] | None = None,
+        pixel_nm: float = 8.0, canvas: int = 256,
+        max_file_gib: float = 4.0,
+        max_shape_occurrences: int = 5_000_000,
+        max_source_vertices: int = 20_000_000,
+        max_estimated_gib: float = 8.0) -> dict[str, torch.Tensor]:
+    """从版图或像素归档运行光刻模型，并按需保存数值与 PNG。"""
+    # 版图分支只在 CPU 内存生成当前 ROI 的固定画布，不落临时 NPZ；NPZ 分支
+    # 则复用已准备数据。两者在这里汇合，后续 GPU 传输和模型计算没有双实现。
+    mask, metadata = resolve_raster_input(
+        input_path, layer=layer, top_cell=top_cell, box=box,
+        pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
+        max_shape_occurrences=max_shape_occurrences,
+        max_source_vertices=max_source_vertices,
+        max_estimated_gib=max_estimated_gib)
     model = ICCAD13Lithography(device=device)
     if mask.shape[0] > model.config.canvas or mask.shape[1] > model.config.canvas:
         raise ValueError("离线像素输入超过当前光刻模型 canvas")
@@ -87,14 +103,20 @@ def run_lithography_test(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """构造离线光刻模型测试命令行。"""
-    parser = argparse.ArgumentParser(description="从离线 mask 独立运行 ICCAD13 光刻模型。")
-    parser.add_argument("input", type=Path, help="prepare_raster_input 生成的 NPZ")
+    """构造支持版图和离线像素输入的光刻模型命令行。"""
+    parser = argparse.ArgumentParser(
+        description="从 GDS/OASIS ROI 或离线 mask 运行 ICCAD13 光刻模型。")
+    parser.add_argument("input", type=Path, help="输入 GDS/OASIS 或 raster NPZ")
     parser.add_argument("--output-dir", type=Path,
                         default=Path("output/workbench/lithography"))
     parser.add_argument("--device", default="auto", help="auto、cpu 或 cuda[:序号]")
     parser.add_argument("--save-png", action="store_true",
                         help="保存 mask 和三个工艺角 PNG")
+    add_layout_source_arguments(parser)
+    parser.add_argument("--pixel-nm", type=float, default=8.0,
+                        help="直接版图输入的像素尺寸")
+    parser.add_argument("--canvas", type=int, default=256,
+                        help="直接版图输入的固定方形画布")
     return parser
 
 
@@ -103,7 +125,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         result = run_lithography_test(
-            args.input, args.output_dir, device=args.device, save_png=args.save_png)
+            args.input, args.output_dir, device=args.device, save_png=args.save_png,
+            layer=args.layer, top_cell=args.top_cell,
+            box=None if args.box is None else tuple(args.box),
+            pixel_nm=args.pixel_nm, canvas=args.canvas,
+            max_file_gib=args.max_file_gib,
+            max_shape_occurrences=args.max_shapes,
+            max_source_vertices=args.max_vertices,
+            max_estimated_gib=args.max_estimated_gib)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2

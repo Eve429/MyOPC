@@ -55,3 +55,11 @@
 - MB-OPC bug 修正没有残留旧评分逻辑，生产搜索无 `LithographyResult`、`QualityMetrics`、`evaluate_process_window` 调用。
 
 详细验证见[可微光刻、评价与 SimpleILT 测试报告](lithography_ilt_evaluation_test_report.md)。
+
+## 7. 直接版图输入补充
+
+光刻与 SimpleILT 入口现同时接受 GDS/OASIS 和 raster NPZ。现有版图准备逻辑拆为 `materialize_raster_input`（预检、ROI 物化、栅格化并返回内存数据）和 `prepare_raster_input`（调用前者并原子保存）两层；`resolve_raster_input` 只按 `.npz` 分派，两条运行链路共有一个现实调用接口。
+
+直接版图输入不生成临时 NPZ，也不绕过文件、canvas、层级 occurrence、源顶点和预计内存保护。模型与 ILT 优化代码只接收同一 `float32` mask，因此没有复制前向、梯度或评价逻辑。本补充未修改 `layout/`、`geometry/`，也没有改变只面向可恢复边段归档的 `run_mbopc_iteration.py`。
+
+最终重复函数体审计发现 `run_mbopc.py` 已经导入 `offline_inputs.py`，却保留一份完全相同的 `parse_layer`。本轮直接删除该本地实现并复用公共函数；30 项 MB-OPC/工作台入口回归通过。其余同名 CLI 解析函数位于不依赖离线输入模块的入口，没有为消除少量代码再创建新的工具模块。

@@ -71,3 +71,11 @@
 在全部提交前，使用用户现有 `TestReticle/simple.gds` 执行四段真实 CPU 流程：指定 ROI 生成 256² raster NPZ；独立光刻保存三条件 NPZ/PNG；SimpleILT 一轮保存参数、软/二值 mask 和评价；完整 reticle MB-OPC 一轮保存 GDS/PNG/JSON。
 
 结果：光刻输出 shape 为 256²；SimpleILT binary L2 为 1900；MB-OPC 恢复 10 polygons、107 edges、885 segments、8 cores、2658 memberships，单轮 EPE/L2/PVBand 为 `338/3936/1607`，shot estimate 为 325，结果 Region 合法，总耗时 0.749 s。全部命令退出码为 0，产物位于 `output/final_verification/`，该目录不进入 Git。
+
+## 8. 直接版图输入补充验证
+
+工作台新增四项回归：版图内存 mask 与保存后加载的 mask/metadata 完全一致且无隐藏 NPZ；直接版图和 NPZ 光刻的三个工艺条件逐像素完全一致；SimpleILT 从 GDS 完成一轮并只生成结果产物；`run_lithography.py` 从仓库外工作目录直接读取 GDS，正确解析 Layer/ROI 并退出 0。聚焦工作台结果为 `16 passed in 22.38s`，Ruff 同时通过。
+
+补充功能完成后的最终全仓库验证为 Ruff、compileall 通过，`156 passed in 34.12s`。随后使用 `TestReticle/simple.gds` 的 `[-2000,-1100,-200,948]` DBU ROI 直接运行 CPU 光刻和一轮 SimpleILT，二者退出码均为 0；光刻输出 256²，SimpleILT binary L2 为 1900，未生成输入 NPZ。
+
+删除重复 Layer 解析函数后，MB-OPC artifact/CLI 与工作台 30 项聚焦回归为 `30 passed in 26.51s`；最终全量结果见本轮交付记录。

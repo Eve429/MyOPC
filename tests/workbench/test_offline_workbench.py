@@ -17,8 +17,10 @@ from layout.query import ShapeQuery
 from main.offline_inputs import (
     load_raster_input,
     load_segment_input,
+    materialize_raster_input,
     prepare_raster_input,
     prepare_segment_input,
+    resolve_raster_input,
 )
 from main.run_lithography import run_lithography_test
 from main.run_mbopc_iteration import run_mbopc_iteration_test
@@ -81,6 +83,24 @@ def test_raster_round_trip_matches_current_rasterizer(tmp_path: Path) -> None:
     assert metadata["orientation"] == "bottom_left"
     assert metadata["active_width"] == 128
     assert metadata["active_height"] == 64
+
+
+def test_direct_raster_input_matches_archive_without_hidden_npz(tmp_path: Path) -> None:
+    """直接版图输入必须与归档路径一致，且不得隐式生成中间 NPZ。"""
+    source = _write_workbench_layout(tmp_path / "direct_input.gds")
+    box, layer = DbuBox(0, 0, 256, 128), LayerSpec(1, 0)
+    direct_mask, direct_metadata = materialize_raster_input(
+        source, layer=layer, box=box, pixel_nm=8.0, canvas=256)
+    resolved_mask, resolved_metadata = resolve_raster_input(
+        source, layer=layer, box=box, pixel_nm=8.0, canvas=256)
+    archive = prepare_raster_input(
+        source, tmp_path / "saved_input.npz", layer=layer, box=box,
+        pixel_nm=8.0, canvas=256)
+    archived_mask, archived_metadata = resolve_raster_input(archive)
+    assert np.array_equal(direct_mask, resolved_mask)
+    assert np.array_equal(direct_mask, archived_mask)
+    assert direct_metadata == resolved_metadata == archived_metadata
+    assert [path.name for path in tmp_path.glob("*.npz")] == ["saved_input.npz"]
 
 
 def test_raster_size_guard_runs_before_public_materialization(
@@ -202,7 +222,7 @@ def test_raster_loader_enforces_archive_memory_limit(tmp_path: Path) -> None:
 
 def test_lithography_runner_saves_numeric_and_optional_png_results(
         tmp_path: Path) -> None:
-    """光刻入口必须只消费像素归档并保存三个工艺角的数值和可视结果。"""
+    """光刻入口必须兼容像素归档并保存三个工艺角的数值和可视结果。"""
     source = _write_workbench_layout(tmp_path / "litho.gds")
     archive = prepare_raster_input(
         source, tmp_path / "litho_input.npz", layer=LayerSpec(1, 0),
@@ -216,6 +236,23 @@ def test_lithography_runner_saves_numeric_and_optional_png_results(
         with Image.open(output / f"{name}.png") as image:
             assert image.size == (256, 256)
     assert (output / "summary.json").is_file()
+
+
+def test_lithography_direct_layout_matches_archived_input(tmp_path: Path) -> None:
+    """光刻直接版图和先准备 NPZ 的输出必须逐像素一致。"""
+    source = _write_workbench_layout(tmp_path / "direct_litho.gds")
+    layer, box = LayerSpec(1, 0), DbuBox(0, 0, 256, 128)
+    archive = prepare_raster_input(
+        source, tmp_path / "direct_litho.npz", layer=layer, box=box,
+        pixel_nm=8.0)
+    archived = run_lithography_test(archive, device="cpu")
+    direct = run_lithography_test(
+        source, device="cpu", layer=layer, box=box, pixel_nm=8.0)
+    assert direct.keys() == archived.keys()
+    for name in direct:
+        assert np.array_equal(
+            direct[name].detach().cpu().numpy(),
+            archived[name].detach().cpu().numpy())
 
 
 def test_mbopc_runner_optimizes_loaded_cross_core_problem(tmp_path: Path) -> None:
@@ -241,7 +278,7 @@ def test_mbopc_runner_optimizes_loaded_cross_core_problem(tmp_path: Path) -> Non
 
 
 def test_simpleilt_runner_optimizes_saved_raster_and_reports_metrics(tmp_path: Path) -> None:
-    """ILT 入口必须只消费像素归档并保存参数、掩膜、指标和耗时。"""
+    """ILT 入口必须兼容像素归档并保存参数、掩膜、指标和耗时。"""
     source = _write_workbench_layout(tmp_path / "ilt.gds")
     archive = prepare_raster_input(
         source, tmp_path / "ilt_input.npz", layer=LayerSpec(1, 0),
@@ -258,6 +295,36 @@ def test_simpleilt_runner_optimizes_saved_raster_and_reports_metrics(tmp_path: P
     assert summary["evaluation"]["pvband"] >= 0
     assert summary["evaluation"]["rectangular_shot_estimate"] >= 0
     assert (output / "soft_mask.png").is_file()
+    assert (output / "summary.json").is_file()
+
+
+def test_simpleilt_runner_accepts_layout_without_intermediate_npz(tmp_path: Path) -> None:
+    """SimpleILT 必须能从版图 ROI 直接完成优化且不生成输入归档。"""
+    source = _write_workbench_layout(tmp_path / "direct_ilt.gds")
+    output = tmp_path / "direct_simpleilt"
+    _, summary = run_simpleilt(
+        source, output, iterations=1, step_size=1e-4,
+        weight_process_l2=0.1, device="cpu", save_png=False,
+        layer=LayerSpec(1, 0), box=DbuBox(0, 0, 256, 128), pixel_nm=8.0)
+    assert summary["input"] == str(source.resolve())
+    assert summary["source_layout"] == str(source.resolve())
+    assert not any(tmp_path.glob("*input*.npz"))
+    assert (output / "simpleilt_result.npz").is_file()
+    assert (output / "summary.json").is_file()
+
+
+def test_lithography_script_runs_direct_layout_outside_repository(tmp_path: Path) -> None:
+    """光刻脚本必须能在仓库外直接读取 GDS，并正确转发 Layer 和 ROI 参数。"""
+    source = _write_workbench_layout(tmp_path / "cli_layout.gds")
+    output = tmp_path / "cli_lithography"
+    completed = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "main" / "run_lithography.py"),
+         str(source), "--output-dir", str(output), "--device", "cpu",
+         "--layer", "1/0", "--box", "0", "0", "256", "128",
+         "--pixel-nm", "8"],
+        cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False)
+    assert completed.returncode == 0, completed.stderr
+    assert (output / "lithography_result.npz").is_file()
     assert (output / "summary.json").is_file()
 
 

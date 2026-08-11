@@ -212,15 +212,16 @@ def _post_prepare_bytes(problem: MBOPCProblem, source_bytes: int) -> int:
         problem.segments.segment_count, len(problem.member_segment_indices))
 
 
-def prepare_raster_input(
-        layout_path: str | Path, output_path: str | Path, *,
+def materialize_raster_input(
+        layout_path: str | Path, *,
         layer: LayerSpec | None = None, top_cell: str | None = None,
         box: DbuBox | tuple[int, int, int, int] | None = None,
         pixel_nm: float = 8.0, canvas: int = 256, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> Path:
-    """预检一个 ROI、栅格化为模型方向固定画布并保存可重复使用的输入。"""
+        max_estimated_gib: float = 8.0
+        ) -> tuple[np.ndarray, dict[str, object]]:
+    """预检并把版图 ROI 栅格化为模型方向的内存画布。"""
     source = Path(layout_path).expanduser().resolve()
     database, selected_layer, selected_box = _select_database_input(
         source, top_cell, layer, box, max_file_gib)
@@ -264,11 +265,31 @@ def prepare_raster_input(
         "orientation": "bottom_left", "polygon_count": polygon_count,
         "preflight": preflight,
     }
+    return np.ascontiguousarray(mask, dtype=np.float32), metadata
+
+
+def prepare_raster_input(
+        layout_path: str | Path, output_path: str | Path, *,
+        layer: LayerSpec | None = None, top_cell: str | None = None,
+        box: DbuBox | tuple[int, int, int, int] | None = None,
+        pixel_nm: float = 8.0, canvas: int = 256, max_file_gib: float = 4.0,
+        max_shape_occurrences: int = 5_000_000,
+        max_source_vertices: int = 20_000_000,
+        max_estimated_gib: float = 8.0) -> Path:
+    """预检并栅格化一个版图 ROI，然后保存可重复使用的像素输入。"""
+    # 归档路径与直接运行路径共享完全相同的版图读取和栅格化实现；此处只增加
+    # 原子写盘，使专项调试可以缓存输入，而正常 GDS 入口不会生成隐式中间文件。
+    mask, metadata = materialize_raster_input(
+        layout_path, layer=layer, top_cell=top_cell, box=box,
+        pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
+        max_shape_occurrences=max_shape_occurrences,
+        max_source_vertices=max_source_vertices,
+        max_estimated_gib=max_estimated_gib)
     return _atomic_npz(output_path, {
         "format_name": np.array(_RASTER_FORMAT),
         "format_version": np.array(_RASTER_VERSION, dtype=np.int32),
         "metadata_json": np.array(json.dumps(metadata, ensure_ascii=False)),
-        "mask": np.ascontiguousarray(mask, dtype=np.float32),
+        "mask": mask,
     }, compressed=True)
 
 
@@ -303,6 +324,30 @@ def load_raster_input(
     if np.any(mask < 0.0) or np.any(mask > 1.0):
         raise ValueError("像素输入覆盖率必须位于 [0, 1]")
     return mask, metadata
+
+
+def resolve_raster_input(
+        input_path: str | Path, *, layer: LayerSpec | None = None,
+        top_cell: str | None = None,
+        box: DbuBox | tuple[int, int, int, int] | None = None,
+        pixel_nm: float = 8.0, canvas: int = 256,
+        max_file_gib: float = 4.0,
+        max_shape_occurrences: int = 5_000_000,
+        max_source_vertices: int = 20_000_000,
+        max_estimated_gib: float = 8.0
+        ) -> tuple[np.ndarray, dict[str, object]]:
+    """自动读取 raster NPZ，或直接把 GDS/OASIS ROI 物化为内存 mask。"""
+    source = Path(input_path).expanduser().resolve()
+    # NPZ 是明确的离线输入契约，其 metadata 已经固定 Layer、ROI、像素和方向；
+    # 其他扩展名统一交给 LayoutDB，从而继续支持 KLayout 可读取的版图格式。
+    if source.suffix.lower() == ".npz":
+        return load_raster_input(source, max_archive_gib=max_estimated_gib)
+    return materialize_raster_input(
+        source, layer=layer, top_cell=top_cell, box=box,
+        pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
+        max_shape_occurrences=max_shape_occurrences,
+        max_source_vertices=max_source_vertices,
+        max_estimated_gib=max_estimated_gib)
 
 
 def prepare_segment_input(
@@ -519,7 +564,7 @@ def load_segment_input(
     return problem, metadata
 
 
-def _parse_layer(value: str) -> LayerSpec:
+def parse_layer(value: str) -> LayerSpec:
     """解析命令行中的 `layer` 或 `layer/datatype`。"""
     parts = value.replace(":", "/").split("/")
     if len(parts) not in (1, 2):
@@ -530,18 +575,23 @@ def _parse_layer(value: str) -> LayerSpec:
         raise argparse.ArgumentTypeError(f"非法 Layer：{value}") from exc
 
 
-def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
-    """向两个准备子命令加入一致的版图选择和安全限制。"""
-    parser.add_argument("layout", type=Path, help="输入 GDS/OASIS")
-    parser.add_argument("output", type=Path, help="输出 NPZ")
+def add_layout_source_arguments(parser: argparse.ArgumentParser) -> None:
+    """加入直接版图输入共用的范围选择和物化安全参数。"""
     parser.add_argument("--top-cell", help="多顶层版图必须指定")
-    parser.add_argument("--layer", type=_parse_layer, help="目标 layer/datatype")
+    parser.add_argument("--layer", type=parse_layer, help="目标 layer/datatype")
     parser.add_argument("--box", nargs=4, type=int,
                         metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"), help="可选 DBU ROI")
     parser.add_argument("--max-file-gib", type=float, default=4.0)
     parser.add_argument("--max-shapes", type=int, default=5_000_000)
     parser.add_argument("--max-vertices", type=int, default=20_000_000)
     parser.add_argument("--max-estimated-gib", type=float, default=8.0)
+
+
+def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
+    """向两个准备子命令加入输入输出位置参数和公共版图参数。"""
+    parser.add_argument("layout", type=Path, help="输入 GDS/OASIS")
+    parser.add_argument("output", type=Path, help="输出 NPZ")
+    add_layout_source_arguments(parser)
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -155,7 +155,11 @@ target LRU 和 CPU batch 保存 `uint8`，current mask 保持未量化浮点覆�
 
 ```mermaid
 flowchart LR
-    A[raster target] --> B[参数初始化/优化窗口]
+    X[GDS/OASIS] --> Y[materialize_raster_input]
+    Z[raster NPZ] --> W[load_raster_input]
+    Y --> A[raster target]
+    W --> A
+    A --> B[参数初始化/优化窗口]
     B --> C[sigmoid soft mask]
     C --> D[forward_many]
     D --> E[nominal/process/PVBand/curvature 连续损失]
@@ -165,7 +169,7 @@ flowchart LR
     E --> H[保存总损失最优状态]
 ```
 
-SimpleILT 不经过 `prepare_problem`、`SegmentBatch`、owner 或矢量重建。target、可选初始
+`run_simpleilt.py` 先由 `resolve_raster_input` 自动选择版图内存物化或 NPZ 加载，两条路径汇合为相同的 `float32` target。SimpleILT 不经过 `prepare_problem`、`SegmentBatch`、owner 或矢量重建。target、可选初始
 参数和优化窗口同形；调用方显式传入 nominal 与任意 process conditions。最终返回参数、
 软 mask、二值 mask 和逐轮标量，`main/run_simpleilt.py` 再负责持久化和最终评价。
 
@@ -253,9 +257,12 @@ flowchart TD
     A[GDS/OASIS + Layer + ROI] --> B[原生层级复杂度预检]
     B -->|像素路径| C[LayoutDB.query.materialize]
     C --> D[rasterize_region_canvas]
-    D --> E[raster_input.npz]
+    D --> P[内存 mask + metadata]
+    P -->|可选离线复用| E[raster_input.npz]
     E --> F[load_raster_input]
-    F --> G[ICCAD13Lithography]
+    P --> S[resolve_raster_input]
+    F --> S
+    S --> G[ICCAD13Lithography]
     G --> H[独立工艺条件 NPZ/PNG/JSON]
     F --> Q[SimpleILT optimize]
     Q --> R[参数/软 mask/二值 mask/评价]
@@ -267,6 +274,8 @@ flowchart TD
     M --> N[optimize]
     N --> O[best displacement/GDS/PNG/JSON]
 ```
+
+直接光刻和 SimpleILT 不经过 `raster_input.npz`：预检、ROI 物化和栅格化后立即把内存 mask 交给模型。显式离线准备仍可保存同一 mask，以便反复优化光刻或 ILT 而不重复读取版图。
 
 `prepare_*` 的输入是源版图、Layer、ROI 和离散化配置。raster 仍为 version 1，segment 归档为 version 2；`load_raster_input` 输出 `(mask, metadata)`，`load_segment_input` 输出 `(MBOPCProblem, metadata)`。metadata 只保存报告和物理单位信息，迭代权威数据仍是现有 problem 字段。
 

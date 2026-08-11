@@ -272,3 +272,18 @@
 - 最终 AST 审计覆盖 80 个第一方 Python 文件，中文模块/函数 docstring 缺失为 0；低引用项均为有真实调用方的私有函数、被测试的公共 API 或 PyTorch `forward` 回调。
 - 重复函数名复核后只保留不同对象的自然同名方法和两个算法命名空间各自的 `optimize`；runner 的重复 JSON/PNG/DBU helper 已收敛，frontend 中语义不同但同名的选择函数改为 `_select_layout_scope`。
 - 文件拆分复核确认 ILT 只有实现文件和包导出，evaluation 仍为单实现文件，`main/` 每个脚本对应一个可独立运行工作流；继续拆分会增加跳转而没有第二个现实调用方。
+
+## 阶段 55 前置审计
+
+- `run_lithography.py` 与 `run_simpleilt.py` 当前都只接受 raster NPZ；版图到 mask 的安全预检、精确 ROI 物化和固定画布栅格逻辑已经完整存在于 `main/offline_inputs.py`，不应在两个入口复制。
+- 最小设计是把现有 raster 准备拆成“内存物化”和“可选归档”两层：直接 GDS/OASIS 只返回 `float32` mask 与 metadata，NPZ 工作流继续调用相同内存层后原子保存。
+- 输入自动分派只需要一个已有模块内的共享函数，并已有光刻、SimpleILT 两个现实调用方；不新增注册器、输入类或独立文件。非 `.npz` 路径交给 KLayout 读取，版图参数只影响该分支。
+- 整版栅格仍受文件大小、层级 occurrence、源顶点、输出画布和预计内存上限约束；直接输入不会绕过保护，也不会在源版图旁生成隐式 NPZ。
+
+## 阶段 55–57 实施结论
+
+- `materialize_raster_input` 成为版图到内存 mask 的唯一实现，`prepare_raster_input` 只增加原子归档；直接输入与 NPZ round-trip 的 mask 和 metadata 完全一致。
+- `resolve_raster_input` 是唯一新增分派函数，已有光刻和 SimpleILT 两个调用方；未新增输入数据类、注册器、包装模块或第二套模型路径。
+- `run_mbopc_iteration.py` 继续只接受边段 NPZ，因为直接 GDS 的完整 MB-OPC 已由 `run_mbopc.py` 提供；避免同一前端存在两个实现。
+- `simple.gds` 直接 CPU 光刻与一轮 SimpleILT 均退出 0，光刻 shape 为 256²，SimpleILT binary L2 为 1900；两条命令均未准备 raster NPZ。
+- 函数体审计只发现 `run_mbopc.py` 中一份与公共 `parse_layer` 完全相同的实现；删除后重复函数体为 0，30 项相关入口回归通过。

@@ -23,9 +23,12 @@
 | 版本迁移 | 带旧字段缺失特征的 segment v1 | 在字段检查前提示重新生成 |
 | 元数据损坏 | counts 缺少必需字段 | 统一转换为 ValueError |
 | 读取内存 | 极小 `max_archive_gib` | NumPy 分配前拒绝 |
+| 直接像素输入 | 内存物化、自动分派与 NPZ round-trip | mask/metadata 完全一致、无隐藏 NPZ |
 | 光刻入口 | CPU ICCAD13 + 数值 NPZ + 四张 PNG | 通过 |
+| 直接光刻 | GDS 与 NPZ 三个工艺条件 | 逐像素完全一致 |
 | OPC 入口 | 离线跨 core problem + 一轮 ICCAD13 | GDS/NPZ/PNG/JSON 完整 |
-| 直接运行 | 三个脚本从仓库外执行 `--help` | 全部退出码 0 |
+| 直接 SimpleILT | GDS ROI + 一轮真实 ICCAD13 backward | 无输入 NPZ、结果完整 |
+| 直接运行 | 四个脚本从仓库外执行 `--help`；光刻 CLI 读取 GDS | 全部退出码 0 |
 
 此外从 `C:\Windows\Temp` 使用绝对脚本路径实际完成 raster 准备、CUDA 光刻前向和一轮离线 MB-OPC；三个命令均退出码 0，证明不是只有参数解析能在未安装项目时工作。
 
@@ -42,6 +45,10 @@ workbench statement/branch coverage: 74%
 ```
 
 结构迁移后全仓库 130 项全部通过。成功路径、两种物化前保护、v1 拒绝、主要损坏输入、真实光刻和真实迭代均已运行。
+
+直接版图输入补充后的聚焦结果为 `16 passed in 22.38s`，同时通过 Ruff。全仓库最终结果以本轮交付记录为准。
+
+本轮补充最终全仓库结果为 `156 passed in 34.12s`，Ruff 与 compileall 均通过。用户 `simple.gds` 直接 CPU 光刻和一轮 SimpleILT 也分别退出 0；输出目录中只有模型/ILT 结果，不含 raster 输入归档。
 
 ## 4. `simple.gds` 像素与光刻实测
 

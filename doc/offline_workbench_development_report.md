@@ -10,12 +10,14 @@
 
 | 接口 | 输入 | 输出 | 主要约束 |
 |---|---|---|---|
+| `materialize_raster_input` | GDS/OASIS、Layer、ROI、pixel/canvas | 内存 mask、metadata | 预检通过后才物化，不写中间文件 |
 | `prepare_raster_input` | GDS/OASIS、Layer、ROI、pixel/canvas | raster version 1 NPZ | ROI 必须直接放入单个 canvas |
 | `load_raster_input` | raster NPZ | `float32` mask、metadata | 左下原点、值域 `[0,1]`、禁止 pickle |
+| `resolve_raster_input` | 版图或 raster NPZ | `float32` mask、metadata | 按 `.npz` 自动分派，两个 runner 共用 |
 | `prepare_segment_input` | 版图、ROI、分段与 core 配置 | MBOPC version 2 NPZ | 预检后才物化和构造 owner |
 | `load_segment_input` | MBOPC NPZ | `MBOPCProblem`、metadata | 不依赖源 GDS，不重新分段 |
 
-`run_lithography_test` 返回现有 `LithographyResult`；`run_mbopc_iteration_test` 返回现有 `SimpleMBOPCResult`。没有为工作台新增结果结构、算法基类、注册器或占位方法目录。
+`run_lithography_test` 返回按工艺条件名称索引的张量字典；`run_mbopc_iteration_test` 返回现有 `SimpleMBOPCResult`。没有为工作台新增结果结构、算法基类、注册器或占位方法目录。
 
 ## 3. 数据格式
 
@@ -50,7 +52,7 @@
 
 ## 5. 直接运行与性能路径
 
-三个文件均用自身路径解析仓库根，可从外部工作目录直接执行，不需要 `pip install`。离线光刻入口只把保存的 mask 送入 GPU；离线迭代入口只加载 problem 和配置，之后保持原求解器的 `current/next` 轮次屏障、唯一 owner 写入和 halo 只读语义。
+相关文件均用自身路径解析仓库根，可从外部工作目录直接执行，不需要 `pip install`。光刻与 SimpleILT 可直接把版图 ROI 物化为 CPU mask 后送入模型，也可加载已保存 mask；直接路径不落隐式 NPZ。离线迭代入口只加载 problem 和配置，之后保持原求解器的 `current/next` 轮次屏障、唯一 owner 写入和 halo 只读语义。
 
 模型输出和 tile tensor 仍按 batch 释放；新增工作台不会把整张 reticle tensor 常驻 GPU。最佳结果继续通过全局参考边一次重建，不按 core 裁剪拼接。
 
@@ -59,7 +61,8 @@
 - 只新增一个数据模块、两个当前可运行入口和一组测试，没有生产目录或空接口；
 - metadata 使用普通字典，不新增与 `MBOPCProblem` 重复字段的数据类；
 - 预检 helper 均有当前像素或边段准备调用方，归档 helper 同时服务两个入口；
-- 没有修改生产 runner，也没有为测试工作台建立第二套迭代流程；
+- 两个生产 runner 只改输入边界，模型、优化、评价和结果保存仍各保留唯一实现；
+- 直接版图支持只增加一个已有模块内的自动分派函数，两个真实 runner 共用，不增加输入类或注册器；
 - 加载器的额外分支均对应内存安全或“损坏文件静默算错”的明确风险；
 - 完成调用点和重复实现审计后，没有发现仅为修复旧错误保留的包装或变量。
 

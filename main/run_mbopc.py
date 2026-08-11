@@ -20,7 +20,7 @@ import torch
 from evaluation import estimate_rectangular_shots
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 from lithography import ICCAD13Lithography
-from main.offline_inputs import _atomic_json, _exact_dbu
+from main.offline_inputs import _atomic_json, _exact_dbu, parse_layer
 from opc import OPCError
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input import (
@@ -38,17 +38,6 @@ from opc.input.edge import (
 from opc.input.grid import axis_cuts_by_size
 from opc.input.raster import rasterize_region_canvas
 from opc.iteration.mbopc import SimpleMBOPCConfig, optimize
-
-
-def parse_layer(value: str) -> LayerSpec:
-    """解析命令行中的 `layer` 或 `layer/datatype`。"""
-    parts = value.replace(":", "/").split("/")
-    if len(parts) not in (1, 2):
-        raise argparse.ArgumentTypeError("Layer 格式应为 layer 或 layer/datatype")
-    try:
-        return LayerSpec(int(parts[0]), int(parts[1]) if len(parts) == 2 else 0)
-    except (TypeError, ValueError) as exc:
-        raise argparse.ArgumentTypeError(f"非法 Layer：{value}") from exc
 
 
 def build_parser() -> argparse.ArgumentParser:

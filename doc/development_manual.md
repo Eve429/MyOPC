@@ -141,10 +141,12 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 ## 10. 离线专项测试工作台
 
-`main/offline_inputs.py` 把“版图输入构造”和“模型/迭代优化”解耦。它提供四个稳定测试接口：
+`main/offline_inputs.py` 把“版图输入构造”和“模型/迭代优化”解耦。它提供六个实际接口：
 
+- `materialize_raster_input`：预检版图 ROI，并直接返回内存中的模型 mask 和 metadata；
 - `prepare_raster_input`：把一个明确 ROI 保存成模型左下原点的 `float32[canvas,canvas]`；
 - `load_raster_input`：校验版本、方向、范围和数值后读取 mask；
+- `resolve_raster_input`：`.npz` 走加载路径，其他输入走版图内存物化路径；
 - `prepare_segment_input`：一次性完成物化、规范化、切分和 owner/context 构造；
 - `load_segment_input`：恢复现有 `MBOPCProblem`，不创建第二套 problem 类型。
 
@@ -152,7 +154,7 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检有意额外读取一次版图：公共 `LayoutDB` 第一次读取只解析 Layer/ROI/DBU 并保持打开，独立原生读取扫描层级复杂度；只有扫描通过，才由已打开的 `LayoutDB` 公共查询物化。布尔合并可能产生的新交点无法在物化前完全预测，因此离线边段准备完成后还会按真实 segment/membership 数量复核内存估计。
 
-`main/run_lithography.py` 只消费像素归档，输出调用方选择的三项独立工艺条件连续数组和可选 PNG；`main/run_mbopc_iteration.py` 只消费边段归档，输出最佳位移、迭代 JSON、GDS 和可选标注图；`main/run_simpleilt.py` 与光刻入口复用同一像素归档。入口均可从任意工作目录直接运行，不需要安装本项目。
+`main/run_lithography.py` 和 `main/run_simpleilt.py` 都接受 GDS/OASIS 或 raster NPZ。直接版图模式用 `--layer/--top-cell/--box/--pixel-nm/--canvas` 选择目标并只在内存中生成 mask，不隐式保存 NPZ；归档模式保持原契约。`main/run_mbopc_iteration.py` 只消费边段归档，避免和完整 `run_mbopc.py` 重复版图前端。入口均可从任意工作目录直接运行，不需要安装本项目。
 
 详细字段、内存边界和设计审计见 [离线工作台开发报告](offline_workbench_development_report.md)。
 

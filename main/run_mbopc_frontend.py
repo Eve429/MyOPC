@@ -114,8 +114,8 @@ def _axis_cuts(start: int, end: int, count: int) -> np.ndarray:
     return cuts
 
 
-def _select_database_input(args: argparse.Namespace,
-                           database: LayoutDB) -> tuple[LayerSpec, DbuBox, float]:
+def _select_layout_scope(args: argparse.Namespace,
+                         database: LayoutDB) -> tuple[LayerSpec, DbuBox, float]:
     """在不物化图形的前提下选择真实版图 Layer、范围和 DBU。"""
     layers = database.layers()
     if args.layer is None:
@@ -245,7 +245,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         # 第一次版图读取只解析层级元数据并保持数据库打开。严格预检会独立只读扫描
         # 同一文件；只有预检通过，才使用这里的数据库物化 ROI，避免超限后产生 Region。
         with LayoutDB.open(source_path, top_cell=args.top_cell) as database:
-            layer, box, dbu_um = _select_database_input(args, database)
+            layer, box, dbu_um = _select_layout_scope(args, database)
             _finish_stage(timings, checkpoints, "layout_open", stage)
             config, grid = _problem_configuration(args, box, dbu_um)
             stage = perf_counter()

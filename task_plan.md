@@ -215,6 +215,17 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 |---|---|---|
 | 48 | 已完成 | 固化 CPU macro/GPU core 两级流式、未裁剪候选提边、RAM/memmap 状态、全局轮次屏障及验收矩阵；仅更新设计文档，不实施生产代码 |
 
+## 阶段 49–54：可微光刻、完整评价、SimpleILT 与入口收敛
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 49 | 已完成 | ICCAD13 改为独立 `ProcessCondition`/`forward_many`，共享频谱且通过原生 autograd 有限差分 |
+| 50 | 已完成 | 迁移二值 L2、PVBand、确定性 Shot 并接入 MB-OPC；EPE 是唯一移动/最佳状态依据 |
+| 51 | 已完成 | 实现像素参数 SimpleILT、任意工艺条件、优化窗口、曲率、结果与直接入口 |
+| 52 | 已完成 | 全部 run/离线入口集中到 `main/`，旧路径物理删除且无包装层 |
+| 53 | 已完成 | Ruff、compileall、152 项全量与 39 项覆盖率专项回归通过 |
+| 54 | 已完成 | 手册/专项报告、重复实现、bug 遗留、文件拆分、未调用函数、保护目录与 Git 审计全部完成 |
+
 ## 本轮新增错误记录
 
 | 错误 | 次数 | 处理 |
@@ -234,3 +245,5 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | cuts 收敛后的两个根入口导入顺序不符合 Ruff | 1 | 手工把 `opc.input.edge` 放在 `opc.input.grid` 前；28 项功能回归同期已通过 |
 | 新增基准 CLI 回归使用 10 图形/64 core 导致 halo 比例失真 | 1 | 改为仍可快速执行的 100 图形，并保留严格门槛验证 |
 | 把只读 GDS 验证与递归临时清理组合后被安全策略拒绝 | 2 | 验证已拆分并通过；不绕过策略，临时目录留给系统回收且不在工作树内 |
+| 光刻测试首个大块补丁因文件尾上下文漂移未应用 | 1 | 原子失败无部分写入；改用精确小锚点后 10 项模型测试通过 |
+| PNG 公共辅助函数收敛补丁因离线文件签名与预期不同未应用 | 1 | 原子失败无部分写入；读取真实签名后拆成两次补丁并删除重复实现 |

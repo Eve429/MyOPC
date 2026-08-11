@@ -1766,3 +1766,34 @@ owner/v1 校验收敛的多文件补丁使用了与已迁移代码不一致的�
 - **Notes**: 使用精确尾部锚点完成报告、计划和进度更新。
 
 ---
+
+## [ERR-20260811-003] current_feature_stale_patch_context
+
+**Logged**: 2026-08-11T23:30:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+光刻测试迁移和 PNG 辅助函数收敛的首个大块补丁使用了已漂移的上下文，两次均被原子拒绝。
+
+### Error
+`apply_patch verification failed: Failed to find expected lines`
+
+### Context
+- 光刻测试文件尾部与先前读取版本不完全一致；离线 I/O 的 `_atomic_json` 签名也与预期锚点不同。
+- 两次失败都没有部分写入，生产代码未进入混合状态。
+
+### Suggested Fix
+对本轮已多次修改的文件，补丁前重新读取目标附近片段；按单个函数或短且唯一的签名拆分补丁，不跨越不稳定尾部。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/lithography/test_iccad13.py, main/offline_inputs.py, main/run_lithography.py, main/run_simpleilt.py
+- See Also: ERR-20260810-005, ERR-20260810-010, ERR-20260810-016
+
+### Resolution
+- **Resolved**: 2026-08-11T23:35:00+08:00
+- **Notes**: 读取真实片段后改用短锚点；模型 10 项测试、全仓库 152 项回归均通过，重复 PNG 实现已删除。
+
+---

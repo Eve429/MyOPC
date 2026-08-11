@@ -6,12 +6,14 @@
 
 MyOPC 面向整张 reticle 的流式 OPC：版图数据库只在输入阶段读取一次，物理边界只构造一次；迭代阶段按 core+halo 栅格化和批量执行光刻模型，不保存整张 reticle 的曝光张量；轮次结束后统一发布边段位移，最终只做一次全局矢量重建。
 
-项目可直接运行根目录 Python 文件，不需要 `pip install` 当前仓库。当前依赖方向是：
+项目可直接运行 `main/` 中的 Python 文件，不需要 `pip install` 当前仓库。当前依赖方向是：
 
 ```text
-layout -> geometry -> opc.input -> opc.iteration.mbopc
-                       |                    |
-                       +-> diagnostics      +-> lithography + evaluation
+layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
+                       |                              |
+                       +-> raster --------------------+-> lithography + evaluation
+                                                      |
+                                                      +-> opc.iteration.ilt
 ```
 
 `layout/` 与 `geometry/` 默认是受保护基础，新增 OPC 功能不得擅自修改；本次精简是在用户明确授权后执行，并留下 ROI/属性/性能回归。
@@ -25,11 +27,16 @@ layout -> geometry -> opc.input -> opc.iteration.mbopc
 | `opc/input/` | 物理 mask、规则 core 网格等共享输入 |
 | `opc/input/edge/` | 边段切分、唯一 owner、探针坐标、全局矢量重建 |
 | `opc/iteration/mbopc/` | simple MB-OPC 的流式同步迭代 |
+| `opc/iteration/ilt/` | 可微像素参数 SimpleILT；不依赖边段输入 |
 | `lithography/` | 可独立替换的光刻模型；当前为 ICCAD13 Hopkins 模型 |
-| `evaluation/` | L2、PVBand、EPE 评价 |
+| `evaluation/` | 二值 L2、PVBand、EPE 和确定性矩形 shot 估计 |
 | `opc/diagnostics.py` | 显式请求才执行的 NPZ/GDS/PNG 与几何图集 |
-| `run_mbopc_frontend.py` | 不运行光刻的输入、分段、归属、重建验证器 |
-| `run_mbopc.py` | 完整 MB-OPC 主程序 |
+| `main/offline_inputs.py` | 可复用像素/边段离线输入和原子结果写入 |
+| `main/run_mbopc_frontend.py` | 不运行光刻的输入、分段、归属、重建验证器 |
+| `main/run_mbopc.py` | 完整 MB-OPC 主程序 |
+| `main/run_lithography.py` | 独立光刻模型验证入口 |
+| `main/run_mbopc_iteration.py` | 独立 MB-OPC 迭代验证入口 |
+| `main/run_simpleilt.py` | 独立 SimpleILT 入口 |
 
 诊断代码不属于输入模型，求解器不反向依赖某个输出格式。未来 ILT 可复用版图、Region 栅格、光刻和评价层，但不必依赖边段重建。
 
@@ -104,19 +111,26 @@ CPU batch 中始终保持 `uint8`，只在一次性送到模型设备时转为 `
 
 ## 6. 光刻与评价替换
 
-`ICCAD13Lithography` 独立位于 `lithography/`，迭代只依赖其批量 nominal/maximum/minimum 输出。三工艺角共享一次 mask FFT；focus 单位剂量强度同时乘 `dose_nominal²` 和 `dose_max²`，defocus 强度乘 `dose_min²`。共享中间量只存在于一次 `forward` 内，保留 autograd，不增加跨调用缓存。新模型应保持当前张量坐标、画布和设备语义，不把模型细节写回输入层。
+`ICCAD13Lithography` 独立位于 `lithography/`。`ProcessCondition(name, kernel, dose)` 表示一次独立工艺条件；`forward(mask, condition)` 返回一张连续 wafer，`forward_many(mask, conditions)` 返回按名称索引的结果。后者只共享本次调用的 mask FFT，并对相同 kernel bank 复用单位剂量强度；条件之间没有固定三元组绑定。全部传播由普通 PyTorch 复数 FFT、乘法、绝对值平方和 sigmoid 构成，原生 autograd 可处理任意上游梯度，可同时服务 MB-OPC 的 `no_grad`、梯度 OPC 和 ILT。
 
-`evaluate_process_window` 只在 ownership 像素累计 L2/PVBand。`evaluate_edge_probes` 根据 target 的内外语义产生 `-1/0/+1` 法向移动方向；同一 probe 同时触发相反要求时记为 ambiguous 且不移动。更换迭代算法可以复用评价函数，也可以在独立方法目录实现新损失，但不能让公共输入依赖具体算法。
+`evaluate_binary_l2` 与 `evaluate_pvband` 采用 OpenILT 的二值语义，只在 ownership 像素累计不一致像素数；函数不会原位阈值化输入。`evaluate_edge_probes` 根据 target 的内外语义产生 `-1/0/+1` 法向移动方向；同一 probe 同时触发相反要求时记为 ambiguous 且不移动。simple MB-OPC 只用 EPE 决定更新和最佳轮次，L2/PVBand 仅记录诊断。`estimate_rectangular_shots` 在显式固定分辨率上逐行合并相同水平 run，提供确定、无随机和无 OpenCV/adabox 依赖的矩形 shot 估计；它不是最小 shot 数证明。
 
-## 7. 输出约定
+## 7. SimpleILT
 
-- `run_mbopc.py`：保存 `summary.json`、结果 GDS 和可选 PNG；不保存整轮 tensor，也不生成 NPZ。
-- `run_mbopc_frontend.py`：用于人工检查输入契约，保存 key-free、按全局 segment 下标对齐的格式 v3 NPZ，并可保存 GDS/PNG/JSON。
+`opc.iteration.ilt.optimize` 直接消费 `[H,W]` 或 `[B,H,W]` target，不构造 `MBOPCProblem` 或边段。默认参数由 target 映射到 `-1/+1`，每轮通过 sigmoid 得到软 mask；`optimization_mask` 可把窗口外区域固定为初始软值。损失由标称连续 L2、调用方传入的任意 process conditions 对 target 的连续 L2、这些条件逐像素范围的连续 PVBand，以及可选曲率项组成。
+
+求解结果只保留历史总损失最优轮的参数、软 mask、二值 mask 和逐轮标量记录。默认条件是 nominal、dose_max、defocus_min，但调用方可传入完全不同的独立条件，也可传空元组只优化标称条件。配置、记录、结果和算法集中在 `simple.py`；当前只有一个 ILT 方法，因此没有建立基类、注册器或额外 contracts 文件。
+
+## 8. 输出约定
+
+- `main/run_mbopc.py`：保存 `summary.json`、结果 GDS 和可选 PNG；最终最佳几何额外做一次固定 512² shot 估计，不保存整轮 tensor，也不生成 NPZ。
+- `main/run_mbopc_frontend.py`：用于人工检查输入契约，保存 key-free、按全局 segment 下标对齐的格式 v3 NPZ，并可保存 GDS/PNG/JSON。
+- `main/run_simpleilt.py`：保存最佳参数、软/二值 mask 的 NPZ、逐轮损失与 L2/PVBand/shot JSON，并可保存 PNG。
 - `opc.diagnostics`：只有调用者明确要求时才物化诊断长度、图片、GDS 或测试图集。
 
 NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久身份协议。显式 remesh 必须重新分段、重新建立 owner，并由调用者重建优化状态。
 
-## 8. 扩展原则
+## 9. 扩展原则
 
 - 新抽象必须有当前调用方；不创建空接口、注册器或无实现目录。
 - 替换输入构造和替换迭代是两个独立扩展点：前者产出实际方法需要的数据，后者消费数据并更新状态。
@@ -125,9 +139,9 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 - 每个 bug 必须有回归测试，修复后搜索并删除仅服务于旧错误的包装、变量和分支。
 - 关键节点只做本地 Git commit，未经明确授权不得 push。
 
-## 9. 离线专项测试工作台
+## 10. 离线专项测试工作台
 
-`tests/workbench/offline_inputs.py` 把“版图输入构造”和“模型/迭代优化”解耦。它提供四个稳定测试接口：
+`main/offline_inputs.py` 把“版图输入构造”和“模型/迭代优化”解耦。它提供四个稳定测试接口：
 
 - `prepare_raster_input`：把一个明确 ROI 保存成模型左下原点的 `float32[canvas,canvas]`；
 - `load_raster_input`：校验版本、方向、范围和数值后读取 mask；
@@ -138,23 +152,23 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检有意额外读取一次版图：公共 `LayoutDB` 第一次读取只解析 Layer/ROI/DBU 并保持打开，独立原生读取扫描层级复杂度；只有扫描通过，才由已打开的 `LayoutDB` 公共查询物化。布尔合并可能产生的新交点无法在物化前完全预测，因此离线边段准备完成后还会按真实 segment/membership 数量复核内存估计。
 
-`tests/workbench/run_lithography.py` 只消费像素归档，输出三工艺角连续数组和可选 PNG；`tests/workbench/run_mbopc_iteration.py` 只消费边段归档，输出最佳位移、迭代 JSON、GDS 和可选标注图。两个入口均可从任意工作目录直接运行，不需要安装本项目。
+`main/run_lithography.py` 只消费像素归档，输出调用方选择的三项独立工艺条件连续数组和可选 PNG；`main/run_mbopc_iteration.py` 只消费边段归档，输出最佳位移、迭代 JSON、GDS 和可选标注图；`main/run_simpleilt.py` 与光刻入口复用同一像素归档。入口均可从任意工作目录直接运行，不需要安装本项目。
 
 详细字段、内存边界和设计审计见 [离线工作台开发报告](offline_workbench_development_report.md)。
 
 本轮函数与内存收敛见[代码优化开发报告](code_optimization_development_report.md)；尚未实施的大 reticle 稀疏/macro 路径见[独立开发方案](large_reticle_streaming_plan.md)。
 
-## 10. 物化前容量预检与资源统计
+## 11. 物化前容量预检与资源统计
 
 真实版图根入口必须先调用 `preflight_layout(source, top_cell, layer, box, ...)`，通过后才能调用 `ShapeQuery.materialize()`。默认 CPU 预算是启动时系统可用内存的 70%；显式 `--memory-budget-gib` 只改变本次任务预算。超过预算或 `int32` 容量时返回 `sharded_required`，当前版本不会尝试继续分配。
 
 ```powershell
 # 只做完整层级容量扫描，不物化 Region/边段
-python run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
+python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
   --tile-size-nm 1024 --halo-nm 512 --preflight-only --json
 
 # 完成前端几何验证，但跳过大 NPZ/GDS/PNG
-python run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
+python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
   --tile-size-nm 1024 --halo-nm 512 --skip-artifacts --json
 ```
 

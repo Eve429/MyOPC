@@ -251,3 +251,24 @@
 - macro 必须同时具有唯一写入的 `ownership_box` 和只读上下文的 `context_box`。未来取得 Layout 修改授权后，应增加未裁剪的完整候选 occurrence 批量入口，同时保持现有 `materialize()` 语义不变。
 - 阶段 2 采用“每一轮逐 macro 展开、计算、释放，轮末统一发布”，不采用“一个 macro 完成全部轮次再处理下一个”。数学边的分段相位锚定完整真实边，避免斜边被独立裁剪后出现 33/34 DBU 分歧。
 - 百亿 segment 不能依赖全局 `int32` 或全部 RAM 常驻；采用 shard-local `int32`、全局 `int64` offset，并根据预检在 RAM 紧凑状态与 memmap 双代状态之间选择内部路径。
+
+## 阶段 49 前置审计
+
+- OpenILT `simple/exact` 的 Hopkins forward 基本一致，差别集中在 backward：simple 使用单个 combo/CT 近似核，exact 使用完整 CT 核；MyOPC 当前普通 PyTorch 算子已经能从实际 forward 自动构造精确 VJP。
+- TorchLitho Hopkins 值得借鉴独立工艺条件、batch 和梯度验证；运行时 TCC/SVD、Abbe 光源循环和只以全一上游梯度展示的自定义 VJP 暂不迁移。
+- 当前 `LithographyResult` 固定绑定 nominal/maximum/minimum，和用户要求冲突；改为单条件 `forward` 与任意条件 `forward_many`，后者仍共享 FFT/相同 kernel bank 传播以避免性能倒退。
+- OpenILT evaluation 的实际能力是二值 L2、二值 PVBand、EPE 和 Shot。现有矢量 EPE 更适合跨 core MB-OPC；Basic 会原地修改 mask，ShotCounter 有逐像素 Python 循环、随机多进程和额外 adabox 依赖，均只迁移语义、不照抄实现。
+- 仓库当前共有五个 `run_*.py`；本阶段连同新增 `run_simpleilt.py` 全部集中到 `main/`，并把离线入口共享实现移出 tests，避免正式入口反向依赖测试包。
+
+## 阶段 49–54 实施结论
+
+- 固定 `LithographyResult` 已删除；独立条件字典只存在于一个 batch，不形成新的常驻数据结构。相同 kernel bank 的 unit aerial 复用，模型仍只执行一次 mask FFT。
+- 非均匀正负上游权重的中心有限差分与原生 autograd 一致，证明当前反向不依赖“损失梯度全一”的特殊假设。
+- OpenILT 二值 L2/PVBand 已按 ownership 流式累计；EPE 相同但诊断 L2 改善的回归仍选择首轮，确认普通 MB-OPC 不受诊断指标控制。
+- Shot 使用确定性 horizontal-run 矩形合并，避免 OpenILT 的逐像素连通域收集、随机搜索、多进程和额外依赖；固定 512² 仅是评价分辨率，不是物理最少 shot 证明。
+- SimpleILT 只复用 raster、lithography 与 evaluation，不构造 edge problem。唯一实现把配置/记录/结果/算法同置 `simple.py`，不存在为了未来方法预建的空层。
+- 全部七个可执行/离线脚本集中到 `main/`；旧根路径和 `tests/workbench` 脚本均删除。JSON/NPZ/PNG 原子输出收敛到 `main/offline_inputs.py`，没有新增仅含小工具的额外文件。
+- 全仓库 152 项通过；专项 39 项、四目标模块综合 statement/branch coverage 92%。本阶段不修改 `layout/`、`geometry/`，也未重新建立 `gcd_45nm` 的新二值指标整图基线。
+- 最终 AST 审计覆盖 80 个第一方 Python 文件，中文模块/函数 docstring 缺失为 0；低引用项均为有真实调用方的私有函数、被测试的公共 API 或 PyTorch `forward` 回调。
+- 重复函数名复核后只保留不同对象的自然同名方法和两个算法命名空间各自的 `optimize`；runner 的重复 JSON/PNG/DBU helper 已收敛，frontend 中语义不同但同名的选择函数改为 `_select_layout_scope`。
+- 文件拆分复核确认 ILT 只有实现文件和包导出，evaluation 仍为单实现文件，`main/` 每个脚本对应一个可独立运行工作流；继续拆分会增加跳转而没有第二个现实调用方。

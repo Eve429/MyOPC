@@ -213,3 +213,15 @@
 - 最终静态审计通过：72 个第一方 Python 文件中文模块/函数 docstring 无缺失；旧 types 路径、重复 `_vector/_matrix/_points` 和三份 tile cuts 均无残留；25 份 doc Markdown 无断链或围栏错误。
 - 阶段 44–47 全部完成，待创建文档/最终精简里程碑提交；阶段 2 保持未实施。
 - 阶段 48 完成：重写 `doc/large_reticle_streaming_plan.md`，明确当前能力边界、CPU macro/GPU core 两级流式、macro 边界不产生物理边、RAM/memmap 状态、全局轮次屏障、ILT/PB-OPC 复用边界和完整验收矩阵；未修改任何生产代码。
+- 阶段 49 开始：工作树干净，已完成 OpenILT exact/simple、TorchLitho Hopkins/Abbe、当前光刻/评价/MB-OPC/SimpleILT 与五个运行入口的只读审计；本轮明确不修改 layout/geometry。
+- 阶段 49 完成：新增独立 ProcessCondition、单条件/多条件前向并删除固定 LithographyResult；10 项光刻测试含非均匀上游有限差分全部通过。
+- 阶段 50 完成：二值 L2/PVBand、确定性 shot 与现有矢量 EPE 形成公共评价；MB-OPC 最佳状态只比较 EPE，并增加诊断指标不得改变几何的回归。
+- 阶段 51 完成：新增 SimpleILT，支持任意工艺条件、空 process window、优化窗口和曲率；真实 ICCAD13 完成 backward/update。
+- 阶段 52 完成：五个旧 run 脚本和离线实现全部移动到 `main/`，新增 `run_simpleilt.py`，旧路径不保留包装；仓库外直接启动回归通过。
+- PNG 输出、JSON 原子写入和严格 nm→DBU 换算重复函数已收敛到现有离线 I/O 模块；没有为少量辅助函数新增 `utils.py`。
+- 阶段 53 完成：Ruff、compileall、全仓库最终复跑 152 tests（38.63 s）通过；专项最终复跑 39 tests（13.54 s）及综合 statement/branch coverage 92%。
+- 已同步开发/测试手册、项目总手册、调用关系，并新增可微光刻/评价/ILT 专项开发和测试报告；进入最终静态、差异、调用点与 Git 审计。
+- 已创建功能里程碑提交 `6ddce7a`，包含可微光刻、公共评价、SimpleILT、main 入口迁移与全部回归；未推送远端。
+- 最终审计通过：80 个 Python 文件中文 docstring 零缺失，30 份 Markdown 链接/围栏零错误，layout/geometry 零差异，旧固定结果/评价符号零生产引用，重复 runner helper 已清理。
+- 阶段 49–54 全部完成；最终小范围 frontend 重命名经 Ruff 和 11 项入口回归通过，准备提交文档与审计里程碑。
+- 用户 `simple.gds` 最终 CPU 冒烟全部通过：raster/光刻/SimpleILT/完整 MB-OPC 四段退出码均为 0；MB-OPC 一轮 EPE/L2/PVBand=338/3936/1607、shot=325、结果 Region 合法。

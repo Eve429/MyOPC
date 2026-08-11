@@ -6,12 +6,14 @@
 
 ```mermaid
 flowchart TD
-    A[run_mbopc.py / run_mbopc_frontend.py] --> B[layout]
+    A[main/run_mbopc.py / run_mbopc_frontend.py] --> B[layout]
     A --> C[opc.input.edge]
     A --> D[opc.diagnostics]
     E[opc.iteration.mbopc] --> C
     E --> F[lithography]
     E --> G[evaluation]
+    T[opc.iteration.ilt] --> F
+    T --> G
     C --> H[opc.input]
     C --> I[geometry]
     H --> I
@@ -20,8 +22,9 @@ flowchart TD
 
 主要源码：
 
-- [完整入口](../run_mbopc.py)
-- [前端验证入口](../run_mbopc_frontend.py)
+- [完整入口](../main/run_mbopc.py)
+- [前端验证入口](../main/run_mbopc_frontend.py)
+- [SimpleILT 入口](../main/run_simpleilt.py)
 - [共享 core 网格](../opc/input/grid.py)
 - [边段切分与数据契约](../opc/input/edge/fragmentation.py)
 - [容量预检](../opc/input/preflight.py)
@@ -29,7 +32,7 @@ flowchart TD
 - [MB-OPC 求解器](../opc/iteration/mbopc/solver.py)
 - [诊断输出](../opc/diagnostics.py)
 
-## 2. 完整入口 `run_mbopc.run`
+## 2. 完整入口 `main.run_mbopc.run`
 
 ```mermaid
 flowchart TD
@@ -115,7 +118,7 @@ sequenceDiagram
             Tile->>Tile: contour 子集 + Region 差分
         end
         Tile->>GPU: current/target/ownership tensor
-        GPU->>Eval: nominal/maximum/minimum
+        GPU->>Eval: 独立命名工艺条件 dict
         Eval-->>CPU: core L2/PVBand + owner EPE 方向
         CPU->>CPU: 累计 next_values，不修改 current
         Eval-->>GPU: 释放 batch 输出
@@ -132,8 +135,8 @@ sequenceDiagram
 
 1. `_target_tile` 从固定物理 mask 构造并缓存 uint8 target，直到整个 batch 送设备时才统一转为 float32；
 2. `_current_tile` 同时接收本轮全局位移；局部全零时直接栅格化参考 Region，否则根据相关 polygon 构造当前 mask；
-3. `ICCAD13Lithography.forward` 批量生成三种工艺条件；
-4. `evaluate_process_window` 只在 core ownership 像素累计 L2/PVBand；
+3. `ICCAD13Lithography.forward_many` 批量生成调用方指定的独立工艺条件；
+4. `evaluate_binary_l2`/`evaluate_pvband` 只在 core ownership 像素累计二值诊断；
 5. `edge_probe_points` 生成与当前 segment 顺序对齐的 inner/outer 坐标；
 6. `evaluate_edge_probes` 返回有效、歧义和移动方向；
 7. `_preserves_reference_topology` 在发布前检查 ring 绕向和 hole 关系。
@@ -144,9 +147,27 @@ target LRU 和 CPU batch 保存 `uint8`，current mask 保持未量化浮点覆�
 只省略几何重建，不直接复用 target 数组；设备边界一次性归一化 target。`_owner_indices`
 从每 core 的 membership CSR 中筛唯一 owner，不再反复扫描全局 segment。
 
-`ICCAD13Lithography.forward` 对同一 mask 只做一次 FFT；focus 单位剂量强度供 nominal
-与 maximum 共享，defocus 单独传播，三者按 dose² 缩放后进入 sigmoid。共享频谱只在
-当前调用中存活，输出接口仍是 `LithographyResult`，因此求解器和独立工作台无需适配。
+`ICCAD13Lithography.forward_many` 对同一 mask 只做一次 FFT；相同 kernel bank 的条件
+共享单位剂量强度，各条件按自身 dose² 缩放后进入 sigmoid。共享频谱只在当前 autograd
+图中存活，输出为按 `ProcessCondition.name` 索引的张量字典，不存在固定三元组结果结构。
+
+### 5.1 SimpleILT 调用顺序
+
+```mermaid
+flowchart LR
+    A[raster target] --> B[参数初始化/优化窗口]
+    B --> C[sigmoid soft mask]
+    C --> D[forward_many]
+    D --> E[nominal/process/PVBand/curvature 连续损失]
+    E --> F[autograd backward]
+    F --> G[SGD 更新参数]
+    G --> C
+    E --> H[保存总损失最优状态]
+```
+
+SimpleILT 不经过 `prepare_problem`、`SegmentBatch`、owner 或矢量重建。target、可选初始
+参数和优化窗口同形；调用方显式传入 nominal 与任意 process conditions。最终返回参数、
+软 mask、二值 mask 和逐轮标量，`main/run_simpleilt.py` 再负责持久化和最终评价。
 
 ## 6. 探针和移动方向
 
@@ -184,7 +205,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[run_mbopc_frontend.run] --> B[真实 GDS 元数据]
+    A[main.run_mbopc_frontend.run] --> B[真实 GDS 元数据]
     B --> P[preflight_layout]
     P -->|拒绝/只预检| R[summary.json]
     P -->|通过| C0[ShapeQuery.materialize]
@@ -211,14 +232,14 @@ flowchart TD
 - `render_boundary_overlay`：标注图；
 - `build_geometry_cases`、`run_geometry_suite`：多图形专项验证。
 
-输入构造和求解热路径都不导入这些函数。只有根入口显式请求时，才计算诊断段长、图片、GDS 或完整几何图集。
+输入构造和求解热路径都不导入这些函数。只有 `main/` 入口显式请求时，才计算诊断段长、图片、GDS 或完整几何图集。
 
 ## 10. 扩展位置
 
 | 需求 | 应放位置 | 不应依赖 |
 |---|---|---|
 | 新光刻模型 | `lithography/<model>.py` | `opc.iteration.mbopc` |
-| 新评价方法 | `evaluation/` | 某个根 CLI |
+| 新评价方法 | `evaluation/` | 某个 `main/` CLI |
 | 新边段 OPC 迭代 | `opc/iteration/<method>/` | 诊断文件格式 |
 | ILT | 独立迭代目录，复用 mask/栅格/模型/评价 | `SegmentBatch`（除非算法确实使用边段） |
 | 新输入表达 | `opc/input/` 下有实际调用方的模块 | 未实现方法的注册器 |
@@ -235,7 +256,9 @@ flowchart TD
     D --> E[raster_input.npz]
     E --> F[load_raster_input]
     F --> G[ICCAD13Lithography]
-    G --> H[三工艺角 NPZ/PNG/JSON]
+    G --> H[独立工艺条件 NPZ/PNG/JSON]
+    F --> Q[SimpleILT optimize]
+    Q --> R[参数/软 mask/二值 mask/评价]
     B -->|边段路径| I[LayoutDB.query.materialize]
     I --> J[prepare_problem]
     J --> K[mbopc_input.npz]

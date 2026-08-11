@@ -21,6 +21,16 @@ def _model_mask(height: int = 200, width: int = 150) -> torch.Tensor:
     return mask
 
 
+def _legacy_aerial(model: ICCAD13Lithography, mask: torch.Tensor, dose: float,
+                   kernels: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
+    """按优化前每个工艺角独立 FFT 的公式计算数值参考。"""
+    spectrum = torch.fft.fft2((dose * mask).to(torch.complex64).unsqueeze(1), norm="forward")
+    fields = torch.fft.ifft2(
+        model._kernel_multiply(kernels, spectrum, model.config.kernel_count), norm="forward")
+    weights = scales[:model.config.kernel_count][None, :, None, None]
+    return torch.sum(weights * torch.abs(fields).square(), dim=1)
+
+
 def test_config_parser_validates_required_fields(tmp_path: Path) -> None:
     """配置解析必须接受标准文件并拒绝缺字段或错误剂量顺序。"""
     source = Path(__file__).resolve().parents[2] / "lithography" / "config" / "iccad13.txt"
@@ -79,6 +89,41 @@ def test_full_canvas_runs_lithography_instead_of_returning_input() -> None:
         result = model(mask)
     assert not torch.equal(result.nominal, mask)
     assert torch.any((result.nominal > 0.0) & (result.nominal < 1.0))
+
+
+def test_shared_spectrum_matches_independent_fft_reference() -> None:
+    """共享频谱的三工艺角结果与原独立 FFT 公式逐像素误差不得超过 5e-6。"""
+    model = ICCAD13Lithography(device="cpu")
+    mask = _model_mask(72, 64)[:1]
+    prepared, padding = model._prepare_mask(mask)
+    steepness, density = model.config.print_steepness, model.config.target_density
+    with torch.no_grad():
+        result = model(mask)
+        aerials = (
+            _legacy_aerial(model, prepared, model.config.dose_nominal,
+                           model.focus_kernels, model.focus_scales),
+            _legacy_aerial(model, prepared, model.config.dose_max,
+                           model.focus_kernels, model.focus_scales),
+            _legacy_aerial(model, prepared, model.config.dose_min,
+                           model.defocus_kernels, model.defocus_scales),
+        )
+        reference = tuple(model._restore_size(
+            torch.sigmoid(steepness * (aerial - density)), padding) for aerial in aerials)
+    for actual, expected in zip(
+            (result.nominal, result.maximum, result.minimum), reference, strict=True):
+        assert torch.max(torch.abs(actual - expected)).item() <= 5e-6
+
+
+def test_shared_spectrum_preserves_mask_gradient() -> None:
+    """共享中间量后标称与工艺窗损失仍应向输入 mask 传播有限非零梯度。"""
+    model = ICCAD13Lithography(device="cpu")
+    mask = _model_mask(64, 64)[:1].clone().requires_grad_()
+    result = model(mask)
+    loss = result.nominal.mean() + result.maximum.mean() - result.minimum.mean()
+    loss.backward()
+    assert mask.grad is not None
+    assert torch.all(torch.isfinite(mask.grad))
+    assert torch.count_nonzero(mask.grad).item() > 0
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="当前环境没有 CUDA")

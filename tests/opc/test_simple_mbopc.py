@@ -16,6 +16,7 @@ from opc.input.edge import FragmentationConfig, prepare_problem
 from opc.input.raster import rasterize_region_canvas
 from opc.iteration.mbopc.solver import (
     _current_tile,
+    _owner_indices,
     _polygon_ids_for_core,
     _preserves_reference_topology,
     _subset_contours,
@@ -60,16 +61,27 @@ def _solver_config(iterations: int = 2, cache_bytes: int = 1 << 20) -> SimpleMBO
         canvas=96, batch_size=1, target_cache_bytes=cache_bytes)
 
 
-def test_target_cache_hit_restores_unit_interval() -> None:
-    """uint8 target 缓存命中后必须恢复到 [0,1]，不能把 255 送入光刻模型。"""
+def test_target_cache_hit_keeps_compact_uint8_until_batch_transfer() -> None:
+    """target 命中与未命中都应保持 uint8，避免 CPU 批次提前展开为 float32。"""
     problem, _ = _rectangle_problem()
     cache = _TargetCache(1 << 20)
     core = problem.grid.cores()[0]
     first = _target_tile(problem, 0, core, _solver_config(), cache)
     second = _target_tile(problem, 0, core, _solver_config(), cache)
     assert np.array_equal(first, second)
-    assert float(second.min()) >= 0.0
-    assert float(second.max()) <= 1.0
+    assert second.dtype == np.uint8
+    assert (int(second.min()), int(second.max())) == (0, 255)
+
+
+def test_owner_indices_match_global_reference_scan() -> None:
+    """membership CSR 过滤必须与旧的全局 owner 扫描逐 core 完全一致。"""
+    problem, _ = _rectangle_problem()
+    actual = _owner_indices(problem)
+    expected = tuple(np.flatnonzero(problem.owner_indices == core).astype(np.int32)
+                     for core in range(problem.core_count))
+    assert len(actual) == len(expected)
+    assert all(np.array_equal(left, right)
+               for left, right in zip(actual, expected, strict=True))
 
 
 def test_target_lru_replaces_existing_value_and_evicts_oldest() -> None:

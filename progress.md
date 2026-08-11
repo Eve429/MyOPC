@@ -182,3 +182,5 @@
 - 用户确认直接收敛 Layout API、接受光刻逐像素 `5e-6` 误差上限，并要求把大 reticle 稀疏化作为独立后续方案；当前进入代码实施。
 - 阶段 40 完成：`PatchWriter` 已移入 `geometry`，删除两个 layout 单调用/反向依赖文件；关闭检查合入原生对象属性，公共导入不再加载 geometry。
 - 轮廓提取改为单连续 64 位缓冲，两个栅格入口改为原位归一化；46 项 Layout/Geometry/栅格回归通过，严格基准为 0.10170 ms ROI 与 483.731 ms 2048² 栅格，结果精确且无性能退化。
+- 阶段 41 完成：光刻三工艺角共享一次 mask FFT 和 focus 强度；OPC target 保持 uint8 到设备边界，CPU batch 一次预分配，owner 从 membership CSR 过滤。
+- 28 项光刻/求解/CLI 聚焦回归通过；共享频谱提升 1.5207 倍、GPU 峰值不增加、最大误差 5.82e-7，`simple.gds` 三轮 EPE/质量/移动统计保持验收范围内一致。

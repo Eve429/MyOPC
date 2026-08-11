@@ -26,6 +26,36 @@
 
 ---
 
+## [ERR-20260811-001] mbopc_benchmark_regression_scale
+
+**Logged**: 2026-08-11T00:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+前端基准 CLI 回归使用 10 个图形配 64 个 core，使小样本 halo 比例失真并触发严格门槛。
+
+### Error
+`strict_failures: ["稀疏 halo membership 膨胀超过每段 9 个 core"]`
+
+### Context
+- 目标是回归基准脚本不再访问已删除字段，不是改变 membership 性能门槛。
+- 10 个矩形只有 220 段，却仍展开 8×8 core；100 个矩形在同一固定网格下满足统计口径且运行约 3 秒。
+
+### Suggested Fix
+直接 CLI 回归使用 100 个图形；为比例型性能门槛选择能代表其设计尺度的最小样本。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/test_cli.py, benchmarks/benchmark_mbopc_frontend.py
+
+### Resolution
+- **Resolved**: 2026-08-11T00:00:00+08:00
+- **Notes**: 回归规模改为 100，并保留严格模式以继续覆盖字段和性能契约。
+
+---
+
 ## [ERR-20260810-001] stale_edge_module_guess
 
 **Logged**: 2026-08-10T10:00:00+08:00

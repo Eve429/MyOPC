@@ -99,18 +99,16 @@ class _TargetCache:
 
 def _target_tile(problem: MBOPCProblem, core_index: int, core: CoreSpec,
                  config: SimpleMBOPCConfig, cache: _TargetCache) -> np.ndarray:
-    """读取或生成固定参考 mask 的 context 画布。"""
+    """读取或生成固定参考 mask 的 uint8 context 画布。"""
     cached = cache.get(core_index)
     if cached is not None:
-        # 缓存用 uint8 把每 tile 常驻内存降为 float32 的四分之一；命中时必须恢复
-        # 到模型约定的 [0,1]，否则第二轮会把 255 当作 mask 强度并破坏光刻结果。
-        return cached.astype(np.float32) / 255.0
+        return cached
     context = core.context_box
     raster = rasterize_region_canvas(
         problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
     compact = np.rint(raster * 255.0).astype(np.uint8)
     cache.put(core_index, compact)
-    return compact.astype(np.float32) / 255.0
+    return compact
 
 
 def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
@@ -119,7 +117,7 @@ def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
                   config: SimpleMBOPCConfig) -> np.ndarray:
     """用参考 tile 加邻近 Polygon 差分生成当前 mask，不创建完整 reticle Region。"""
     if not len(polygon_ids):
-        return target.copy()
+        return target.astype(np.float32) / 255.0
     context = core.context_box
     members = problem.segments_for_core(core_index)
     if not np.count_nonzero(displacements[members]):
@@ -138,8 +136,14 @@ def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
 
 def _owner_indices(problem: MBOPCProblem) -> tuple[np.ndarray, ...]:
     """一次性建立每个 core 的 owner segment 索引，供所有轮次复用。"""
-    return tuple(np.flatnonzero(problem.owner_indices == core_index).astype(np.int32)
-                 for core_index in range(problem.core_count))
+    # membership CSR 已在准备阶段按 core 保存所有 owner/halo segment；owner 必然
+    # 位于其自身 core 的 context。只过滤当前 CSR 切片可把复杂度从 core×全局 segment
+    # 降为总 membership 数，且返回原 int32 索引，不再为每个 core 扫描并转换全局数组。
+    owners: list[np.ndarray] = []
+    for core_index in range(problem.core_count):
+        members = problem.segments_for_core(core_index)
+        owners.append(members[problem.owner_indices[members] == core_index])
+    return tuple(owners)
 
 
 def _ring_signed_areas2(contours: ContourBatch) -> np.ndarray:
@@ -232,22 +236,31 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
         total_epe = total_valid = total_ambiguous = 0
         for batch_start in range(0, len(cores), config.batch_size):
             batch_indices = list(range(batch_start, min(len(cores), batch_start + config.batch_size)))
-            targets: list[np.ndarray] = []
-            masks: list[np.ndarray] = []
-            ownership_masks: list[np.ndarray] = []
-            for core_index in batch_indices:
+            batch_count = len(batch_indices)
+            # 三个 CPU batch 一次预分配并原位填充，避免逐 tile 小数组列表再 stack。
+            # target 在 CPU 保持 uint8，传到设备时才一次性转 float32，批内峰值为旧
+            # 路径的八分之一；mask 需要保留未量化覆盖率，仍使用 float32。
+            targets = np.empty((batch_count, config.canvas, config.canvas), dtype=np.uint8)
+            masks = np.empty((batch_count, config.canvas, config.canvas), dtype=np.float32)
+            ownership_masks = np.empty(
+                (batch_count, config.canvas, config.canvas), dtype=np.bool_)
+            for local_index, core_index in enumerate(batch_indices):
                 core = cores[core_index]
                 target = _target_tile(problem, core_index, core, config, cache)
-                targets.append(target)
-                masks.append(_current_tile(
+                targets[local_index] = target
+                masks[local_index] = _current_tile(
                     problem, current_contours, current, core_index, core,
                     polygon_ids[core_index],
-                    target, config))
-                ownership_masks.append(ownership_canvas(
-                    core.ownership_box, core.context_box, config.pixel_dbu, config.canvas))
-            target_tensor = torch.as_tensor(np.stack(targets), device=model.device)
-            mask_tensor = torch.as_tensor(np.stack(masks), device=model.device)
-            owned_tensor = torch.as_tensor(np.stack(ownership_masks), device=model.device)
+                    target, config)
+                ownership_masks[local_index] = ownership_canvas(
+                    core.ownership_box, core.context_box, config.pixel_dbu, config.canvas)
+            target_tensor = torch.as_tensor(
+                targets, dtype=torch.float32, device=model.device).div_(255.0)
+            mask_tensor = torch.as_tensor(masks, device=model.device)
+            owned_tensor = torch.as_tensor(ownership_masks, device=model.device)
+            # CUDA tensor 已拥有设备内数据；CPU 模式 tensor 会持有底层 NumPy 引用。
+            # 删除局部名称即可让两种设备都在 batch 末尾按真实依赖及时释放。
+            del targets, masks, ownership_masks
             with torch.no_grad():
                 printed = model(mask_tensor)
                 quality = evaluate_process_window(
@@ -284,7 +297,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
                 if np.any(written[segments]):
                     raise RuntimeError("一个 segment 在同一轮被多个 core 重复写入")
                 written[segments] = True
-                directions = epe.directions.detach().cpu().numpy().astype(np.float64)
+                directions = epe.directions.detach().cpu().numpy()
                 next_values[segments] = np.clip(
                     current[segments] + directions * step,
                     -problem.config.max_displacement_dbu,
@@ -292,6 +305,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
                 total_epe += epe.violation_count
                 total_valid += int(torch.count_nonzero(epe.valid).item())
                 total_ambiguous += int(torch.count_nonzero(epe.ambiguous).item())
+                del epe
             # 只有标量和 owner 方向离开本 batch；四张 B×H×W GPU tensor 在循环
             # 末尾失去引用。`current` 仍未变化，后续 batch 不可能看到已计算的 next。
             del target_tensor, mask_tensor, owned_tensor, printed

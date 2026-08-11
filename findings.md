@@ -225,3 +225,6 @@
 - `layout/writer.py` 反向依赖 `geometry.patch.PatchSet`，`layout/layer.py` 只有一个单调用函数；用户已确认直接移除并把 `PatchWriter` 归入 `geometry`。
 - `benchmarks/benchmark_mbopc_frontend.py` 仍读取已删除的 `segments.edges` 和 `problem.ownership`，小规模直跑会抛 `AttributeError`；需要回归覆盖。
 - 本轮不实现稀疏大 reticle 数据结构。密集 core、全 ROI 物化和 macro 间 segment 身份问题将在独立方案中说明。
+- 正式 CUDA batch=8、256²、20 次中位数对照中，独立 FFT 路径为 25.0241 ms，共享频谱路径为 16.4560 ms，提升 1.5207 倍；两者峰值均为 277,296,128 bytes，最大逐像素误差为 5.82e-7。
+- 修复后的 5,000 图形前端严格基准为 prepare 122.358 ms、materialize 13.097 ms、零位移重建 398.755 ms，110,000 segments 的 XOR 与无 owner 数均为零。
+- `simple.gds` 三轮 CUDA 正式验证保持 EPE 338→203→113，L2 2822.4661→1766.5405→1309.4220，PVBand 388.9287→415.5956→436.1449，owner 更新计数和停止原因未改变。

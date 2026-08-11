@@ -82,10 +82,10 @@ def run_benchmark(shape_count: int = 5_000) -> dict[str, object]:
         },
         "counts": {
             "input_shapes": shape_count,
-            "mathematical_edges": segments.edges.edge_count,
+            "mathematical_edges": len(segments.contours.vertices),
             "segments": segments.segment_count,
-            "cores": len(problem.ownership.cores),
-            "memberships": len(problem.ownership.member_segment_indices),
+            "cores": problem.core_count,
+            "memberships": len(problem.member_segment_indices),
         },
         "timing_ms": {
             "prepare": prepare_seconds * 1000.0,
@@ -102,7 +102,7 @@ def run_benchmark(shape_count: int = 5_000) -> dict[str, object]:
             "zero_displacement_xor_area": xor_area,
             "maximum_segment_length_dbu": float(
                 np.linalg.norm(geometry.ends - geometry.starts, axis=1).max(initial=0.0)),
-            "unowned_segments": int(np.count_nonzero(problem.ownership.owner_indices < 0)),
+            "unowned_segments": int(np.count_nonzero(problem.owner_indices < 0)),
         },
     }
 

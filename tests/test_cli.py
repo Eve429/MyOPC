@@ -46,3 +46,18 @@ def test_png_rejects_ambiguous_multiple_layers(project_root: Path, tmp_path: Pat
                                text=True, encoding="utf-8", check=False)
     assert completed.returncode == 2
     assert "必须且只能选择一个 Layer" in completed.stderr
+
+
+def test_mbopc_frontend_benchmark_uses_current_problem_contract(
+        project_root: Path, tmp_path: Path) -> None:
+    """小规模严格基准应直接运行，防止再次引用已删除的数据结构字段。"""
+    command = [
+        sys.executable, str(project_root / "benchmarks" / "benchmark_mbopc_frontend.py"),
+        "--shapes", "100", "--strict",
+    ]
+    completed = subprocess.run(command, cwd=tmp_path, capture_output=True,
+                               text=True, encoding="utf-8", check=True, timeout=60)
+    result = json.loads(completed.stdout)
+    assert result["counts"]["input_shapes"] == 100
+    assert result["counts"]["segments"] > 0
+    assert result["strict_failures"] == []

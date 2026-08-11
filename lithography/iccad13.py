@@ -164,11 +164,9 @@ class ICCAD13Lithography(nn.Module):
             kernels[None, :kernel_count, :half_height, :half_width])
         return output
 
-    def _aerial(self, mask: torch.Tensor, dose: float, kernels: torch.Tensor,
-                scales: torch.Tensor) -> torch.Tensor:
-        """计算一个剂量/焦距条件下的 Hopkins 部分相干 aerial image。"""
-        complex_mask = (dose * mask).to(torch.complex64).unsqueeze(1)
-        spectrum = torch.fft.fft2(complex_mask, norm="forward")
+    def _aerial_from_spectrum(self, spectrum: torch.Tensor, kernels: torch.Tensor,
+                              scales: torch.Tensor) -> torch.Tensor:
+        """从共享 mask 频谱计算单位剂量下的 Hopkins 部分相干强度。"""
         fields = torch.fft.ifft2(
             self._kernel_multiply(kernels, spectrum, self.config.kernel_count),
             norm="forward")
@@ -213,12 +211,20 @@ class ICCAD13Lithography(nn.Module):
         """执行 mask→aerial image→连续光刻胶的三工艺角前向计算。"""
         squeeze = mask.ndim == 2
         prepared, padding = self._prepare_mask(mask)
-        nominal = self._aerial(
-            prepared, self.config.dose_nominal, self.focus_kernels, self.focus_scales)
-        maximum = self._aerial(
-            prepared, self.config.dose_max, self.focus_kernels, self.focus_scales)
-        minimum = self._aerial(
-            prepared, self.config.dose_min, self.defocus_kernels, self.defocus_scales)
+        # 三个工艺角使用同一个 mask。FFT 是线性变换，剂量乘在振幅上最终使强度
+        # 按 dose² 缩放，因此只需一次 FFT；focus 的单位剂量强度还能同时供 nominal
+        # 和 maximum 使用。这样减少两次大批量 FFT 和一次 focus kernel 传播，同时
+        # 不缓存跨调用张量，反向传播仍沿共享频谱返回原 mask。
+        spectrum = torch.fft.fft2(prepared.to(torch.complex64).unsqueeze(1), norm="forward")
+        focus = self._aerial_from_spectrum(
+            spectrum, self.focus_kernels, self.focus_scales)
+        nominal = focus * (self.config.dose_nominal ** 2)
+        maximum = focus * (self.config.dose_max ** 2)
+        del focus
+        minimum = self._aerial_from_spectrum(
+            spectrum, self.defocus_kernels, self.defocus_scales)
+        minimum = minimum * (self.config.dose_min ** 2)
+        del spectrum
         steepness, density = self.config.print_steepness, self.config.target_density
         nominal = self._restore_size(torch.sigmoid(steepness * (nominal - density)), padding)
         maximum = self._restore_size(torch.sigmoid(steepness * (maximum - density)), padding)

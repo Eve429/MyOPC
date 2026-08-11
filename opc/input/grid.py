@@ -16,6 +16,18 @@ IntArray = NDArray[np.int64]
 Int32Array = NDArray[np.int32]
 
 
+def axis_cuts_by_size(start: int, end: int, tile_dbu: int) -> IntArray:
+    """按固定 DBU 步长生成严格递增切线，并裁短最后一个 tile。"""
+    if end <= start or tile_dbu <= 0:
+        raise ValueError("core 范围和 tile 大小必须为正")
+    count = (end - start + tile_dbu - 1) // tile_dbu
+    # 全轴一次向量化生成，锚点固定为处理框左/下边界；最后一项强制等于范围
+    # 终点，使不足一个 tile 的边缘仍被覆盖且不会产生越界 ownership。
+    cuts = start + np.arange(count + 1, dtype=np.int64) * tile_dbu
+    cuts[-1] = end
+    return cuts
+
+
 @dataclass(frozen=True, slots=True)
 class CoreSpec:
     """一个 core 的唯一输出范围及其包含光学上下文的查询范围。"""

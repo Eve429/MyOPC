@@ -173,3 +173,13 @@ PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改�
 当前聚焦结果为 10 项通过；工作台自身综合 statement/branch coverage 为 74%。未命中主要是三个 CLI 的错误退出、外部工作目录 bootstrap 和低概率损坏归档分支；四个核心接口、两个真实模型成功路径、两种物化前保护和主要损坏输入均已覆盖。详细矩阵与真实数据见 [离线工作台测试报告](offline_workbench_test_report.md)。
 
 本轮完整矩阵、性能和真实版图数据见[代码优化测试报告](code_optimization_test_report.md)。
+
+## 11. 容量预检与资源统计测试
+
+```powershell
+& $python -m pytest tests\opc\test_preflight.py `
+  tests\opc\test_artifacts_cli.py tests\opc\test_mbopc_cli.py -q
+& $python benchmarks\benchmark_layout_geometry.py --runs 5 --raster-size 2048 --strict
+```
+
+必须覆盖：小版图完整扫描、低预算拒绝、百亿 segment 只估算不分配、正式求解预检不加载光刻模型、`skip-artifacts` 不生成大型文件、阶段时间非负和所有内存检查点字段完整。真实 `gcd_45nm` 还需比较预检/实际 segment，检查零位移 XOR、core 缺口和重叠均为 0。当前完整结果见[容量预检测试报告](frontend_preflight_test_report.md)。

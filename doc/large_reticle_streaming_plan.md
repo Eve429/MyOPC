@@ -2,9 +2,9 @@
 
 ## 1. 当前能力与缺口
 
-当前求解器已经做到 GPU 只保存当前 batch 的 core+halo 张量，CPU 保存紧凑全局边段和一维位移；`gcd_45nm` 的 870 core 全流程已验证。但输入阶段仍会一次物化所选完整 ROI，`RectilinearCoreGrid.cores()` 仍展开全部规则 core，最终候选拓扑检查仍遍历全局轮廓。
+当前求解器已经做到 GPU 只保存当前 batch 的 core+halo 张量，CPU 保存紧凑全局边段和一维位移；`gcd_45nm` 的 870 core 全流程已验证。阶段 1 已增加物化前层级容量扫描、`int32`/内存预算拒绝和进程内存检查点，但通过预检后仍会一次物化所选完整 ROI，`RectilinearCoreGrid.cores()` 仍展开全部规则 core，最终候选拓扑检查仍遍历全局轮廓。
 
-因此当前实现适合内存能容纳完整物理 Region 和边段数组的 reticle，不应宣称已经覆盖任意超大、极稀疏整版。24 GiB GPU 不是主要限制；真正的上界通常是 CPU 上完整 ROI Region、全局 segment/membership 和每轮全局重建。
+因此当前实现适合预检通过且内存能容纳完整物理 Region 和边段数组的 reticle，不应宣称已经覆盖任意超大、极稀疏整版。24 GiB GPU 不是主要限制；真正的上界通常是 CPU 上完整 ROI Region、全局 segment/membership 和每轮全局重建。超限时当前只安全拒绝，以下 macro/shard 仍是未实施阶段 2。
 
 ## 2. 目标不变量
 

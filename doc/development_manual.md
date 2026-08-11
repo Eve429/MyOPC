@@ -136,10 +136,26 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 像素归档只对应一个可直接送入模型的 canvas，超限 ROI 必须缩小，不隐式切 tile。边段归档是可恢复的 version 2 输入协议，保存两级 contour CSR、两个 edge cache、segment 数组、grid cuts 和 membership CSR；version 1 明确提示重新生成，不保留转换分支。它与 `opc.diagnostics.save_problem_npz` 的不可恢复 v3 诊断快照完全分离。
 
-准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检有意额外读取一次版图：第一次只扫描并拒绝危险输入，第二次才通过现有 `LayoutDB` 公共接口物化。布尔合并可能产生的新交点无法在物化前完全预测，因此准备完成后还会按真实 segment/membership 数量复核内存估计。
+准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检有意额外读取一次版图：公共 `LayoutDB` 第一次读取只解析 Layer/ROI/DBU 并保持打开，独立原生读取扫描层级复杂度；只有扫描通过，才由已打开的 `LayoutDB` 公共查询物化。布尔合并可能产生的新交点无法在物化前完全预测，因此离线边段准备完成后还会按真实 segment/membership 数量复核内存估计。
 
 `tests/workbench/run_lithography.py` 只消费像素归档，输出三工艺角连续数组和可选 PNG；`tests/workbench/run_mbopc_iteration.py` 只消费边段归档，输出最佳位移、迭代 JSON、GDS 和可选标注图。两个入口均可从任意工作目录直接运行，不需要安装本项目。
 
 详细字段、内存边界和设计审计见 [离线工作台开发报告](offline_workbench_development_report.md)。
 
 本轮函数与内存收敛见[代码优化开发报告](code_optimization_development_report.md)；尚未实施的大 reticle 稀疏/macro 路径见[独立开发方案](large_reticle_streaming_plan.md)。
+
+## 10. 物化前容量预检与资源统计
+
+真实版图根入口必须先调用 `preflight_layout(source, top_cell, layer, box, ...)`，通过后才能调用 `ShapeQuery.materialize()`。默认 CPU 预算是启动时系统可用内存的 70%；显式 `--memory-budget-gib` 只改变本次任务预算。超过预算或 `int32` 容量时返回 `sharded_required`，当前版本不会尝试继续分配。
+
+```powershell
+# 只做完整层级容量扫描，不物化 Region/边段
+python run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
+  --tile-size-nm 1024 --halo-nm 512 --preflight-only --json
+
+# 完成前端几何验证，但跳过大 NPZ/GDS/PNG
+python run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
+  --tile-size-nm 1024 --halo-nm 512 --skip-artifacts --json
+```
+
+摘要 `memory_checkpoints` 使用进程 RSS/USS/private/peak working set，能覆盖 NumPy 与 KLayout 原生内存；`memory.problem_persistent_bytes` 只统计 problem 自有 NumPy 数组，两者不能混为同一指标。详细设计见[容量预检开发报告](frontend_preflight_development_report.md)。

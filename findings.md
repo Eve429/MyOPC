@@ -239,3 +239,8 @@
 - `opc.input.types` 与 `opc.input.edge.types` 存在完全重复的 `_vector`；数组形状/类型校验应集中到输入层私有 `_arrays.py`，已有多个现实调用方。
 - 当前前端在预检前构造完整 Region 和 `MBOPCProblem`，且每个 core 全局扫描 owner、全局物化参考/移动端点与 probes、默认输出全量 NPZ/GDS/PNG；百亿边段会在 `int32` 索引与总体近 TiB 状态下不可运行。
 - 阶段 1 只实现物化前容量预检与安全拒绝，不实现 CPU macro 或磁盘 shard；默认内存预算使用启动时可用内存的 70%。
+- `gcd_45nm` 预检 segment 与实际值同为 223,553；membership 采用数学边 bbox 上界得到 1,167,992，实际为 880,801，符合“拒绝保护可高估、不能低估”的目标。
+- `gcd_45nm` 跳过产物的完整前端 peak working set 为 148,467,712 bytes，显著低于 73,809,488-byte prepare 估算与进程基础内存之和所给出的安全量级；估算不作为精确计费值。
+- 2048² raster 公共底层复用后为 416.94 ms、RSS 增量 7.62 MiB，覆盖率精确；相比最近 483–502 ms 项目基线无退化。
+- 当前结构已无第一方旧深层 types 导入；`_arrays.py` 仅含三种有多个现实调用方的数组校验，不承担无边界的通用工具职责。
+- 最终重复实现审计发现固定 tile cuts 在三个当前入口完全相同；已归入 `grid.axis_cuts_by_size` 并删除三个本地版本。数量均分 `_axis_cuts` 只服务 frontend 的另一种 CLI 语义，继续保留。

@@ -34,6 +34,7 @@ from opc.input.edge import (
     prepare_problem,
     reconstruct_region,
 )
+from opc.input.grid import axis_cuts_by_size
 
 
 def parse_layer(value: str) -> LayerSpec:
@@ -108,21 +109,6 @@ def _axis_cuts(start: int, end: int, count: int) -> np.ndarray:
     return cuts
 
 
-def _axis_cuts_by_size(start: int, end: int, tile_size_dbu: int) -> np.ndarray:
-    """按固定 DBU 步长生成轴向 cuts，并把最后一个 tile 裁到范围终点。"""
-    if end <= start:
-        raise ValueError("core grid range must be positive")
-    if tile_size_dbu <= 0:
-        raise ValueError("tile size must be at least one DBU")
-    tile_count = (end - start + tile_size_dbu - 1) // tile_size_dbu
-    # cuts 直接用 NumPy 批量生成，不按 tile 执行 Python 循环。锚点始终是本次
-    # 处理框的左/下边界；最后一个 cut 强制等于右/上边界，因此不会越过 ROI，
-    # 也不会因版图尺寸不是 tile 整数倍而丢失最外侧窄条区域。
-    cuts = start + np.arange(tile_count + 1, dtype=np.int64) * tile_size_dbu
-    cuts[-1] = end
-    return cuts
-
-
 def _select_database_input(args: argparse.Namespace,
                            database: LayoutDB) -> tuple[LayerSpec, DbuBox, float]:
     """在不物化图形的前提下选择真实版图 Layer、范围和 DBU。"""
@@ -158,8 +144,8 @@ def _problem_configuration(
         tile_size_dbu = round(args.tile_size_nm / dbu_nm)
         if tile_size_dbu <= 0:
             raise ValueError("tile-size-nm is smaller than one layout DBU")
-        x_cuts = _axis_cuts_by_size(box.left, box.right, tile_size_dbu)
-        y_cuts = _axis_cuts_by_size(box.bottom, box.top, tile_size_dbu)
+        x_cuts = axis_cuts_by_size(box.left, box.right, tile_size_dbu)
+        y_cuts = axis_cuts_by_size(box.bottom, box.top, tile_size_dbu)
     grid = RectilinearCoreGrid(
         x_cuts, y_cuts, round(args.halo_nm / dbu_nm))
     config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,

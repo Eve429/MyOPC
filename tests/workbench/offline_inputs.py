@@ -32,6 +32,7 @@ from opc.input.edge import (
     SegmentBatch,
     prepare_problem,
 )
+from opc.input.grid import axis_cuts_by_size
 from opc.input.preflight import estimate_prepare_peak_bytes
 from opc.input.raster import rasterize_region_canvas
 
@@ -74,16 +75,6 @@ def _exact_dbu(value_nm: float, dbu_nm: float, name: str,
             not np.isclose(raw, rounded, atol=1e-9, rtol=0.0)):
         raise ValueError(f"{name}={value_nm} nm 不能由当前 {dbu_nm} nm/DBU 精确表达")
     return int(rounded)
-
-
-def _axis_cuts(start: int, end: int, tile_dbu: int) -> np.ndarray:
-    """按固定物理长度生成严格递增的 core 切线。"""
-    if end <= start or tile_dbu <= 0:
-        raise ValueError("core 范围和 tile 大小必须为正")
-    count = (end - start + tile_dbu - 1) // tile_dbu
-    cuts = start + np.arange(count + 1, dtype=np.int64) * tile_dbu
-    cuts[-1] = end
-    return cuts
 
 
 def _normalize_box(box: DbuBox | tuple[int, int, int, int] | None,
@@ -321,8 +312,8 @@ def prepare_segment_input(
             float(_exact_dbu(
                 max_displacement_nm, dbu_nm, "max_displacement_nm", allow_zero=True)))
         grid = RectilinearCoreGrid(
-            _axis_cuts(selected_box.left, selected_box.right, tile_dbu),
-            _axis_cuts(selected_box.bottom, selected_box.top, tile_dbu), halo_dbu)
+            axis_cuts_by_size(selected_box.left, selected_box.right, tile_dbu),
+            axis_cuts_by_size(selected_box.bottom, selected_box.top, tile_dbu), halo_dbu)
         selected_top = database.top_cell.name
         preflight = preflight_layout(
             source, top_cell=selected_top, layer=selected_layer, box=selected_box,

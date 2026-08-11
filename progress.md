@@ -200,3 +200,15 @@
 - 阶段 44–46 聚焦回归 28 项通过；随后 Ruff、compileall 和全仓库 141 项测试通过。
 - `gcd_45nm` 真实只预检通过：1,776 occurrences、21,590 顶点、223,553 估算边段、1,167,992 membership 上界，准备峰值估算 73,809,488 bytes；未物化 Region 或 SegmentBatch。
 - 首次 raster 基准误传脚本不存在的 `--json`，未执行任何基准或修改；已记录并按真实参数重跑。
+- 2048² 严格 raster 基准通过：416.94 ms、RSS 增量 7.62 MiB、覆盖精确、零 strict failure。
+- `gcd_45nm` 完整前端跳过产物验证通过：prepare 212.72 ms、总耗时 1.226 s、peak working set 148,467,712 bytes，全部几何校验为 0。
+- 已创建本地代码里程碑 `3963a12`，包含结构收敛、生产 preflight、两个根入口保护、141 项回归；未推送远端，layout/TestReticle 未修改。
+- 已同步开发手册、测试手册、调用关系、项目手册和大 reticle 方案，并新增容量预检专项开发/测试报告；阶段 2 明确保持未实施。
+- 首次复合审计编排因 JavaScript 模板字符串内含 Markdown 反引号而未执行任何命令；已记录，后续拆分并使用普通字符串。
+- 中文 docstring 审计覆盖 72 个第一方 Python 文件，模块和函数缺失均为 0；旧 types/重复校验符号生产搜索无命中。
+- 首次 Markdown 审计发现调用关系文档两个旧源码链接，已改为 grid/fragmentation/preflight，并同步修正项目开发手册中四处旧类型文件职责。
+- 最终重复函数审计把三个固定物理 tile cuts 实现收敛为 `grid.axis_cuts_by_size`；没有继续泛化语义不同的数量均分或 CLI 参数流程。
+- cuts 收敛后聚焦 28 项继续通过；Ruff 仅报告两个根入口的第一方导入顺序，已手工调整且未运行 formatter。
+- 最终 Ruff、compileall 和全仓库 141 项测试再次通过（25.69 s）；Geometry/OPC 聚焦 108 项综合 branch coverage 92%。
+- 最终静态审计通过：72 个第一方 Python 文件中文模块/函数 docstring 无缺失；旧 types 路径、重复 `_vector/_matrix/_points` 和三份 tile cuts 均无残留；25 份 doc Markdown 无断链或围栏错误。
+- 阶段 44–47 全部完成，待创建文档/最终精简里程碑提交；阶段 2 保持未实施。

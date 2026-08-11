@@ -22,8 +22,9 @@ flowchart TD
 
 - [完整入口](../run_mbopc.py)
 - [前端验证入口](../run_mbopc_frontend.py)
-- [共享输入类型](../opc/input/types.py)
-- [边段类型](../opc/input/edge/types.py)
+- [共享 core 网格](../opc/input/grid.py)
+- [边段切分与数据契约](../opc/input/edge/fragmentation.py)
+- [容量预检](../opc/input/preflight.py)
 - [输入构造](../opc/input/edge/builder.py)
 - [MB-OPC 求解器](../opc/iteration/mbopc/solver.py)
 - [诊断输出](../opc/diagnostics.py)
@@ -183,8 +184,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[run_mbopc_frontend.run] --> B[合成 Region 或真实 GDS ROI]
-    B --> C[prepare_problem]
+    A[run_mbopc_frontend.run] --> B[真实 GDS 元数据]
+    B --> P[preflight_layout]
+    P -->|拒绝/只预检| R[summary.json]
+    P -->|通过| C0[ShapeQuery.materialize]
+    A --> S[合成 Region]
+    C0 --> C[prepare_problem]
+    S --> C
     C --> D[_demo_displacements]
     D --> E[materialize + edge_probe_points]
     D --> F[reconstruct_region]
@@ -194,7 +200,7 @@ flowchart TD
     F --> J[summary.json]
 ```
 
-`_demo_displacements` 直接生成全局下标对齐向量，用唯一 owner 选择演示移动，不模拟已经删除的外部提交协议。NPZ 只服务显式人工验证，字段按相同全局顺序对齐且不含稳定 key。
+`preflight_layout` 只扫描层级 occurrence 并返回普通字典，不产生第二种 problem。`_demo_displacements` 从每个 core 的 membership CSR 过滤唯一 owner，不再对每个 core 扫描全局 owner。NPZ 只服务显式人工验证，字段按相同全局顺序对齐且不含稳定 key。
 
 ## 9. 输出与诊断边界
 

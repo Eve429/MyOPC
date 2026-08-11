@@ -30,6 +30,7 @@ from opc.input.edge import (
     prepare_problem,
     reconstruct_region,
 )
+from opc.input.grid import axis_cuts_by_size
 from opc.iteration.mbopc import SimpleMBOPCConfig, optimize
 
 
@@ -106,16 +107,6 @@ def _exact_dbu(value_nm: float, dbu_nm: float, name: str,
     return int(rounded)
 
 
-def _axis_cuts(start: int, end: int, tile_dbu: int) -> np.ndarray:
-    """按固定物理边长生成 cuts，并仅把末端不足部分裁短。"""
-    if end <= start or tile_dbu <= 0:
-        raise ValueError("core 范围和 tile 大小必须为正")
-    count = (end - start + tile_dbu - 1) // tile_dbu
-    cuts = start + np.arange(count + 1, dtype=np.int64) * tile_dbu
-    cuts[-1] = end
-    return cuts
-
-
 def _select_layer(database: LayoutDB, requested: LayerSpec | None) -> LayerSpec:
     """选择显式目标层，或在版图仅有一个层时自动选择。"""
     layers = database.layers()
@@ -162,8 +153,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if tile_dbu % pixel_dbu or halo_dbu % pixel_dbu:
             raise ValueError("tile-size-nm 和 halo-nm 必须是 pixel-nm 的整数倍")
         grid = RectilinearCoreGrid(
-            _axis_cuts(box.left, box.right, tile_dbu),
-            _axis_cuts(box.bottom, box.top, tile_dbu), halo_dbu)
+            axis_cuts_by_size(box.left, box.right, tile_dbu),
+            axis_cuts_by_size(box.bottom, box.top, tile_dbu), halo_dbu)
         fragmentation = FragmentationConfig(
             args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
             args.max_displacement_nm / dbu_nm)

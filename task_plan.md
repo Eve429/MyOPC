@@ -204,10 +204,10 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 
 | 阶段 | 状态 | 内容 |
 |---|---|---|
-| 44 | 进行中 | 合并 raster 底层覆盖率实现，选择性归位类型与数组校验辅助函数 |
-| 45 | 待开始 | 将层级复杂度预检提升为生产接口，并接入两个 MB-OPC 根入口 |
-| 46 | 待开始 | 为前端增加关键阶段时间、进程内存和产物跳过统计 |
-| 47 | 待开始 | 聚焦/全量/真实版图验证，文档、简化审计与本地关键提交 |
+| 44 | 已完成 | 合并 raster 底层覆盖率实现，选择性归位类型与数组校验辅助函数 |
+| 45 | 已完成 | 将层级复杂度预检提升为生产接口，并接入两个 MB-OPC 根入口 |
+| 46 | 已完成 | 为前端增加关键阶段时间、进程内存和产物跳过统计 |
+| 47 | 已完成 | 聚焦/全量/真实版图验证，文档、简化审计与本地关键提交 |
 
 ## 本轮新增错误记录
 
@@ -223,5 +223,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 首轮聚焦 Ruff 报告导入顺序、类型注解和默认 dtype 共 9 项 | 1 | 手工整理短导入块、恢复注解导入并把 dtype 提升为模块常量；未运行 formatter |
 | 离线保护测试把“物化前拒绝”耦合为“不得调用 LayoutDB.open” | 1 | 保留先读元数据再预检的正确流程；回归改为禁止 `ShapeQuery.materialize`，直接验证真实内存边界 |
 | 首次 raster 基准命令误传不存在的 `--json` 参数 | 1 | 基准未执行且未修改文件；按脚本真实 CLI 去掉该参数重新运行 |
+| 复合审计脚本的 JavaScript 模板字符串包含 Markdown 反引号 | 1 | 工具在执行 shell 前即语法失败；改用普通字符串并拆分审计命令 |
+| Markdown 链接审计发现调用关系文档仍链接两个已删除 types 文件 | 1 | 更新为 grid/fragmentation/preflight 实际源码；同步修正项目手册全部旧文件职责 |
+| cuts 收敛后的两个根入口导入顺序不符合 Ruff | 1 | 手工把 `opc.input.edge` 放在 `opc.input.grid` 前；28 项功能回归同期已通过 |
 | 新增基准 CLI 回归使用 10 图形/64 core 导致 halo 比例失真 | 1 | 改为仍可快速执行的 100 图形，并保留严格门槛验证 |
 | 把只读 GDS 验证与递归临时清理组合后被安全策略拒绝 | 2 | 验证已拆分并通过；不绕过策略，临时目录留给系统回收且不在工作树内 |

@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 import run_mbopc_frontend as frontend
-from run_mbopc_frontend import _axis_cuts_by_size, build_parser, run
+from opc.input.grid import axis_cuts_by_size
+from run_mbopc_frontend import build_parser, run
 from tests.fixtures.layout_factory import write_advanced_layout
 
 
@@ -86,7 +87,7 @@ def test_runner_prepares_real_hierarchical_input_before_database_close(tmp_path:
 
 def test_physical_tile_size_uses_fixed_step_and_clips_last_tiles(tmp_path: Path) -> None:
     """固定 nm 边长应从处理框起点切分，且末列末行不得越过范围。"""
-    np.testing.assert_array_equal(_axis_cuts_by_size(11, 36, 10), [11, 21, 31, 36])
+    np.testing.assert_array_equal(axis_cuts_by_size(11, 36, 10), [11, 21, 31, 36])
     args = build_parser().parse_args([
         "--tile-size-nm", "100", "--output-dir", str(tmp_path),
         "--skip-geometry-suite",

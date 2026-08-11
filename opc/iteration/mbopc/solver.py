@@ -9,7 +9,7 @@ import klayout.db as kdb
 import numpy as np
 import torch
 
-from evaluation import evaluate_edge_probes, evaluate_process_window
+from evaluation import evaluate_binary_l2, evaluate_edge_probes, evaluate_pvband
 from geometry import ContourBatch, contours_to_region
 from lithography import ICCAD13Lithography
 from opc.errors import ReconstructionError
@@ -222,8 +222,11 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
     # 参考 ring 绕向在普通迭代中永不变化，只计算一次；候选每轮只生成自身面积，
     # 避免对整张 reticle 的固定顶点重复做叉积归约。
     reference_topology_areas = _ring_signed_areas2(problem.segments.contours)
+    nominal_condition = model.condition("nominal")
+    maximum_condition = model.condition("dose_max")
+    minimum_condition = model.condition("defocus_min")
     best_displacements = current.copy()
-    best_score: tuple[int, float, float] | None = None
+    best_epe: int | None = None
     best_iteration = 0
     records: list[IterationRecord] = []
     stop_reason = "iteration_limit"
@@ -232,7 +235,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
         step = config.initial_step_dbu * (0.5 ** (iteration // config.decay_every))
         next_values = current.copy()
         written = np.zeros(problem.segments.segment_count, dtype=np.bool_)
-        total_l2 = total_pvb = 0.0
+        total_l2 = total_pvb = 0
         total_epe = total_valid = total_ambiguous = 0
         for batch_start in range(0, len(cores), config.batch_size):
             batch_indices = list(range(batch_start, min(len(cores), batch_start + config.batch_size)))
@@ -262,12 +265,15 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
             # 删除局部名称即可让两种设备都在 batch 末尾按真实依赖及时释放。
             del targets, masks, ownership_masks
             with torch.no_grad():
-                printed = model(mask_tensor)
-                quality = evaluate_process_window(
-                    target_tensor, printed.nominal, printed.maximum, printed.minimum,
-                    owned_tensor)
-            total_l2 += quality.l2
-            total_pvb += quality.pvband
+                printed = model.forward_many(
+                    mask_tensor,
+                    (nominal_condition, maximum_condition, minimum_condition))
+                total_l2 += evaluate_binary_l2(
+                    target_tensor, printed["nominal"],
+                    model.config.print_threshold, owned_tensor)
+                total_pvb += evaluate_pvband(
+                    printed["dose_max"], printed["defocus_min"],
+                    model.config.print_threshold, owned_tensor)
             probe_batches: list[np.ndarray] = []
             probe_inner: list[np.ndarray] = []
             probe_outer: list[np.ndarray] = []
@@ -288,7 +294,7 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
             if probe_segments:
                 with torch.no_grad():
                     epe = evaluate_edge_probes(
-                        target_tensor, printed.nominal,
+                        target_tensor, printed["nominal"],
                         torch.as_tensor(np.concatenate(probe_batches), device=model.device),
                         torch.as_tensor(np.concatenate(probe_inner), device=model.device),
                         torch.as_tensor(np.concatenate(probe_outer), device=model.device),
@@ -309,9 +315,10 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
             # 只有标量和 owner 方向离开本 batch；四张 B×H×W GPU tensor 在循环
             # 末尾失去引用。`current` 仍未变化，后续 batch 不可能看到已计算的 next。
             del target_tensor, mask_tensor, owned_tensor, printed
-        score = (total_epe, total_l2, total_pvb)
-        if best_score is None or score < best_score:
-            best_score = score
+        # L2/PVBand 只作为工艺诊断输出，不能改变 EPE 驱动方法的最佳轮次选择；
+        # EPE 相同保留更早状态，避免非驱动指标暗中改变最终几何。
+        if best_epe is None or total_epe < best_epe:
+            best_epe = total_epe
             best_displacements = current.copy()
             best_iteration = iteration
         moved = int(np.count_nonzero(~np.isclose(next_values, current, atol=1e-12, rtol=0.0)))

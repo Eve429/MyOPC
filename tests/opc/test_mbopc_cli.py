@@ -8,7 +8,7 @@ from pathlib import Path
 import klayout.db as kdb
 import pytest
 
-from run_mbopc import build_parser, run
+from main.run_mbopc import build_parser, run
 
 
 def _write_single_layer_layout(path: Path) -> Path:
@@ -30,7 +30,7 @@ def test_direct_mbopc_runner_works_outside_repository_and_writes_results(
     source = _write_single_layer_layout(tmp_path / "single.gds")
     output = tmp_path / "result"
     command = [
-        sys.executable, str(project_root / "run_mbopc.py"), str(source),
+        sys.executable, str(project_root / "main" / "run_mbopc.py"), str(source),
         "--box", "0", "0", "256", "256", "--tile-size-nm", "256",
         "--halo-nm", "0", "--pixel-nm", "1", "--iterations", "1",
         "--batch-size", "1", "--device", "cpu", "--output-dir", str(output), "--json",
@@ -73,7 +73,7 @@ def test_solver_preflight_only_does_not_load_lithography_model(
         """若预检路径错误进入光刻模型构造，就让回归明确失败。"""
         raise AssertionError("preflight-only 不应加载光刻模型")
 
-    monkeypatch.setattr("run_mbopc.ICCAD13Lithography", forbidden_model)
+    monkeypatch.setattr("main.run_mbopc.ICCAD13Lithography", forbidden_model)
     args = build_parser().parse_args([
         str(source), "--box", "0", "0", "256", "256",
         "--tile-size-nm", "256", "--halo-nm", "0", "--pixel-nm", "1",

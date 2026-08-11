@@ -10,7 +10,7 @@ from tests.fixtures.layout_factory import write_advanced_layout
 
 def test_direct_python_entry_reads_and_exports(project_root: Path, tmp_path: Path) -> None:
     """从仓库外工作目录直接运行脚本，并完成查询、数组转换和 Patch 输出。"""
-    script = project_root / "run_layout_geometry.py"
+    script = project_root / "main" / "run_layout_geometry.py"
     source = write_advanced_layout(tmp_path / "advanced.gds")
     output = tmp_path / "cli_patch.gds"
     image = tmp_path / "cli_roi.png"
@@ -39,7 +39,7 @@ def test_png_rejects_ambiguous_multiple_layers(project_root: Path, tmp_path: Pat
     """未明确单 Layer 时，PNG 模式应返回简洁错误而不是猜测混色规则。"""
     source = write_advanced_layout(tmp_path / "advanced.gds")
     command = [
-        sys.executable, str(project_root / "run_layout_geometry.py"), str(source),
+        sys.executable, str(project_root / "main" / "run_layout_geometry.py"), str(source),
         "--png", str(tmp_path / "ambiguous.png"),
     ]
     completed = subprocess.run(command, cwd=tmp_path, capture_output=True,

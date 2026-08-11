@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from lithography import ICCAD13Config, ICCAD13Lithography
+from lithography import ICCAD13Config, ICCAD13Lithography, ProcessCondition
 
 
 def _model_mask(height: int = 200, width: int = 150) -> torch.Tensor:
@@ -65,18 +65,22 @@ def test_cpu_forward_supports_batch_and_matches_single_images() -> None:
     """CPU batch 输出应保持输入尺寸、连续范围并与逐张仿真一致。"""
     model = ICCAD13Lithography(device="cpu")
     mask = _model_mask()
+    conditions = tuple(model.condition(name) for name in (
+        "nominal", "dose_max", "defocus_min"))
     with torch.no_grad():
-        batch = model(mask)
-        first = model(mask[0])
-    assert batch.nominal.shape == mask.shape
-    assert torch.all((batch.minimum >= 0.0) & (batch.maximum <= 1.0))
-    torch.testing.assert_close(batch.nominal[0], first.nominal, rtol=0.0, atol=1e-6)
-    torch.testing.assert_close(batch.maximum[0], first.maximum, rtol=0.0, atol=1e-6)
-    torch.testing.assert_close(batch.minimum[0], first.minimum, rtol=0.0, atol=1e-6)
+        batch = model.forward_many(mask, conditions)
+        first = {condition.name: model(mask[0], condition) for condition in conditions}
+    assert batch["nominal"].shape == mask.shape
+    assert torch.all((batch["defocus_min"] >= 0.0) & (batch["dose_max"] <= 1.0))
+    for condition in conditions:
+        torch.testing.assert_close(
+            batch[condition.name][0], first[condition.name], rtol=0.0, atol=1e-6)
     # 这些基线来自同一资产上的 OpenILT `opc/iccad13.py`，200×150 输入避开其
     # 满 canvas 时错误返回原 mask 的 unpad 分支；三工艺角逐像素最大差实测为 0。
     expected_sums = torch.tensor([25802.533203125, 26009.16796875, 25675.23828125])
-    actual_sums = torch.stack((batch.nominal.sum(), batch.maximum.sum(), batch.minimum.sum()))
+    actual_sums = torch.stack((
+        batch["nominal"].sum(), batch["dose_max"].sum(),
+        batch["defocus_min"].sum()))
     torch.testing.assert_close(actual_sums, expected_sums, rtol=0.0, atol=0.05)
 
 
@@ -86,9 +90,9 @@ def test_full_canvas_runs_lithography_instead_of_returning_input() -> None:
     mask = torch.zeros((256, 256), dtype=torch.float32)
     mask[80:176, 96:160] = 1.0
     with torch.no_grad():
-        result = model(mask)
-    assert not torch.equal(result.nominal, mask)
-    assert torch.any((result.nominal > 0.0) & (result.nominal < 1.0))
+        result = model(mask, model.condition("nominal"))
+    assert not torch.equal(result, mask)
+    assert torch.any((result > 0.0) & (result < 1.0))
 
 
 def test_shared_spectrum_matches_independent_fft_reference() -> None:
@@ -97,8 +101,10 @@ def test_shared_spectrum_matches_independent_fft_reference() -> None:
     mask = _model_mask(72, 64)[:1]
     prepared, padding = model._prepare_mask(mask)
     steepness, density = model.config.print_steepness, model.config.target_density
+    conditions = tuple(model.condition(name) for name in (
+        "nominal", "dose_max", "defocus_min"))
     with torch.no_grad():
-        result = model(mask)
+        result = model.forward_many(mask, conditions)
         aerials = (
             _legacy_aerial(model, prepared, model.config.dose_nominal,
                            model.focus_kernels, model.focus_scales),
@@ -110,7 +116,8 @@ def test_shared_spectrum_matches_independent_fft_reference() -> None:
         reference = tuple(model._restore_size(
             torch.sigmoid(steepness * (aerial - density)), padding) for aerial in aerials)
     for actual, expected in zip(
-            (result.nominal, result.maximum, result.minimum), reference, strict=True):
+            (result["nominal"], result["dose_max"], result["defocus_min"]),
+            reference, strict=True):
         assert torch.max(torch.abs(actual - expected)).item() <= 5e-6
 
 
@@ -118,12 +125,48 @@ def test_shared_spectrum_preserves_mask_gradient() -> None:
     """共享中间量后标称与工艺窗损失仍应向输入 mask 传播有限非零梯度。"""
     model = ICCAD13Lithography(device="cpu")
     mask = _model_mask(64, 64)[:1].clone().requires_grad_()
-    result = model(mask)
-    loss = result.nominal.mean() + result.maximum.mean() - result.minimum.mean()
+    result = model.forward_many(mask, tuple(model.condition(name) for name in (
+        "nominal", "dose_max", "defocus_min")))
+    loss = result["nominal"].mean() + result["dose_max"].mean() - result["defocus_min"].mean()
     loss.backward()
     assert mask.grad is not None
     assert torch.all(torch.isfinite(mask.grad))
     assert torch.count_nonzero(mask.grad).item() > 0
+
+
+def test_autograd_matches_nonuniform_finite_difference() -> None:
+    """非均匀上游梯度下的 autograd 必须与中心有限差分一致。"""
+    model = ICCAD13Lithography(device="cpu")
+    generator = torch.Generator().manual_seed(20260811)
+    mask = torch.rand((20, 18), generator=generator, dtype=torch.float32).requires_grad_()
+    weights = torch.linspace(-0.7, 1.3, mask.numel(), dtype=torch.float32).reshape_as(mask)
+    condition = ProcessCondition("focus_101", "focus", 1.01)
+    loss = torch.sum(model(mask, condition) * weights)
+    loss.backward()
+    assert mask.grad is not None
+    y, x, epsilon = 9, 8, 1e-3
+    with torch.no_grad():
+        plus, minus = mask.detach().clone(), mask.detach().clone()
+        plus[y, x] += epsilon
+        minus[y, x] -= epsilon
+        numerical = (torch.sum(model(plus, condition) * weights) -
+                     torch.sum(model(minus, condition) * weights)) / (2.0 * epsilon)
+    torch.testing.assert_close(mask.grad[y, x], numerical, rtol=2e-2, atol=2e-2)
+
+
+def test_conditions_are_independent_and_names_are_unique() -> None:
+    """调用方应能单独组合条件，重复结果名称和未知默认名必须显式拒绝。"""
+    model = ICCAD13Lithography(device="cpu")
+    mask = _model_mask(32, 28)[0]
+    custom = ProcessCondition("custom", "defocus", 1.02)
+    with torch.no_grad():
+        output = model.forward_many(mask, (custom,))
+    assert set(output) == {"custom"}
+    assert output["custom"].shape == mask.shape
+    with pytest.raises(ValueError, match="名称不能重复"):
+        model.forward_many(mask, (custom, custom))
+    with pytest.raises(ValueError, match="未知默认工艺条件"):
+        model.condition("unknown")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="当前环境没有 CUDA")
@@ -133,8 +176,8 @@ def test_direct_environment_python_loads_cuda_runtime(project_root: Path,
     code = (
         "import json,torch; from lithography import ICCAD13Lithography; "
         "m=ICCAD13Lithography(device='cuda'); x=torch.zeros((1,64,64),device='cuda'); "
-        "y=m(x); torch.cuda.synchronize(); "
-        "print(json.dumps({'shape':list(y.nominal.shape),'device':str(y.nominal.device)}))"
+        "y=m(x,m.condition('nominal')); torch.cuda.synchronize(); "
+        "print(json.dumps({'shape':list(y.shape),'device':str(y.device)}))"
     )
     completed = subprocess.run(
         [sys.executable, "-c", code], cwd=project_root, capture_output=True,
@@ -146,7 +189,8 @@ def test_direct_environment_python_loads_cuda_runtime(project_root: Path,
 def test_model_rejects_invalid_shape_and_oversized_mask() -> None:
     """非图像张量和超过固定 canvas 的输入必须在分配频域中间量前拒绝。"""
     model = ICCAD13Lithography(device="cpu")
+    condition = model.condition("nominal")
     with pytest.raises(ValueError, match="形状"):
-        model(torch.zeros((1, 1, 2, 2)))
+        model(torch.zeros((1, 1, 2, 2)), condition)
     with pytest.raises(ValueError, match="超过 canvas"):
-        model(torch.zeros((257, 256)))
+        model(torch.zeros((257, 256)), condition)

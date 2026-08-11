@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from PIL import Image
 
 # 这些脚本明确要求能从任意工作目录直接执行。Python 直接运行深层脚本时只把
 # 当前文件目录加入 sys.path，因此按文件位置加入仓库根；这不是安装包，也不会
 # 修改用户环境。后续第一方导入仍走项目正常公共接口。
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -142,6 +143,23 @@ def _atomic_json(path: str | Path, value: dict[str, Any]) -> Path:
     temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
     try:
         temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return output
+
+
+def _atomic_png(path: str | Path, values: np.ndarray) -> Path:
+    """原子保存左下原点的零到一数组为顶部原点八位灰度 PNG。"""
+    output = Path(path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
+    # PNG 仅是显式请求的诊断产物；在写盘边界才执行裁剪、量化和纵轴翻转，
+    # 不让图片坐标或 uint8 表示回流到模型与优化器的数值路径。
+    image = np.flipud(np.rint(np.clip(values, 0.0, 1.0) * 255.0).astype(np.uint8))
+    try:
+        Image.fromarray(np.ascontiguousarray(image), mode="L").save(
+            temporary, format="PNG")
         os.replace(temporary, output)
     finally:
         temporary.unlink(missing_ok=True)

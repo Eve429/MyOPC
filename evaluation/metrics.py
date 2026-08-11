@@ -1,18 +1,12 @@
-"""向量化计算工艺窗口质量指标和基于边段探针的 EPE。"""
+"""计算二值 L2、PVBand、边段 EPE 和确定性矩形 shot 估计。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import torch
-
-
-@dataclass(frozen=True, slots=True)
-class QualityMetrics:
-    """保存 ownership 像素范围内的 L2 和 PVBand。"""
-
-    l2: float
-    pvband: float
+from torch.nn import functional
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,24 +36,67 @@ def _aligned_images(*images: torch.Tensor) -> tuple[torch.Tensor, ...]:
     return normalized
 
 
-def evaluate_process_window(target: torch.Tensor, nominal: torch.Tensor,
-                            maximum: torch.Tensor, minimum: torch.Tensor,
-                            ownership_mask: torch.Tensor | None = None) -> QualityMetrics:
-    """只在唯一 ownership 像素上累计连续 L2 和 PVBand。"""
-    target, nominal, maximum, minimum = _aligned_images(target, nominal, maximum, minimum)
+def _selected_pixels(reference: torch.Tensor,
+                     ownership_mask: torch.Tensor | None) -> torch.Tensor:
+    """构造与评价图同形的布尔选择区，只让唯一 core 统计边界像素。"""
     if ownership_mask is None:
-        selected = torch.ones_like(target, dtype=torch.bool)
+        return torch.ones_like(reference, dtype=torch.bool)
+    selected = ownership_mask.unsqueeze(0) if ownership_mask.ndim == 2 else ownership_mask
+    if selected.shape != reference.shape or selected.device != reference.device:
+        raise ValueError("ownership_mask 必须与评价图像形状和设备一致")
+    return selected.to(torch.bool)
+
+
+def evaluate_binary_l2(target: torch.Tensor, nominal: torch.Tensor,
+                       threshold: float = 0.5,
+                       ownership_mask: torch.Tensor | None = None) -> int:
+    """统计标称二值 wafer 与目标二值图不一致的 ownership 像素数。"""
+    target, nominal = _aligned_images(target, nominal)
+    selected = _selected_pixels(target, ownership_mask)
+    # OpenILT 的 binary MSE(sum) 对 0/1 图等价于异或像素数。直接比较布尔值不创建
+    # 两张 float 差值/平方中间量；halo 仅供卷积读取，不参与跨 tile 的重复计数。
+    mismatch = (nominal >= threshold) != (target >= threshold)
+    return int(torch.count_nonzero(mismatch & selected).item())
+
+
+def evaluate_pvband(maximum: torch.Tensor, minimum: torch.Tensor,
+                    threshold: float = 0.5,
+                    ownership_mask: torch.Tensor | None = None) -> int:
+    """统计两个独立工艺条件二值 wafer 不一致的 ownership 像素数。"""
+    maximum, minimum = _aligned_images(maximum, minimum)
+    selected = _selected_pixels(maximum, ownership_mask)
+    band = (maximum >= threshold) != (minimum >= threshold)
+    return int(torch.count_nonzero(band & selected).item())
+
+
+def estimate_rectangular_shots(mask: torch.Tensor, threshold: float = 0.5,
+                               shape: tuple[int, int] = (512, 512)) -> int:
+    """在固定评价分辨率上用确定性水平 run 合并估计矩形 shot 数。"""
+    if mask.ndim == 2:
+        images = mask.unsqueeze(0)
+    elif mask.ndim == 3:
+        images = mask
     else:
-        selected = ownership_mask.unsqueeze(0) if ownership_mask.ndim == 2 else ownership_mask
-        if selected.shape != target.shape or selected.device != target.device:
-            raise ValueError("ownership_mask 必须与评价图像形状和设备一致")
-        selected = selected.to(torch.bool)
-    # halo 像素只提供光学上下文，不能重复计入全局指标；布尔索引在 GPU 上一次
-    # 完成筛选，返回 CPU 的仅有两个标量和像素数，不会传回整张曝光图。
-    l2 = torch.sum((nominal[selected] - target[selected]).square()).item()
-    pvband = torch.sum((maximum[selected] - minimum[selected]).square()).item()
-    # 求解器不使用像素数量，避免为无消费方增加一次 GPU→CPU 标量同步。
-    return QualityMetrics(float(l2), float(pvband))
+        raise ValueError("shot mask 必须具有 [H,W] 或 [B,H,W] 形状")
+    if len(shape) != 2 or shape[0] <= 0 or shape[1] <= 0:
+        raise ValueError("shot 评价尺寸必须是两个正整数")
+    # Shot 是昂贵且非梯度的最终诊断项：先用最近邻统一到显式评价分辨率，再一次性
+    # 转 CPU bool。算法逐行提取连续前景 run；仅当相邻行的左右端完全相同才延续
+    # 同一矩形，结果确定、无随机搜索，也不引入 OpenCV/adabox 运行时依赖。
+    resized = functional.interpolate(
+        images[:, None].to(dtype=torch.float32), size=shape, mode="nearest")[:, 0]
+    binary = resized.detach().cpu().numpy() >= threshold
+    total = 0
+    for image in binary:
+        active: set[tuple[int, int]] = set()
+        for row in image:
+            padded = np.pad(row.astype(np.int8, copy=False), (1, 1))
+            changes = np.diff(padded)
+            starts, ends = np.flatnonzero(changes == 1), np.flatnonzero(changes == -1)
+            current = set(zip(starts.tolist(), ends.tolist(), strict=True))
+            total += len(current - active)
+            active = current
+    return total
 
 
 def evaluate_edge_probes(target: torch.Tensor, nominal: torch.Tensor,

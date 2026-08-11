@@ -8,9 +8,9 @@ import klayout.db as kdb
 import numpy as np
 import pytest
 
-import run_mbopc_frontend as frontend
+import main.run_mbopc_frontend as frontend
+from main.run_mbopc_frontend import build_parser, run
 from opc.input.grid import axis_cuts_by_size
-from run_mbopc_frontend import build_parser, run
 from tests.fixtures.layout_factory import write_advanced_layout
 
 
@@ -60,7 +60,7 @@ def test_frontend_probe_distance_does_not_follow_corner_length(
 
 def test_runner_executes_from_external_working_directory_without_install(tmp_path: Path) -> None:
     """根入口应依靠自身目录导入项目，而不是当前工作目录或 editable install。"""
-    script = Path(__file__).resolve().parents[2] / "run_mbopc_frontend.py"
+    script = Path(__file__).resolve().parents[2] / "main" / "run_mbopc_frontend.py"
     output = tmp_path / "external"
     completed = subprocess.run(
         [str(Path(__import__("sys").executable)), str(script), "--output-dir", str(output), "--json"],

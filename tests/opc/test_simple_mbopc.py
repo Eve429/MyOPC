@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from lithography import ICCAD13Lithography, LithographyResult
+from lithography import ICCAD13Lithography, ProcessCondition
 from opc.errors import ReconstructionError
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import FragmentationConfig, prepare_problem
@@ -38,11 +38,16 @@ class _RecordingZeroModel:
         self.config = SimpleNamespace(canvas=canvas, print_threshold=0.499)
         self.inputs: list[np.ndarray] = []
 
-    def __call__(self, mask: torch.Tensor) -> LithographyResult:
-        """复制本批 mask 到 CPU，并返回与其同形的三张全零图。"""
+    def condition(self, name: str) -> ProcessCondition:
+        """构造名称独立的伪工艺条件，kernel 和剂量仅满足求解器接口。"""
+        return ProcessCondition(name, "focus", 1.0)
+
+    def forward_many(self, mask: torch.Tensor,
+                     conditions: tuple[ProcessCondition, ...]) -> dict[str, torch.Tensor]:
+        """复制本批 mask 到 CPU，并按请求名称返回同形全零曝光图。"""
         self.inputs.append(mask.detach().cpu().numpy().copy())
         zeros = torch.zeros_like(mask)
-        return LithographyResult(zeros, zeros, zeros)
+        return {condition.name: zeros for condition in conditions}
 
 
 def _rectangle_problem() -> tuple:
@@ -120,6 +125,30 @@ def test_all_batches_read_same_state_before_barrier_and_owner_moves_once() -> No
     assert not np.array_equal(model.inputs[1], model.inputs[3])
     assert result.records[0].moved_segments == problem.segments.segment_count
     assert result.records[0].rejected_segments == 0
+
+
+def test_diagnostic_metrics_do_not_select_mbopc_best_state(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """L2/PVBand 即使改善也不得在 EPE 相同时替换更早的最佳几何。"""
+    from opc.iteration.mbopc import solver
+
+    problem, _ = _rectangle_problem()
+    l2_values = iter((100, 100, 0, 0))
+
+    def diagnostic_l2(*args: object, **kwargs: object) -> int:
+        """制造第二轮明显更好的诊断 L2，但不改变 EPE 探针结果。"""
+        return next(l2_values)
+
+    def diagnostic_pvband(*args: object, **kwargs: object) -> int:
+        """返回固定 PVBand，隔离本测试只关注最佳状态选择规则。"""
+        return 0
+
+    monkeypatch.setattr(solver, "evaluate_binary_l2", diagnostic_l2)
+    monkeypatch.setattr(solver, "evaluate_pvband", diagnostic_pvband)
+    result = solver.optimize(problem, _RecordingZeroModel(), _solver_config())
+    assert result.records[1].l2 < result.records[0].l2
+    assert result.records[1].epe == result.records[0].epe
+    assert result.best_iteration == 0
 
 
 def test_zero_state_skips_global_and_local_contour_reconstruction(

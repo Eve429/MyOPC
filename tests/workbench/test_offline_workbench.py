@@ -1,4 +1,4 @@
-"""验证离线像素/边段归档、安全限制以及两个独立运行入口。"""
+"""验证离线像素/边段归档、安全限制以及三个独立计算入口。"""
 
 from __future__ import annotations
 
@@ -14,16 +14,17 @@ from PIL import Image
 
 from layout import DbuBox, LayerSpec, LayoutDB
 from layout.query import ShapeQuery
-from opc.input.edge import reconstruct_region
-from opc.input.raster import rasterize_region_canvas
-from tests.workbench.offline_inputs import (
+from main.offline_inputs import (
     load_raster_input,
     load_segment_input,
     prepare_raster_input,
     prepare_segment_input,
 )
-from tests.workbench.run_lithography import run_lithography_test
-from tests.workbench.run_mbopc_iteration import run_mbopc_iteration_test
+from main.run_lithography import run_lithography_test
+from main.run_mbopc_iteration import run_mbopc_iteration_test
+from main.run_simpleilt import run_simpleilt
+from opc.input.edge import reconstruct_region
+from opc.input.raster import rasterize_region_canvas
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -209,7 +210,7 @@ def test_lithography_runner_saves_numeric_and_optional_png_results(
     output = tmp_path / "lithography"
     result = run_lithography_test(archive, output, device="cpu", save_png=True)
     with np.load(output / "lithography_result.npz", allow_pickle=False) as data:
-        assert np.array_equal(data["nominal"], result.nominal.detach().cpu().numpy())
+        assert np.array_equal(data["nominal"], result["nominal"].detach().cpu().numpy())
         assert data["nominal"].shape == (256, 256)
     for name in ("mask", "nominal", "maximum", "minimum"):
         with Image.open(output / f"{name}.png") as image:
@@ -239,12 +240,34 @@ def test_mbopc_runner_optimizes_loaded_cross_core_problem(tmp_path: Path) -> Non
     assert (output / "summary.json").is_file()
 
 
+def test_simpleilt_runner_optimizes_saved_raster_and_reports_metrics(tmp_path: Path) -> None:
+    """ILT 入口必须只消费像素归档并保存参数、掩膜、指标和耗时。"""
+    source = _write_workbench_layout(tmp_path / "ilt.gds")
+    archive = prepare_raster_input(
+        source, tmp_path / "ilt_input.npz", layer=LayerSpec(1, 0),
+        box=DbuBox(0, 0, 256, 128), pixel_nm=8.0)
+    output = tmp_path / "simpleilt"
+    result, summary = run_simpleilt(
+        archive, output, iterations=1, step_size=1e-4,
+        weight_process_l2=0.1, device="cpu", save_png=True)
+    with np.load(output / "simpleilt_result.npz", allow_pickle=False) as data:
+        assert np.array_equal(data["binary_mask"],
+                              result.binary_mask.detach().cpu().numpy())
+        assert data["soft_mask"].shape == (256, 256)
+    assert summary["evaluation"]["binary_l2"] >= 0
+    assert summary["evaluation"]["pvband"] >= 0
+    assert summary["evaluation"]["rectangular_shot_estimate"] >= 0
+    assert (output / "soft_mask.png").is_file()
+    assert (output / "summary.json").is_file()
+
+
 def test_workbench_scripts_show_help_outside_repository(tmp_path: Path) -> None:
-    """三个深层脚本必须能在仓库外直接启动且不依赖项目安装。"""
+    """四个 main 工作台脚本必须能在仓库外直接启动且不依赖项目安装。"""
     scripts = (
-        PROJECT_ROOT / "tests" / "workbench" / "offline_inputs.py",
-        PROJECT_ROOT / "tests" / "workbench" / "run_lithography.py",
-        PROJECT_ROOT / "tests" / "workbench" / "run_mbopc_iteration.py",
+        PROJECT_ROOT / "main" / "offline_inputs.py",
+        PROJECT_ROOT / "main" / "run_lithography.py",
+        PROJECT_ROOT / "main" / "run_mbopc_iteration.py",
+        PROJECT_ROOT / "main" / "run_simpleilt.py",
     )
     for script in scripts:
         completed = subprocess.run(

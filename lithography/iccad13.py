@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 
 # Windows 直接执行环境内 python.exe 时不会像 `conda run` 那样把 `<env>/bin`
@@ -71,16 +73,27 @@ class ICCAD13Config:
 
 
 @dataclass(frozen=True, slots=True)
-class LithographyResult:
-    """保存标称、最大和最小三个工艺角的连续光刻胶图像。"""
+class ProcessCondition:
+    """描述一次独立光刻仿真的 kernel bank、剂量和结果名称。"""
 
-    nominal: torch.Tensor
-    maximum: torch.Tensor
-    minimum: torch.Tensor
+    name: str
+    kernel: str
+    dose: float
+
+    def __post_init__(self) -> None:
+        """拒绝空名称、未知 kernel bank 或非正有限剂量。"""
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("工艺条件名称不能为空")
+        if self.kernel not in ("focus", "defocus"):
+            raise ValueError("工艺条件 kernel 必须是 focus 或 defocus")
+        if not isfinite(self.dose) or self.dose <= 0.0:
+            raise ValueError("工艺条件剂量必须是正有限数")
+        object.__setattr__(self, "name", self.name.strip())
+        object.__setattr__(self, "dose", float(self.dose))
 
 
 class ICCAD13Lithography(nn.Module):
-    """使用预计算 Hopkins 核把二值 mask 转换为三工艺角 printed image。"""
+    """使用预计算 Hopkins 核执行可微、可批处理的独立工艺条件仿真。"""
 
     def __init__(self, config_path: str | Path | None = None,
                  asset_dir: str | Path | None = None,
@@ -115,6 +128,16 @@ class ICCAD13Lithography(nn.Module):
     def device(self) -> torch.device:
         """返回当前模型 buffer 所在设备。"""
         return self.focus_kernels.device
+
+    def condition(self, name: str) -> ProcessCondition:
+        """按名称构造一个默认 ICCAD13 工艺条件，不绑定其他条件。"""
+        if name == "nominal":
+            return ProcessCondition(name, "focus", self.config.dose_nominal)
+        if name == "dose_max":
+            return ProcessCondition(name, "focus", self.config.dose_max)
+        if name == "defocus_min":
+            return ProcessCondition(name, "defocus", self.config.dose_min)
+        raise ValueError(f"未知默认工艺条件：{name}")
 
     @staticmethod
     def _load_kernels(path: Path, device: torch.device) -> torch.Tensor:
@@ -207,28 +230,46 @@ class ICCAD13Lithography(nn.Module):
         x_end = image.shape[-1] - right if right else image.shape[-1]
         return image[:, top:y_end, left:x_end]
 
-    def forward(self, mask: torch.Tensor) -> LithographyResult:
-        """执行 mask→aerial image→连续光刻胶的三工艺角前向计算。"""
+    def _kernel_bank(self, condition: ProcessCondition) -> tuple[torch.Tensor, torch.Tensor]:
+        """返回条件指定的 kernel/scale buffer，不复制设备张量。"""
+        if condition.kernel == "focus":
+            return self.focus_kernels, self.focus_scales
+        return self.defocus_kernels, self.defocus_scales
+
+    def forward_many(self, mask: torch.Tensor,
+                     conditions: Sequence[ProcessCondition]) -> dict[str, torch.Tensor]:
+        """一次准备 mask 并计算任意独立条件，复用相同 kernel bank 的传播。"""
+        requested = tuple(conditions)
+        if not requested:
+            raise ValueError("至少需要一个光刻工艺条件")
+        if any(not isinstance(condition, ProcessCondition) for condition in requested):
+            raise TypeError("conditions 必须全部是 ProcessCondition")
+        names = [condition.name for condition in requested]
+        if len(set(names)) != len(names):
+            raise ValueError("同一次仿真的工艺条件名称不能重复")
         squeeze = mask.ndim == 2
         prepared, padding = self._prepare_mask(mask)
-        # 三个工艺角使用同一个 mask。FFT 是线性变换，剂量乘在振幅上最终使强度
-        # 按 dose² 缩放，因此只需一次 FFT；focus 的单位剂量强度还能同时供 nominal
-        # 和 maximum 使用。这样减少两次大批量 FFT 和一次 focus kernel 传播，同时
-        # 不缓存跨调用张量，反向传播仍沿共享频谱返回原 mask。
+        # 所有条件共享同一 mask FFT；相同 kernel bank 的单位剂量强度也只传播一次。
+        # 剂量乘在复振幅上，因此强度严格按 dose² 缩放。缓存仅存在于本次调用的
+        # autograd 图中，不跨 mask 保存，MB-OPC no_grad 和 ILT backward 使用同一路径。
         spectrum = torch.fft.fft2(prepared.to(torch.complex64).unsqueeze(1), norm="forward")
-        focus = self._aerial_from_spectrum(
-            spectrum, self.focus_kernels, self.focus_scales)
-        nominal = focus * (self.config.dose_nominal ** 2)
-        maximum = focus * (self.config.dose_max ** 2)
-        del focus
-        minimum = self._aerial_from_spectrum(
-            spectrum, self.defocus_kernels, self.defocus_scales)
-        minimum = minimum * (self.config.dose_min ** 2)
-        del spectrum
         steepness, density = self.config.print_steepness, self.config.target_density
-        nominal = self._restore_size(torch.sigmoid(steepness * (nominal - density)), padding)
-        maximum = self._restore_size(torch.sigmoid(steepness * (maximum - density)), padding)
-        minimum = self._restore_size(torch.sigmoid(steepness * (minimum - density)), padding)
-        if squeeze:
-            nominal, maximum, minimum = nominal[0], maximum[0], minimum[0]
-        return LithographyResult(nominal, maximum, minimum)
+        intensities: dict[str, torch.Tensor] = {}
+        results: dict[str, torch.Tensor] = {}
+        for condition in requested:
+            unit = intensities.get(condition.kernel)
+            if unit is None:
+                kernels, scales = self._kernel_bank(condition)
+                unit = self._aerial_from_spectrum(spectrum, kernels, scales)
+                intensities[condition.kernel] = unit
+            printed = torch.sigmoid(
+                steepness * (unit * (condition.dose ** 2) - density))
+            restored = self._restore_size(printed, padding)
+            results[condition.name] = restored[0] if squeeze else restored
+        return results
+
+    def forward(self, mask: torch.Tensor, condition: ProcessCondition) -> torch.Tensor:
+        """执行单个独立工艺条件的 mask→aerial→连续光刻胶前向计算。"""
+        if not isinstance(condition, ProcessCondition):
+            raise TypeError("condition 必须是 ProcessCondition")
+        return self.forward_many(mask, (condition,))[condition.name]

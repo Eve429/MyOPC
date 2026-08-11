@@ -3,44 +3,25 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from time import perf_counter
 
 import numpy as np
 import torch
-from PIL import Image
 
-# 支持 `python tests/workbench/run_lithography.py ...`，不要求安装当前项目。
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# 支持 `python main/run_lithography.py ...`，不要求安装当前项目。
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from lithography import ICCAD13Lithography, LithographyResult
-from tests.workbench.offline_inputs import (
+from lithography import ICCAD13Lithography
+from main.offline_inputs import (
     _atomic_json,
     _atomic_npz,
+    _atomic_png,
     load_raster_input,
 )
-
-
-def _image_array(values: np.ndarray) -> np.ndarray:
-    """把模型左下原点浮点数组转换为顶部原点的八位 PNG 数组。"""
-    clipped = np.clip(values, 0.0, 1.0)
-    return np.ascontiguousarray(np.flipud(np.rint(clipped * 255.0)).astype(np.uint8))
-
-
-def _atomic_png(path: Path, values: np.ndarray) -> Path:
-    """原子保存一个光刻浮点结果，避免异常留下半张图片。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        Image.fromarray(_image_array(values), mode="L").save(temporary, format="PNG")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return path
 
 
 def _cpu_array(tensor: torch.Tensor) -> np.ndarray:
@@ -50,7 +31,7 @@ def _cpu_array(tensor: torch.Tensor) -> np.ndarray:
 
 def run_lithography_test(
         input_path: str | Path, output_dir: str | Path | None = None, *,
-        device: str = "auto", save_png: bool = False) -> LithographyResult:
+        device: str = "auto", save_png: bool = False) -> dict[str, torch.Tensor]:
     """仅从已保存 mask 运行光刻模型，并按需保存数值与 PNG 结果。"""
     mask, metadata = load_raster_input(input_path)
     model = ICCAD13Lithography(device=device)
@@ -63,13 +44,16 @@ def run_lithography_test(
         torch.cuda.synchronize(model.device)
     started = perf_counter()
     mask_tensor = torch.as_tensor(mask, device=model.device)
+    conditions = tuple(model.condition(name) for name in (
+        "nominal", "dose_max", "defocus_min"))
     with torch.no_grad():
-        result = model(mask_tensor)
+        result = model.forward_many(mask_tensor, conditions)
     if model.device.type == "cuda":
         torch.cuda.synchronize(model.device)
     elapsed = perf_counter() - started
     nominal, maximum, minimum = (
-        _cpu_array(result.nominal), _cpu_array(result.maximum), _cpu_array(result.minimum))
+        _cpu_array(result["nominal"]), _cpu_array(result["dose_max"]),
+        _cpu_array(result["defocus_min"]))
     if output_dir is not None:
         output = Path(output_dir).expanduser().resolve()
         output.mkdir(parents=True, exist_ok=True)
@@ -123,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
-    print(f"光刻模型完成：shape={tuple(result.nominal.shape)}，输出={args.output_dir.resolve()}")
+    print(f"光刻模型完成：shape={tuple(result['nominal'].shape)}，输出={args.output_dir.resolve()}")
     return 0
 
 

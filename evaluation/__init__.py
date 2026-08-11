@@ -2,9 +2,13 @@
 
 from .metrics import (
     EPEEvaluation,
-    QualityMetrics,
+    estimate_rectangular_shots,
+    evaluate_binary_l2,
     evaluate_edge_probes,
-    evaluate_process_window,
+    evaluate_pvband,
 )
 
-__all__ = ["EPEEvaluation", "QualityMetrics", "evaluate_edge_probes", "evaluate_process_window"]
+__all__ = [
+    "EPEEvaluation", "estimate_rectangular_shots", "evaluate_binary_l2",
+    "evaluate_edge_probes", "evaluate_pvband",
+]

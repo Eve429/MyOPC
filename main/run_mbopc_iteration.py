@@ -12,21 +12,21 @@ from typing import Any
 import numpy as np
 import torch
 
-# 深层测试入口按文件位置引入仓库根，保证外部工作目录下也不需要 pip install。
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# main 入口按文件位置引入仓库根，保证外部工作目录下也不需要 pip install。
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from lithography import ICCAD13Lithography
-from opc.diagnostics import render_boundary_overlay, write_debug_gds
-from opc.input.edge import edge_probe_points, reconstruct_region
-from opc.iteration.mbopc import SimpleMBOPCConfig, SimpleMBOPCResult, optimize
-from tests.workbench.offline_inputs import (
+from main.offline_inputs import (
     _atomic_json,
     _atomic_npz,
     _exact_dbu,
     load_segment_input,
 )
+from opc.diagnostics import render_boundary_overlay, write_debug_gds
+from opc.input.edge import edge_probe_points, reconstruct_region
+from opc.iteration.mbopc import SimpleMBOPCConfig, SimpleMBOPCResult, optimize
 
 
 def run_mbopc_iteration_test(

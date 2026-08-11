@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-import numpy as np
+# 由脚本位置解析项目根，保证 `python main/run_mbopc.py` 可从任意目录运行。
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import torch
 
+from evaluation import estimate_rectangular_shots
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 from lithography import ICCAD13Lithography
+from main.offline_inputs import _atomic_json, _exact_dbu
 from opc import OPCError
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input import (
@@ -31,6 +36,7 @@ from opc.input.edge import (
     reconstruct_region,
 )
 from opc.input.grid import axis_cuts_by_size
+from opc.input.raster import rasterize_region_canvas
 from opc.iteration.mbopc import SimpleMBOPCConfig, optimize
 
 
@@ -47,7 +53,7 @@ def parse_layer(value: str) -> LayerSpec:
 
 def build_parser() -> argparse.ArgumentParser:
     """构造可直接运行整张版图或指定 ROI 的 simple MB-OPC 参数。"""
-    default_layout = Path(__file__).resolve().parent / "TestReticle" / "simple.gds"
+    default_layout = PROJECT_ROOT / "TestReticle" / "simple.gds"
     parser = argparse.ArgumentParser(description="流式运行 simple MB-OPC。")
     parser.add_argument("layout", nargs="?", type=Path, default=default_layout,
                         help="输入 GDS/OASIS，默认 TestReticle/simple.gds")
@@ -90,23 +96,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _exact_dbu(value_nm: float, dbu_nm: float, name: str,
-               allow_zero: bool = False) -> int:
-    """把必须对齐版图格点的物理长度严格换算为整数 DBU。"""
-    if (not np.isfinite(value_nm) or value_nm < 0.0 or
-            (value_nm == 0.0 and not allow_zero)):
-        requirement = "有限非负数" if allow_zero else "有限正数"
-        raise ValueError(f"{name} 必须是{requirement}")
-    raw = value_nm / dbu_nm
-    rounded = round(raw)
-    # 像素、tile 和 halo 决定不同 core 的采样原点；静默取整会让相邻 tile 使用
-    # 不同物理晶格，因此只接受可由当前 GDS DBU 精确表达的数值。
-    if (rounded < 0 or (rounded == 0 and not allow_zero) or
-            not np.isclose(raw, rounded, atol=1e-9, rtol=0.0)):
-        raise ValueError(f"{name}={value_nm} nm 不能由当前 {dbu_nm} nm/DBU 精确表达")
-    return int(rounded)
-
-
 def _select_layer(database: LayoutDB, requested: LayerSpec | None) -> LayerSpec:
     """选择显式目标层，或在版图仅有一个层时自动选择。"""
     layers = database.layers()
@@ -118,18 +107,6 @@ def _select_layer(database: LayoutDB, requested: LayerSpec | None) -> LayerSpec:
         names = ", ".join(f"{layer.layer}/{layer.datatype}" for layer in layers)
         raise ValueError(f"版图包含多个 Layer，请用 --layer 选择：{names}")
     return layers[0]
-
-
-def _atomic_json(path: Path, value: dict[str, Any]) -> Path:
-    """在目标目录内原子写入 UTF-8 JSON，异常时清理临时文件。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return path
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -215,6 +192,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # 所以跨 core 与斜边不会产生两套取整端点；halo 也从不回写。
     reconstructed = reconstruct_region(problem, optimized.best_displacements)
     reference = problem.physical_mask.region
+    # Shot 只在最终最佳几何上计算一次。固定 512×512 诊断画布使内存有严格上界；
+    # 像素 DBU 向上取整以完整覆盖 ROI，避免为整张 reticle 常驻高分辨率 mask。
+    shot_canvas = 512
+    shot_pixel_dbu = max(1, (max(box.width, box.height) + shot_canvas - 1) // shot_canvas)
+    shot_mask = rasterize_region_canvas(
+        reconstructed, box, shot_pixel_dbu, shot_canvas)
+    shot_estimate = estimate_rectangular_shots(
+        torch.as_tensor(shot_mask), shape=(shot_canvas, shot_canvas))
+    del shot_mask
     gds_path = write_debug_gds(
         reference, reconstructed, output_dir / "mbopc_result.gds",
         dbu_um, layer.layer, layer.datatype)
@@ -249,6 +235,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                    "memberships": len(problem.member_segment_indices)},
         "optimization": {"best_iteration": optimized.best_iteration,
                          "stop_reason": optimized.stop_reason,
+                         "shot_estimate": shot_estimate,
+                         "shot_evaluation_shape": [shot_canvas, shot_canvas],
                          "records": [asdict(record) for record in optimized.records]},
         "memory": {"problem_persistent_bytes": problem.persistent_nbytes,
                    "segment_persistent_bytes": problem.segments.persistent_nbytes,

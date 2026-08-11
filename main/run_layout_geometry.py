@@ -8,6 +8,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# 直接运行 main 下脚本时，Python 只加入 main 目录；按文件位置加入仓库根，
+# 不要求 pip install，也不依赖用户从哪个工作目录启动。
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from geometry import (
     GeometryError,
     GeometryPatch,

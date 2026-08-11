@@ -40,8 +40,8 @@ class IterationRecord:
     iteration: int
     step_dbu: float
     epe: int
-    l2: float
-    pvband: float
+    l2: int
+    pvband: int
     valid_probes: int
     ambiguous_probes: int
     moved_segments: int

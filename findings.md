@@ -231,3 +231,11 @@
 - `gcd_45nm` 三轮 CUDA 保持 1,776 polygons、223,553 segments、870 cores、880,801 memberships；EPE 129,645→74,592→48,348，所有更新/歧义/停止统计一致，总耗时 79.834 s，GPU 峰值 267,334,656 bytes。
 - 漂移的 MB-OPC 前端基准已修复并由仓库外直接 CLI 回归覆盖；100 图形严格模式通过，避免 10 图形/64 core 的非代表性 halo 比例。
 - 最终生产零内部引用仅为已明确保留且有直接测试的 `hierarchy_summary` 和 `DbuBox.intersection`；本轮没有新增生产函数、结构体或模块，源码净删除两个文件。
+
+## 阶段 44 前置审计
+
+- `geometry.raster` 服务显示：可变图幅、顶部向上、`uint8` 与分条内存上界；`opc.input.raster` 服务模型：固定方形画布、左下原点、padding 与 `float32`。两层接口不能合并，但底层 Region 覆盖率计算可以共用。
+- 通用 `types.py` 分散在四个包中；包边界本身合理，问题是名称不表达职责且若干类型只被单一操作使用。采用选择性归位，不建立新的万能类型目录。
+- `opc.input.types` 与 `opc.input.edge.types` 存在完全重复的 `_vector`；数组形状/类型校验应集中到输入层私有 `_arrays.py`，已有多个现实调用方。
+- 当前前端在预检前构造完整 Region 和 `MBOPCProblem`，且每个 core 全局扫描 owner、全局物化参考/移动端点与 probes、默认输出全量 NPZ/GDS/PNG；百亿边段会在 `int32` 索引与总体近 TiB 状态下不可运行。
+- 阶段 1 只实现物化前容量预检与安全拒绝，不实现 CPU macro 或磁盘 shard；默认内存预算使用启动时可用内存的 70%。

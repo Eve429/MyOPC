@@ -21,7 +21,12 @@ from opc.diagnostics import (
     save_problem_npz,
     write_debug_gds,
 )
-from opc.input import RectilinearCoreGrid
+from opc.input import (
+    RectilinearCoreGrid,
+    preflight_layout,
+    process_memory_snapshot,
+    resolve_memory_budget_bytes,
+)
 from opc.input.edge import (
     FragmentationConfig,
     MBOPCProblem,
@@ -46,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     """构造支持无参数合成验证和真实 GDS 验证的中文命令行。"""
     parser = argparse.ArgumentParser(description="直接验证 OPC 公共层与 MB-OPC 几何前端。")
     parser.add_argument("layout", nargs="?", type=Path, help="可选输入 GDS/OASIS；省略时运行合成测试")
+    parser.add_argument("--top-cell", help="可选顶层 Cell；多顶层版图必须指定")
     parser.add_argument("--layer", type=parse_layer, help="真实版图目标 layer/datatype")
     parser.add_argument("--box", nargs=4, type=int, metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),
                         help="可选全局 DBU 处理范围；默认使用 top bbox")
@@ -68,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="只在终端输出 JSON 汇总")
     parser.add_argument("--skip-geometry-suite", action="store_true",
                         help="跳过多图形标注图集，仅用于快速性能复测")
+    parser.add_argument("--skip-artifacts", action="store_true",
+                        help="跳过 NPZ、GDS、PNG 和图集，仅保留验证摘要")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="只扫描真实版图容量，不物化 Region 或边段")
+    parser.add_argument("--memory-budget-gib", type=float,
+                        help="CPU 内存预算；默认取启动时系统可用内存的 70%%")
     return parser
 
 
@@ -111,9 +123,9 @@ def _axis_cuts_by_size(start: int, end: int, tile_size_dbu: int) -> np.ndarray:
     return cuts
 
 
-def _load_database_batch(args: argparse.Namespace,
-                         database: LayoutDB) -> tuple[RegionBatch, LayerSpec, float]:
-    """在数据库生命周期内选择 Layer、范围并物化局部批次。"""
+def _select_database_input(args: argparse.Namespace,
+                           database: LayoutDB) -> tuple[LayerSpec, DbuBox, float]:
+    """在不物化图形的前提下选择真实版图 Layer、范围和 DBU。"""
     layers = database.layers()
     if args.layer is None:
         if len(layers) != 1:
@@ -125,34 +137,56 @@ def _load_database_batch(args: argparse.Namespace,
     if bbox is None:
         raise ValueError("输入版图为空")
     box = DbuBox(*args.box) if args.box else bbox
-    return database.query([layer], box).materialize(), layer, database.dbu_um
+    return layer, box, database.dbu_um
 
 
-def _prepare_input_problem(args: argparse.Namespace, batch: RegionBatch,
-                           layer: LayerSpec,
-                           dbu_um: float) -> tuple[MBOPCProblem, RectilinearCoreGrid]:
-    """按 CLI 物理尺寸构造 core 网格、分段配置和独立紧凑问题。"""
+def _problem_configuration(
+        args: argparse.Namespace, box: DbuBox, dbu_um: float,
+        ) -> tuple[FragmentationConfig, RectilinearCoreGrid]:
+    """按 CLI 物理尺寸构造分段配置和规则 core 网格。"""
     dbu_nm = dbu_um * 1000.0
     # 网格数量模式保持原有均分语义；物理尺寸模式只在 CLI 边界做一次 nm→DBU
     # 换算，公共 RectilinearCoreGrid 始终处理整数坐标。两条路径最终都只产生
     # x/y cuts，后续 owner、halo 和重建完全共用原有批量实现，不增加迭代开销。
     if args.tile_size_nm is None:
         columns, rows = args.grid
-        x_cuts = _axis_cuts(batch.query_box.left, batch.query_box.right, columns)
-        y_cuts = _axis_cuts(batch.query_box.bottom, batch.query_box.top, rows)
+        x_cuts = _axis_cuts(box.left, box.right, columns)
+        y_cuts = _axis_cuts(box.bottom, box.top, rows)
     else:
         if not np.isfinite(args.tile_size_nm) or args.tile_size_nm <= 0.0:
             raise ValueError("tile-size-nm must be finite and positive")
         tile_size_dbu = round(args.tile_size_nm / dbu_nm)
         if tile_size_dbu <= 0:
             raise ValueError("tile-size-nm is smaller than one layout DBU")
-        x_cuts = _axis_cuts_by_size(batch.query_box.left, batch.query_box.right, tile_size_dbu)
-        y_cuts = _axis_cuts_by_size(batch.query_box.bottom, batch.query_box.top, tile_size_dbu)
+        x_cuts = _axis_cuts_by_size(box.left, box.right, tile_size_dbu)
+        y_cuts = _axis_cuts_by_size(box.bottom, box.top, tile_size_dbu)
     grid = RectilinearCoreGrid(
         x_cuts, y_cuts, round(args.halo_nm / dbu_nm))
     config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
                                  args.max_displacement_nm / dbu_nm)
-    return prepare_problem(batch, layer, config, grid), grid
+    return config, grid
+
+
+def _finish_stage(timings: dict[str, float], checkpoints: dict[str, dict[str, int]],
+                  name: str, started: float) -> float:
+    """结束一个性能阶段，同时记录墙钟耗时和操作系统进程内存。"""
+    finished = perf_counter()
+    timings[name] = finished - started
+    checkpoints[name] = process_memory_snapshot()
+    return finished
+
+
+def _atomic_summary(output_dir: Path, result: dict[str, Any]) -> Path:
+    """创建输出目录并原子写入统一 JSON 摘要。"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary = output_dir / "summary.json"
+    temporary = summary.with_name(f".{summary.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, summary)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return summary
 
 
 def _demo_displacements(problem: MBOPCProblem,
@@ -161,105 +195,122 @@ def _demo_displacements(problem: MBOPCProblem,
     values = np.zeros(problem.segments.segment_count, dtype=np.float64)
     changed: list[int] = []
     for core_index in range(problem.core_count):
-        owned = np.flatnonzero(problem.owner_indices == core_index)
+        members = problem.segments_for_core(core_index)
+        owned = members[problem.owner_indices[members] == core_index]
         if not len(owned):
             continue
         segment_index = int(owned[len(owned) // 2])
         values[segment_index] = displacement_dbu if core_index % 2 == 0 else -displacement_dbu
         changed.append(segment_index)
-    # 选择过程直接从 owner_indices 反查，因此不存在非 owner 写入；索引列表只用于
-    # 诊断计数，不参与重建。真实 solver 使用同样的全局对齐数组和轮次屏障。
+    # 只过滤当前 core 的稀疏 membership，避免每个 core 扫描整条 owner 向量；
+    # 仍只选择唯一 owner 数据，索引列表只用于诊断计数，不参与重建。
     return values, np.asarray(changed, dtype=np.int32)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    """执行一次完整的 MB-OPC 前端演示，并返回可序列化的运行摘要。
+    """执行容量预检和完整几何前端，并返回含阶段性能的 JSON 兼容摘要。"""
+    total_started = perf_counter()
+    timings: dict[str, float] = {}
+    checkpoints = {"start": process_memory_snapshot()}
+    output_dir = args.output_dir.expanduser().resolve()
+    budget = resolve_memory_budget_bytes(args.memory_budget_gib)
+    preflight: dict[str, Any]
 
-    输入：
-        args: ``build_parser()`` 解析得到的命令行参数。它提供版图路径、层、
-            查询框、core 网格、halo、边段长度、最大位移、演示位移、
-            输出目录以及是否跳过多图形测试等配置。所有几何长度参数在命令行
-            中以 nm 表示，进入几何内核前会依据版图 DBU 换算为数据库单位。
-
-    输出：
-        一个只包含字符串、数值、布尔值、列表和字典的摘要字典，可直接编码为
-        JSON。摘要包括输入来源、层和查询框，图形/边段/采样/core 数量，紧凑
-        边段数组占用，分阶段耗时，重建及跨 core 校验结果，以及 NPZ、PNG、
-        GDS、JSON 四类产物路径。函数同时将该摘要原子写入 ``summary.json``。
-
-    异常：
-        输入版图、参数或几何不合法时，下层函数会抛出 ``LayoutError``、
-        ``OPCError`` 或 ``ValueError``；文件创建失败时会抛出 ``OSError``。
-        本函数不吞掉这些异常，由 ``main()`` 统一转成命令行错误码和错误信息。
-    """
-    # 1. 准备输入数据。未传 --layout 时创建内置多图形案例，便于用户直接运行
-    #    本文件验证完整流程；batch 是查询框内的物理图形，layer 是目标层，
-    #    dbu_um 表示一个数据库单位对应多少微米。source 只用于摘要标识来源。
     if args.layout is None:
+        # 合成案例规模固定且很小，不重复写临时 GDS 做层级预检；仍记录构造耗时和
+        # 内存检查点。`--preflight-only` 对合成输入只返回明确的无需预检状态。
+        stage = perf_counter()
         batch, layer, dbu_um = _demo_batch()
+        _finish_stage(timings, checkpoints, "roi_materialize", stage)
         source = "synthetic"
-        # 计时从前端问题构建前开始，不包含内置案例的构造时间。prepare 阶段会把
-        # RegionBatch 转为稳定轮廓、数学边、紧凑边段和 core 归属表；同时返回
-        # grid 供后续覆盖校验，重建约束已经由 problem 统一持有，不重复传递。
-        started = perf_counter()
-        problem, grid = _prepare_input_problem(args, batch, layer, dbu_um)
+        config, grid = _problem_configuration(args, batch.query_box, dbu_um)
+        preflight = {
+            "accepted": True, "reason": "synthetic input",
+            "recommended_mode": "in_memory", "memory_budget_bytes": budget,
+            "scan_complete": True, "counts_are_lower_bounds": False,
+        }
+        timings["layout_open"] = timings["preflight"] = 0.0
+        checkpoints["layout_open"] = checkpoints["preflight"] = process_memory_snapshot()
+        if args.preflight_only:
+            result = {
+                "status": "preflight_only", "source": source,
+                "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
+                "box_dbu": [batch.query_box.left, batch.query_box.bottom,
+                            batch.query_box.right, batch.query_box.top],
+                "preflight": preflight,
+                "timing_seconds": timings, "memory_checkpoints": checkpoints,
+                "artifacts": {"json": str(output_dir / "summary.json")},
+            }
+            timings["total"] = perf_counter() - total_started
+            _atomic_summary(output_dir, result)
+            return result
+        stage = perf_counter()
+        problem = prepare_problem(batch, layer, config, grid)
+        _finish_stage(timings, checkpoints, "problem_prepare", stage)
     else:
-        # 传入真实版图时，将路径展开并绝对化，避免摘要依赖启动目录；此字符串
-        # 仅用于记录，不参与几何计算。_load_database_batch 输出与演示分支一致。
-        source = str(args.layout.expanduser().resolve())
-        # KLayout 的物化 Region 仍依赖打开的 Layout；因此必须在上下文内
-        # 完成物理合并和紧凑数组构建。离开 with 后文件会关闭，而 problem 中
-        # 保留的均为自有 Region/NumPy 数据，之后的迭代与输出不再读取源文件。
-        with LayoutDB.open(args.layout, top_cell=None) as database:
-            batch, layer, dbu_um = _load_database_batch(args, database)
-            # 真实版图读取和查询不计入 prepare，计时专注于可重复执行的前端构建，
-            # 便于比较不同分段、采样和 core 配置本身的性能。
-            started = perf_counter()
-            # grid 网格，用切分点记录 x_cut [x0,x1,x2] y_cut [y1,y2]
-            # problem 包含分段与重建约束，grid 保存全局规则切线和 halo。
-            problem, grid = _prepare_input_problem(args, batch, layer, dbu_um)
+        source_path = args.layout.expanduser().resolve()
+        source = str(source_path)
+        stage = perf_counter()
+        # 第一次版图读取只解析层级元数据并保持数据库打开。严格预检会独立只读扫描
+        # 同一文件；只有预检通过，才使用这里的数据库物化 ROI，避免超限后产生 Region。
+        with LayoutDB.open(source_path, top_cell=args.top_cell) as database:
+            layer, box, dbu_um = _select_database_input(args, database)
+            _finish_stage(timings, checkpoints, "layout_open", stage)
+            config, grid = _problem_configuration(args, box, dbu_um)
+            stage = perf_counter()
+            preflight = preflight_layout(
+                source_path, top_cell=database.top_cell.name, layer=layer, box=box,
+                corner_dbu=config.corner_length_dbu,
+                maximum_segment_dbu=config.max_segment_length_dbu, grid=grid,
+                memory_budget_bytes=budget)
+            _finish_stage(timings, checkpoints, "preflight", stage)
+            if not preflight["accepted"] or args.preflight_only:
+                status = "preflight_only" if preflight["accepted"] else "rejected"
+                result = {
+                    "status": status, "source": source,
+                    "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
+                    "box_dbu": [box.left, box.bottom, box.right, box.top],
+                    "preflight": preflight,
+                    "timing_seconds": timings, "memory_checkpoints": checkpoints,
+                    "artifacts": {"json": str(output_dir / "summary.json")},
+                }
+                timings["total"] = perf_counter() - total_started
+                checkpoints["total"] = process_memory_snapshot()
+                _atomic_summary(output_dir, result)
+                return result
+            stage = perf_counter()
+            batch = database.query([layer], box).materialize()
+            _finish_stage(timings, checkpoints, "roi_materialize", stage)
+            stage = perf_counter()
+            problem = prepare_problem(batch, layer, config, grid)
+            _finish_stage(timings, checkpoints, "problem_prepare", stage)
 
-    # 2. 固化准备阶段结束时间，并完成单位换算。dbu_um 的单位是 μm/DBU，乘
-    #    1000 后得到 nm/DBU；演示位移除以该值即可得到几何内核使用的 DBU。
-    prepared = perf_counter()
     dbu_nm = dbu_um * 1000.0
-
-    # 3. 构造一次模拟 OPC 更新。输入是紧凑问题和 DBU 位移量，输出
-    #    displacements 是与全局 segment 索引严格对齐的绝对位移，changed 只记录
-    #    本次人工选择。更新直接由唯一 owner 索引产生，不建立第二套 key 通信协议。
+    stage = perf_counter()
     displacements, changed = _demo_displacements(
         problem, args.demo_displacement_nm / dbu_nm)
+    _finish_stage(timings, checkpoints, "demo_update", stage)
 
-    # 4. 将“参考边段 + 法向位移”物化为当前几何。输入位移数组不改变拓扑和
-    #    归属；输出 geometry 只包含热路径消费的 starts、ends、normals 当前值。
+    stage = perf_counter()
+    # 当前验证入口明确检查按需端点和 EPE probe；它们不是 problem 常驻字段。超大
+    # 输入已在预检阶段拒绝，因此这里不会用诊断功能绕过容量保护。
     geometry = problem.segments.materialize(displacements)
-
-    # 5. 诊断探针围绕固定参考边界生成，距离由独立参数明确给出。inner 位于负
-    #    外法向（材料侧），outer 位于正外法向（空区侧）；完整求解器调用相同函数，
-    #    因此修改 corner 长度不会再悄悄改变预览所表达的 EPE 位置。
     reference_geometry = problem.segments.materialize()
     inner, outer = edge_probe_points(
         reference_geometry.starts, reference_geometry.ends, reference_geometry.normals,
         args.probe_distance_nm / dbu_nm)
+    _finish_stage(timings, checkpoints, "segment_materialize_and_probes", stage)
 
-    # 6. 执行两次重建。reference 使用全零位移，理论上必须还原输入物理 mask；
-    #    reconstructed 使用本轮合并位移，是后续 OPC、拼接与可视化的实际结果。
-    #    两者均输入紧凑边段和重建配置，输出 KLayout Region。
+    stage = perf_counter()
     reference = reconstruct_region(problem, np.zeros(problem.segments.segment_count))
     reconstructed = reconstruct_region(problem, displacements)
+    _finish_stage(timings, checkpoints, "reconstruct", stage)
 
-    # update_sample_reconstruct 阶段到此结束；此时间点之后属于验证和产物输出。
-    rebuilt = perf_counter()
-
-    # 8. 验证零位移往返不改变物理图形。异或 Region 的面积为零表示重建前后
-    #    覆盖完全一致；非零通常意味着轮廓方向、孔洞归属或分段连接存在错误。
+    stage = perf_counter()
     if (reference ^ problem.physical_mask.region).area() != 0:
         raise ValueError("零位移重建与物理参考 mask 不一致")
-
-    # 9. core 只划分计算责任，最终矢量结果始终由全局位移统一重建，不能再沿
-    #    core 边界裁 Polygon。任意斜边与切线的解析交点未必位于整数 DBU，物理
-    #    裁剪会被迫增加取整顶点并改变面积；这里只校验 ownership box 对规划范围
-    #    覆盖完整且没有正面积重叠，边段唯一 owner 则已由准备阶段单独保证。
+    # core 只划分责任而不裁最终 Polygon。覆盖与面积和同时检查，分别捕获缺口和
+    # 正面积重叠；共享边界允许存在，不会把斜边交点重复量化。
     core_coverage = kdb.Region()
     core_area_sum = 0
     cores = problem.grid.cores()
@@ -267,50 +318,46 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         core_coverage.insert(core.ownership_box.to_native())
         core_area_sum += core.ownership_box.width * core.ownership_box.height
     core_coverage = core_coverage.merged()
-    bounds_region = kdb.Region(grid.bounds.to_native())
-    coverage_xor = (core_coverage ^ bounds_region).area()
+    coverage_xor = (core_coverage ^ kdb.Region(grid.bounds.to_native())).area()
     overlap_area = core_area_sum - core_coverage.area()
     if coverage_xor or overlap_area:
-        raise ValueError(
-            f"core ownership 覆盖无效：XOR={coverage_xor}，重叠面积={overlap_area}")
+        raise ValueError(f"core ownership 覆盖无效：XOR={coverage_xor}，重叠={overlap_area}")
+    _finish_stage(timings, checkpoints, "verification", stage)
 
-    # 10. 创建产物目录。expanduser 支持用户目录写法，resolve 固定摘要中的绝对
-    #     路径，parents=True 允许一次创建缺失的父目录，exist_ok=True 支持复跑。
-    output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    npz_path = gds_path = png_path = None
+    geometry_suite = None
+    for name in ("npz", "gds", "png", "geometry_suite"):
+        timings[name] = 0.0
+        checkpoints[name] = process_memory_snapshot()
+    if not args.skip_artifacts:
+        stage = perf_counter()
+        npz_path = save_problem_npz(problem, displacements, output_dir / "segments.npz")
+        _finish_stage(timings, checkpoints, "npz", stage)
+        stage = perf_counter()
+        gds_path = write_debug_gds(
+            reference, reconstructed, output_dir / "reconstruction.gds",
+            dbu_um, layer.layer, layer.datatype)
+        _finish_stage(timings, checkpoints, "gds", stage)
+        stage = perf_counter()
+        png_path = render_boundary_overlay(
+            reconstructed, layer, batch.query_box, dbu_um, geometry.starts, geometry.ends,
+            geometry.normals, output_dir / "overview.png", problem.owner_indices,
+            inner, outer, cores)
+        _finish_stage(timings, checkpoints, "png", stage)
+        if not args.skip_geometry_suite:
+            stage = perf_counter()
+            geometry_suite = run_geometry_suite(output_dir / "geometry_suite")
+            _finish_stage(timings, checkpoints, "geometry_suite", stage)
 
-    # 11. 保存紧凑数值数据。输入为 problem 和本轮全局位移数组；输出 NPZ 包含
-    #     公共边界、边段拓扑、core 归属及位移，可供其他 OPC 方法加载和分析。
-    npz_path = save_problem_npz(problem, displacements, output_dir / "segments.npz")
-
-    # 12. 保存调试版图。输入零位移参考 Region 与移动后 Region，两者使用相同
-    #     layer/datatype、分别写入 REFERENCE 和 RECONSTRUCTED 顶层 Cell；dbu_um
-    #     保持物理尺度，输出为可在版图工具中切换两个 Cell 比较的 GDS 文件路径。
-    gds_path = write_debug_gds(reference, reconstructed, output_dir / "reconstruction.gds",
-                               dbu_um, layer.layer, layer.datatype)
-
-    # 13. 保存边界叠加图。除移动后 Region 和查询框外，还输入边段端点、法向、
-    #     owner、采样点及 core 框；输出 PNG 用颜色和标记直观展示分段及归属关系。
-    png_path = render_boundary_overlay(
-        reconstructed, layer, batch.query_box, dbu_um, geometry.starts, geometry.ends,
-        geometry.normals, output_dir / "overview.png", problem.owner_indices,
-        inner, outer, cores)
-
-    # 14. 默认运行额外的多图形几何回归套件并把图片写入子目录；传入
-    #     --skip-geometry-suite 时返回 None，用于只测当前输入的快速运行模式。
-    geometry_suite = None if args.skip_geometry_suite else run_geometry_suite(
-        output_dir / "geometry_suite")
-
-    # 记录全部校验和文件输出结束时间，供下面拆分阶段耗时。
-    finished = perf_counter()
-
-    # 15. 汇总为 JSON 兼容结构：counts 描述问题规模；memory 仅统计紧凑边段
-    #     持久数组本身，不等同于进程总内存；timing_seconds 不包含版图读取时间；
-    #     verification 给出关键不变量；artifacts 给出四类可直接查看的绝对路径。
+    timings["total"] = perf_counter() - total_started
+    checkpoints["total"] = process_memory_snapshot()
     result: dict[str, Any] = {
-        "source": source, "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
+        "status": "completed", "source": source,
+        "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
         "box_dbu": [batch.query_box.left, batch.query_box.bottom,
                     batch.query_box.right, batch.query_box.top],
+        "preflight": preflight,
         "tiling": {
             "mode": "physical_size" if args.tile_size_nm is not None else "count",
             "columns": grid.column_count, "rows": grid.row_count,
@@ -320,17 +367,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "polygons": problem.segments.contours.polygon_count,
             "rings": problem.segments.contours.ring_count,
             "mathematical_edges": len(problem.segments.contours.vertices),
-            "segments": problem.segments.segment_count,
-            "samples": len(inner) * 2, "cores": problem.core_count,
-            "memberships": len(problem.member_segment_indices),
+            "segments": problem.segments.segment_count, "samples": len(inner) * 2,
+            "cores": problem.core_count, "memberships": len(problem.member_segment_indices),
             "updated_segments": len(changed),
         },
-        "memory": {"problem_persistent_bytes": problem.persistent_nbytes,
-                   "segment_persistent_bytes": problem.segments.persistent_nbytes},
-        "timing_seconds": {
-            "prepare": prepared - started, "update_sample_reconstruct": rebuilt - prepared,
-            "artifact_output": finished - rebuilt, "total": finished - started,
+        "memory": {
+            "problem_persistent_bytes": problem.persistent_nbytes,
+            "segment_persistent_bytes": problem.segments.persistent_nbytes,
+            "peak_working_set_bytes": max(
+                item["peak_working_set_bytes"] for item in checkpoints.values()),
         },
+        "timing_seconds": timings, "memory_checkpoints": checkpoints,
         "verification": {
             "zero_displacement_xor_area": 0,
             "core_coverage_xor_area": int(coverage_xor),
@@ -339,34 +386,39 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "geometry_suite_case_count": 0 if geometry_suite is None else
             geometry_suite["case_count"],
         },
-        "artifacts": {"json": str(output_dir / "summary.json"), "npz": str(npz_path),
-                      "png": str(png_path), "gds": str(gds_path)},
+        "artifacts": {
+            "json": str(output_dir / "summary.json"),
+            "npz": None if npz_path is None else str(npz_path),
+            "png": None if png_path is None else str(png_path),
+            "gds": None if gds_path is None else str(gds_path),
+        },
     }
-
-    # 16. 原子写入 summary.json。先在同目录写入带进程号的临时文件，成功后由
-    #     os.replace 一次替换正式文件，避免进程中断留下半份 JSON；finally 确保
-    #     写入或替换异常时也清理临时文件。最后返回与磁盘内容一致的 result。
-    summary = output_dir / "summary.json"
-    temporary = summary.with_name(f".{summary.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temporary, summary)
-    finally:
-        temporary.unlink(missing_ok=True)
+    _atomic_summary(output_dir, result)
     return result
 
 
 def print_text(result: dict[str, Any]) -> None:
     """以紧凑中文输出主要计数、性能和产物路径。"""
+    if result["status"] != "completed":
+        preflight = result["preflight"]
+        print(f"状态：{result['status']}  原因：{preflight['reason']}")
+        if "estimated_segments" in preflight:
+            suffix = "（下界）" if preflight["counts_are_lower_bounds"] else ""
+            print(f"估算 Segment：{preflight['estimated_segments']:,}{suffix}  "
+                  f"准备峰值：{preflight['estimated_prepare_peak_bytes'] / 1024 ** 3:.3f} GiB")
+        print(f"JSON：{result['artifacts']['json']}")
+        return
     counts, timing = result["counts"], result["timing_seconds"]
     print(f"来源：{result['source']}  Layer：{result['layer']}  DBU：{result['dbu_um']} μm")
     print(f"Polygon/Ring/Edge/Segment：{counts['polygons']}/{counts['rings']}/"
           f"{counts['mathematical_edges']}/{counts['segments']}")
     print(f"Core/Context membership/采样点：{counts['cores']}/{counts['memberships']}/"
           f"{counts['samples']}")
-    print(f"准备：{timing['prepare'] * 1000:.2f} ms  总计：{timing['total']:.3f} s")
+    print(f"准备：{timing['problem_prepare'] * 1000:.2f} ms  总计：{timing['total']:.3f} s")
+    print(f"进程峰值工作集：{result['memory']['peak_working_set_bytes'] / 1024 ** 3:.3f} GiB")
     for name, path in result["artifacts"].items():
-        print(f"{name.upper()}：{path}")
+        if path is not None:
+            print(f"{name.upper()}：{path}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -382,7 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print_text(result)
-    return 0
+    return 2 if result["status"] == "rejected" else 0
 
 
 if __name__ == "__main__":

@@ -188,3 +188,15 @@
 - `gcd_45nm` 三轮 CUDA 完整验证通过，EPE/owner/拓扑统计与历史一致，总耗时 79.834 s、GPU 峰值 267,334,656 bytes；两个结果 GDS 均已由 KLayout 重新读取验证。
 - 阶段 43 完成：同步主开发/测试手册、函数调用关系、Layout/Geometry 与迭代报告；新增代码优化开发/测试报告和未实施的大 reticle 独立方案。
 - 最终审计覆盖 74 个 Python 文件和全部 doc Markdown：中文 docstring、链接、围栏、删除符号、依赖方向、diff whitespace、未调用函数和用户文件检查均通过；待本地文档提交。
+- 阶段 44 开始：用户确认只实现大 reticle 方案第一阶段，暂缓 CPU macro/GPU tile 两级流式架构。
+- 已恢复项目计划记录并确认工作树干净；本轮允许最小修改 `geometry.raster`，不修改 `layout/`。
+- 已确认阶段 1 的交付边界为 raster 底层复用、类型选择性归位、生产 preflight、前端时间/内存统计及完整测试文档。
+- 已完成 geometry 类型归位和 OPC 网格/数组校验拆分；包级公共导入保持不变，旧通用 `geometry/types.py` 与 `opc/input/types.py` 已删除。
+- 首次边段类型归位原子补丁因 diagnostics 导入之间夹有其他模块而未应用；已记录并改用小范围补丁。
+- 边段配置/批数据已归入 fragmentation，`MBOPCProblem` 已与 `prepare_problem` 同置于 builder；迭代契约改名为 `contracts.py`，旧内部 types 文件不保留兼容包装。
+- 首轮 Ruff 发现 9 项纯静态问题，已按紧凑风格手工修正；并行检查因 Ruff 非零提前汇总，后续改为逐项验证以保留完整结果。
+- 生产 preflight 已接入前端验证器、实际求解入口和离线工作台；工作台删除原有 KLayout 扫描、切分计数、membership 和峰值估算重复函数。
+- 工作台首轮 11 项中 9 项通过；两项失败来自测试把“Region 物化前拒绝”误绑定为“不得打开 LayoutDB”。已改为直接禁止 `ShapeQuery.materialize`，功能保护不放宽。
+- 阶段 44–46 聚焦回归 28 项通过；随后 Ruff、compileall 和全仓库 141 项测试通过。
+- `gcd_45nm` 真实只预检通过：1,776 occurrences、21,590 顶点、223,553 估算边段、1,167,992 membership 上界，准备峰值估算 73,809,488 bytes；未物化 Region 或 SegmentBatch。
+- 首次 raster 基准误传脚本不存在的 `--json`，未执行任何基准或修改；已记录并按真实参数重跑。

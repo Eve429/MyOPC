@@ -6,7 +6,7 @@ import numpy as np
 
 from opc.input import RectilinearCoreGrid
 
-from .types import SegmentBatch
+from .fragmentation import SegmentBatch
 
 
 def _build_ownership(segments: SegmentBatch, grid: RectilinearCoreGrid) -> tuple[np.ndarray, ...]:

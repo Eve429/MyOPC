@@ -14,6 +14,7 @@ from opc.errors import ReconstructionError
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import FragmentationConfig, prepare_problem
 from opc.input.raster import rasterize_region_canvas
+from opc.iteration.mbopc.contracts import SimpleMBOPCConfig
 from opc.iteration.mbopc.solver import (
     _current_tile,
     _owner_indices,
@@ -24,7 +25,6 @@ from opc.iteration.mbopc.solver import (
     _TargetCache,
     optimize,
 )
-from opc.iteration.mbopc.types import SimpleMBOPCConfig
 
 from .test_common import _batch
 

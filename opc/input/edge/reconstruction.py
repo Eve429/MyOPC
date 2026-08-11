@@ -8,7 +8,8 @@ import numpy as np
 from geometry import ContourBatch, contours_to_region, validate_contours
 from opc.errors import ReconstructionError
 
-from .types import FragmentationConfig, MBOPCProblem, SegmentBatch
+from .builder import MBOPCProblem
+from .fragmentation import FragmentationConfig, SegmentBatch
 
 
 def _validated_displacements(segments: SegmentBatch, displacements: object,

@@ -14,10 +14,10 @@ from PIL import Image, ImageDraw, ImageFont
 from geometry import render_region_batch
 from layout import CellRef, DbuBox, LayerSpec, RegionBatch
 from opc.input import CoreSpec, RectilinearCoreGrid
-from opc.input.edge.builder import prepare_problem
+from opc.input.edge.builder import MBOPCProblem, prepare_problem
+from opc.input.edge.fragmentation import FragmentationConfig
 from opc.input.edge.reconstruction import reconstruct_region
 from opc.input.edge.sampling import edge_probe_points
-from opc.input.edge.types import FragmentationConfig, MBOPCProblem
 
 _OWNER_COLORS = (
     (255, 87, 87), (68, 204, 255), (255, 196, 64), (126, 226, 126),

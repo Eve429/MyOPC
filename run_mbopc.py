@@ -18,7 +18,12 @@ from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 from lithography import ICCAD13Lithography
 from opc import OPCError
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
-from opc.input import RectilinearCoreGrid
+from opc.input import (
+    RectilinearCoreGrid,
+    preflight_layout,
+    process_memory_snapshot,
+    resolve_memory_budget_bytes,
+)
 from opc.input.edge import (
     FragmentationConfig,
     edge_probe_points,
@@ -77,6 +82,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview", action="store_true",
                         help="额外保存带分段、法向、探针和 core 的诊断 PNG",default=True)
     parser.add_argument("--json", action="store_true", help="终端输出完整 JSON")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="只扫描版图容量，不物化 Region、边段或光刻模型")
+    parser.add_argument("--memory-budget-gib", type=float,
+                        help="CPU 内存预算；默认取启动时系统可用内存的 70%%")
     return parser
 
 
@@ -135,6 +144,7 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> Path:
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """执行版图读取、前端准备、流式迭代和最佳结果全局一次重建。"""
     started = perf_counter()
+    memory_checkpoints = {"start": process_memory_snapshot()}
     source = args.layout.expanduser().resolve()
     with LayoutDB.open(source, top_cell=args.top_cell) as database:
         layer = _select_layer(database, args.layer)
@@ -143,8 +153,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("输入顶层 Cell 为空")
         box = DbuBox(*args.box) if args.box else bbox
         dbu_um = database.dbu_um
-        batch = database.query([layer], box).materialize()
         loaded = perf_counter()
+        memory_checkpoints["layout_open"] = process_memory_snapshot()
         dbu_nm = dbu_um * 1000.0
         pixel_dbu = _exact_dbu(args.pixel_nm, dbu_nm, "pixel-nm")
         tile_dbu = _exact_dbu(args.tile_size_nm, dbu_nm, "tile-size-nm")
@@ -157,10 +167,41 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         fragmentation = FragmentationConfig(
             args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
             args.max_displacement_nm / dbu_nm)
+        preflight_started = perf_counter()
+        preflight = preflight_layout(
+            source, top_cell=database.top_cell.name, layer=layer, box=box,
+            corner_dbu=fragmentation.corner_length_dbu,
+            maximum_segment_dbu=fragmentation.max_segment_length_dbu, grid=grid,
+            memory_budget_bytes=resolve_memory_budget_bytes(args.memory_budget_gib))
+        preflight_finished = perf_counter()
+        memory_checkpoints["preflight"] = process_memory_snapshot()
+        if not preflight["accepted"] or args.preflight_only:
+            output_dir = args.output_dir.expanduser().resolve()
+            status = "preflight_only" if preflight["accepted"] else "rejected"
+            result = {
+                "status": status, "source": str(source),
+                "layer": f"{layer.layer}/{layer.datatype}",
+                "top_cell": database.top_cell.name, "dbu_um": dbu_um,
+                "box_dbu": [box.left, box.bottom, box.right, box.top],
+                "preflight": preflight, "memory_checkpoints": memory_checkpoints,
+                "timing_seconds": {
+                    "layout_load": loaded - started,
+                    "preflight": preflight_finished - preflight_started,
+                    "total": perf_counter() - started,
+                },
+                "artifacts": {"summary": str(output_dir / "summary.json")},
+            }
+            _atomic_json(output_dir / "summary.json", result)
+            return result
+        materialize_started = perf_counter()
+        batch = database.query([layer], box).materialize()
+        materialized = perf_counter()
+        memory_checkpoints["roi_materialize"] = process_memory_snapshot()
         # 层级遍历只在 materialize 时发生一次；prepare_problem 批量生成全局参考边、
         # 参数化 segment 和 owner/context CSR，之后每轮不会重新读取源版图。
         problem = prepare_problem(batch, layer, fragmentation, grid)
     prepared = perf_counter()
+    memory_checkpoints["problem_prepare"] = process_memory_snapshot()
 
     model = ICCAD13Lithography(device=args.device)
     iteration = SimpleMBOPCConfig(
@@ -201,7 +242,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     gpu_peak = (int(torch.cuda.max_memory_allocated(model.device))
                 if model.device.type == "cuda" else 0)
     result: dict[str, Any] = {
-        "source": str(source), "layer": f"{layer.layer}/{layer.datatype}",
+        "status": "completed", "source": str(source),
+        "layer": f"{layer.layer}/{layer.datatype}",
         "top_cell": args.top_cell, "dbu_um": dbu_um,
         "box_dbu": [box.left, box.bottom, box.right, box.top],
         "device": str(model.device),
@@ -221,8 +263,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                    "segment_persistent_bytes": problem.segments.persistent_nbytes,
                    "target_cache_limit_bytes": iteration.target_cache_bytes,
                    "gpu_peak_allocated_bytes": gpu_peak},
+        "preflight": preflight, "memory_checkpoints": memory_checkpoints,
         "timing_seconds": {"layout_load": loaded - started,
-                           "frontend_prepare": prepared - loaded,
+                           "preflight": preflight_finished - preflight_started,
+                           "roi_materialize": materialized - materialize_started,
+                           "frontend_prepare": prepared - materialized,
                            "iterations": iterated - prepared,
                            "final_reconstruct_and_output": finished - iterated,
                            "total": finished - started},
@@ -237,6 +282,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 def print_text(result: dict[str, Any]) -> None:
     """输出最重要的规模、停止原因、耗时和产物位置。"""
+    if result["status"] != "completed":
+        print(f"状态：{result['status']}  原因：{result['preflight']['reason']}")
+        print(f"SUMMARY：{result['artifacts']['summary']}")
+        return
     counts, optimization = result["counts"], result["optimization"]
     print(f"来源：{result['source']}  Layer：{result['layer']}  Device：{result['device']}")
     print(f"Polygon/Edge/Segment/Core：{counts['polygons']}/{counts['edges']}/"
@@ -261,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print_text(result)
-    return 0
+    return 2 if result["status"] == "rejected" else 0
 
 
 if __name__ == "__main__":

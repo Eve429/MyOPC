@@ -11,7 +11,6 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-import klayout.db as kdb
 import numpy as np
 
 # 这些脚本明确要求能从任意工作目录直接执行。Python 直接运行深层脚本时只把
@@ -26,13 +25,14 @@ from geometry import (
     contours_to_region,
 )
 from layout import DbuBox, LayerSpec, LayoutDB
-from opc.input import PhysicalMask, RectilinearCoreGrid
+from opc.input import PhysicalMask, RectilinearCoreGrid, preflight_layout
 from opc.input.edge import (
     FragmentationConfig,
     MBOPCProblem,
     SegmentBatch,
     prepare_problem,
 )
+from opc.input.preflight import estimate_prepare_peak_bytes
 from opc.input.raster import rasterize_region_canvas
 
 _GIB = 1024 ** 3
@@ -87,12 +87,12 @@ def _axis_cuts(start: int, end: int, tile_dbu: int) -> np.ndarray:
 
 
 def _normalize_box(box: DbuBox | tuple[int, int, int, int] | None,
-                   fallback: kdb.Box) -> DbuBox:
+                   fallback: DbuBox | None) -> DbuBox:
     """选择显式 ROI 或顶层 bbox，并统一为公共 DBU 框。"""
     if box is None:
-        if fallback.empty():
+        if fallback is None:
             raise ValueError("输入顶层 Cell 为空")
-        return DbuBox.from_native(fallback)
+        return fallback
     if isinstance(box, DbuBox):
         return box
     if len(box) != 4:
@@ -100,161 +100,32 @@ def _normalize_box(box: DbuBox | tuple[int, int, int, int] | None,
     return DbuBox(*box)
 
 
-def _select_native_top(layout: kdb.Layout, requested: str | None) -> kdb.Cell:
-    """按照 LayoutDB 相同规则选择唯一顶层或显式顶层 Cell。"""
-    if requested is not None:
-        cell = layout.cell(requested)
-        if cell is None:
-            raise ValueError(f"版图中不存在顶层 Cell：{requested}")
-        return cell
-    tops = list(layout.top_cells())
-    if len(tops) != 1:
-        names = ", ".join(sorted(cell.name for cell in tops)) or "<none>"
-        raise ValueError(f"版图顶层不唯一，请显式指定 top_cell：{names}")
-    return tops[0]
-
-
-def _select_native_layer(layout: kdb.Layout,
-                         requested: LayerSpec | None) -> tuple[LayerSpec, int]:
-    """选择一个已有 Layer，并返回稳定描述和 KLayout 内部索引。"""
-    layers = [(LayerSpec(layout.get_info(index).layer, layout.get_info(index).datatype), index)
-              for index in layout.layer_indexes()]
-    if requested is None:
-        if len(layers) != 1:
-            names = ", ".join(f"{item.layer}/{item.datatype}" for item, _ in sorted(layers))
-            raise ValueError(f"版图包含多个 Layer，请显式指定 layer：{names}")
-        return layers[0]
-    for item, index in layers:
-        if item == requested:
-            return item, index
-    raise ValueError(f"版图中不存在 Layer {requested.layer}/{requested.datatype}")
-
-
-def _open_preflight_layout(
+def _select_database_input(
         source: Path, top_cell: str | None, layer: LayerSpec | None,
         box: DbuBox | tuple[int, int, int, int] | None,
-        max_file_gib: float) -> tuple[kdb.Layout, kdb.Cell, LayerSpec, int, DbuBox]:
-    """在物化前读取只读原生版图并解析预检所需的确定上下文。"""
+        max_file_gib: float) -> tuple[LayoutDB, LayerSpec, DbuBox]:
+    """打开公共 LayoutDB，并在不物化图形时解析离线输入范围。"""
     if not source.is_file():
         raise FileNotFoundError(f"版图文件不存在：{source}")
     file_limit = _positive_limit(max_file_gib, "max_file_gib") * _GIB
     if source.stat().st_size > file_limit:
         raise ValueError(
             f"版图文件 {source.stat().st_size / _GIB:.3f} GiB 超过 {max_file_gib} GiB 上限")
-    layout = kdb.Layout()
-    layout.read(str(source))
-    selected_top = _select_native_top(layout, top_cell)
-    selected_layer, layer_index = _select_native_layer(layout, layer)
-    selected_box = _normalize_box(box, selected_top.bbox())
-    return layout, selected_top, selected_layer, layer_index, selected_box
-
-
-def _shape_polygon(shape: kdb.Shape) -> kdb.Polygon:
-    """把预检允许的 Box、Path、Polygon 统一转换为临时 Polygon。"""
-    if shape.is_box():
-        return kdb.Polygon(shape.box)
-    if shape.is_path():
-        return shape.path.polygon()
-    if shape.is_polygon():
-        return shape.polygon
-    raise TypeError("预检迭代器返回了非 Polygon 类图形")
-
-
-def _polygon_rings(polygon: kdb.Polygon) -> tuple[np.ndarray, ...]:
-    """提取单个临时 Polygon 的 hull/hole 顶点，仅在预检循环内短暂存在。"""
-    rings = [np.asarray([(point.x, point.y) for point in polygon.each_point_hull()],
-                        dtype=np.float64)]
-    rings.extend(np.asarray([(point.x, point.y)
-                             for point in polygon.each_point_hole(hole_index)],
-                            dtype=np.float64)
-                 for hole_index in range(polygon.holes()))
-    return tuple(rings)
-
-
-def _fragment_counts(lengths: np.ndarray,
-                     config: FragmentationConfig) -> np.ndarray:
-    """复用当前边段公式估算每条原始数学边产生的 segment 数。"""
-    maximum, corner = config.max_segment_length_dbu, config.corner_length_dbu
-    counts = np.ceil(lengths / maximum).astype(np.int64)
-    long_edges = lengths > 2.0 * maximum
-    counts[long_edges] = 2 + np.ceil(
-        (lengths[long_edges] - 2.0 * corner) / maximum).astype(np.int64)
-    return counts
-
-
-def _membership_upper_bound(points: np.ndarray, counts: np.ndarray,
-                            grid: RectilinearCoreGrid) -> int:
-    """按整条原始边 bbox 估算其全部切分段可能触及的 context 数上界。"""
-    ends = np.roll(points, -1, axis=0)
-    halo = grid.halo_dbu
-    left = np.minimum(points[:, 0], ends[:, 0]) - halo
-    right = np.maximum(points[:, 0], ends[:, 0]) + halo
-    bottom = np.minimum(points[:, 1], ends[:, 1]) - halo
-    top = np.maximum(points[:, 1], ends[:, 1]) + halo
-    ix0 = np.clip(np.searchsorted(grid.x_cuts[1:], left, side="left"),
-                  0, grid.column_count - 1)
-    ix1 = np.clip(np.searchsorted(grid.x_cuts[:-1], right, side="right") - 1,
-                  0, grid.column_count - 1)
-    iy0 = np.clip(np.searchsorted(grid.y_cuts[1:], bottom, side="left"),
-                  0, grid.row_count - 1)
-    iy1 = np.clip(np.searchsorted(grid.y_cuts[:-1], top, side="right") - 1,
-                  0, grid.row_count - 1)
-    spans = np.maximum(ix1 - ix0 + 1, 0) * np.maximum(iy1 - iy0 + 1, 0)
-    return int(np.sum(counts * spans, dtype=np.int64))
-
-
-def _estimated_peak_bytes(file_bytes: int, shapes: int, vertices: int,
-                          segments: int, memberships: int) -> int:
-    """用实际数组宽度和原生几何安全系数估计准备阶段峰值内存。"""
-    # 这不是用一个精确数字伪装 KLayout 内部实现：文件解析按 8 倍、原始图形按
-    # 256 B/shape、布尔几何按 256 B/vertex、切分临时数组按 128 B/segment、
-    # CSR 排序临时量按 32 B/membership 保守计入。估计用于提前拒绝，不用于计费。
-    return (file_bytes * 8 + shapes * 256 + vertices * 256 +
-            segments * 128 + memberships * 32)
-
-
-def _preflight_complexity(
-        layout: kdb.Layout, top: kdb.Cell, layer_index: int, box: DbuBox,
-        source_bytes: int, max_shape_occurrences: int, max_source_vertices: int,
-        max_estimated_gib: float, config: FragmentationConfig | None = None,
-        grid: RectilinearCoreGrid | None = None) -> dict[str, int | float]:
-    """扫描层级展开后的 ROI 候选图形，并在物化前执行复杂度硬限制。"""
-    shape_limit = int(_positive_limit(max_shape_occurrences, "max_shape_occurrences"))
-    vertex_limit = int(_positive_limit(max_source_vertices, "max_source_vertices"))
-    byte_limit = int(_positive_limit(max_estimated_gib, "max_estimated_gib") * _GIB)
-    iterator = kdb.RecursiveShapeIterator(
-        layout, top, layer_index, box.to_native(), True)
-    iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
-    shapes = vertices = segments = memberships = 0
-    for item in iterator:
-        shapes += 1
-        if shapes > shape_limit:
-            raise ValueError(f"ROI 层级展开图形数超过上限 {shape_limit:,}")
-        polygon = _shape_polygon(item.shape()).transformed(item.trans())
-        for ring in _polygon_rings(polygon):
-            vertices += len(ring)
-            if vertices > vertex_limit:
-                raise ValueError(f"ROI 原始顶点数超过上限 {vertex_limit:,}")
-            if config is not None and len(ring):
-                vectors = np.roll(ring, -1, axis=0) - ring
-                lengths = np.hypot(vectors[:, 0], vectors[:, 1])
-                counts = _fragment_counts(lengths[lengths > 0.0], config)
-                segments += int(counts.sum(dtype=np.int64))
-                if grid is not None and len(counts) == len(ring):
-                    memberships += _membership_upper_bound(ring, counts, grid)
-        estimated = _estimated_peak_bytes(
-            source_bytes, shapes, vertices, segments, memberships)
-        if estimated > byte_limit:
-            raise ValueError(
-                f"ROI 准备阶段估计峰值 {estimated / _GIB:.3f} GiB "
-                f"超过 {max_estimated_gib} GiB 上限")
-    estimated = _estimated_peak_bytes(
-        source_bytes, shapes, vertices, segments, memberships)
-    return {
-        "source_file_bytes": source_bytes, "shape_occurrences": shapes,
-        "source_vertices": vertices, "estimated_segments": segments,
-        "estimated_memberships": memberships, "estimated_peak_bytes": estimated,
-    }
+    database = LayoutDB.open(source, top_cell=top_cell)
+    layers = database.layers()
+    if layer is None:
+        if len(layers) != 1:
+            names = ", ".join(f"{item.layer}/{item.datatype}" for item in layers)
+            database.close()
+            raise ValueError(f"版图包含多个 Layer，请显式指定 layer：{names}")
+        selected_layer = layers[0]
+    elif layer not in layers:
+        database.close()
+        raise ValueError(f"版图中不存在 Layer {layer.layer}/{layer.datatype}")
+    else:
+        selected_layer = layer
+    selected_box = _normalize_box(box, database.bbox())
+    return database, selected_layer, selected_box
 
 
 def _atomic_npz(path: str | Path, arrays: dict[str, object],
@@ -327,7 +198,7 @@ def _metadata(data: np.lib.npyio.NpzFile, expected_format: str,
 def _post_prepare_bytes(problem: MBOPCProblem, source_bytes: int) -> int:
     """按实际构造出的数组数量复核准备结果的保守峰值估计。"""
     contours = problem.segments.contours
-    return _estimated_peak_bytes(
+    return estimate_prepare_peak_bytes(
         source_bytes, problem.physical_mask.region.count(), len(contours.vertices),
         problem.segments.segment_count, len(problem.member_segment_indices))
 
@@ -342,27 +213,34 @@ def prepare_raster_input(
         max_estimated_gib: float = 8.0) -> Path:
     """预检一个 ROI、栅格化为模型方向固定画布并保存可重复使用的输入。"""
     source = Path(layout_path).expanduser().resolve()
-    native, top, selected_layer, layer_index, selected_box = _open_preflight_layout(
+    database, selected_layer, selected_box = _select_database_input(
         source, top_cell, layer, box, max_file_gib)
-    dbu_um, source_bytes = float(native.dbu), source.stat().st_size
-    dbu_nm = dbu_um * 1000.0
-    pixel_dbu = _exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
-    if not isinstance(canvas, int) or canvas <= 0:
-        raise ValueError("canvas 必须是正整数")
-    width = (selected_box.width + pixel_dbu - 1) // pixel_dbu
-    height = (selected_box.height + pixel_dbu - 1) // pixel_dbu
-    # 像素规模在任何 Region 物化前检查。一个归档严格对应一个可直接送入模型的
-    # canvas，不在这里隐式切 tile，避免光刻模型专项测试混入拼接语义。
-    if width > canvas or height > canvas:
-        raise ValueError(
-            f"ROI 需要 {width}x{height} 像素，超过 {canvas}x{canvas} canvas；"
-            "请缩小 box 或增大 pixel_nm")
-    preflight = _preflight_complexity(
-        native, top, layer_index, selected_box, source_bytes,
-        max_shape_occurrences, max_source_vertices, max_estimated_gib)
-    selected_top = top.name
-    del native, top
-    with LayoutDB.open(source, top_cell=selected_top) as database:
+    with database:
+        dbu_um = database.dbu_um
+        dbu_nm = dbu_um * 1000.0
+        pixel_dbu = _exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
+        if not isinstance(canvas, int) or canvas <= 0:
+            raise ValueError("canvas 必须是正整数")
+        width = (selected_box.width + pixel_dbu - 1) // pixel_dbu
+        height = (selected_box.height + pixel_dbu - 1) // pixel_dbu
+        # 像素规模在任何 Region 物化前检查。一个归档严格对应一个可直接送入模型的
+        # canvas，不隐式切 tile，避免光刻专项测试混入跨 tile 拼接语义。
+        if width > canvas or height > canvas:
+            raise ValueError(
+                f"ROI 需要 {width}x{height} 像素，超过 {canvas}x{canvas} canvas；"
+                "请缩小 box 或增大 pixel_nm")
+        selected_top = database.top_cell.name
+        preflight = preflight_layout(
+            source, top_cell=selected_top, layer=selected_layer, box=selected_box,
+            memory_budget_bytes=int(_positive_limit(
+                max_estimated_gib, "max_estimated_gib") * _GIB),
+            max_file_bytes=int(_positive_limit(max_file_gib, "max_file_gib") * _GIB),
+            max_shape_occurrences=int(_positive_limit(
+                max_shape_occurrences, "max_shape_occurrences")),
+            max_source_vertices=int(_positive_limit(
+                max_source_vertices, "max_source_vertices")))
+        if not preflight["accepted"]:
+            raise ValueError(f"ROI 物化前预检拒绝：{preflight['reason']}")
         batch = database.query([selected_layer], selected_box).materialize()
         mask = rasterize_region_canvas(
             batch.region(selected_layer), selected_box, pixel_dbu, canvas)
@@ -430,25 +308,35 @@ def prepare_segment_input(
         max_estimated_gib: float = 8.0) -> Path:
     """预检、物化并保存可直接恢复为 MBOPCProblem 的完整边段输入。"""
     source = Path(layout_path).expanduser().resolve()
-    native, top, selected_layer, layer_index, selected_box = _open_preflight_layout(
+    database, selected_layer, selected_box = _select_database_input(
         source, top_cell, layer, box, max_file_gib)
-    dbu_um, source_bytes = float(native.dbu), source.stat().st_size
-    dbu_nm = dbu_um * 1000.0
-    tile_dbu = _exact_dbu(tile_size_nm, dbu_nm, "tile_size_nm")
-    halo_dbu = _exact_dbu(halo_nm, dbu_nm, "halo_nm", allow_zero=True)
-    config = FragmentationConfig(
-        float(_exact_dbu(corner_nm, dbu_nm, "corner_nm")),
-        float(_exact_dbu(segment_nm, dbu_nm, "segment_nm")),
-        float(_exact_dbu(max_displacement_nm, dbu_nm, "max_displacement_nm", allow_zero=True)))
-    grid = RectilinearCoreGrid(
-        _axis_cuts(selected_box.left, selected_box.right, tile_dbu),
-        _axis_cuts(selected_box.bottom, selected_box.top, tile_dbu), halo_dbu)
-    preflight = _preflight_complexity(
-        native, top, layer_index, selected_box, source_bytes,
-        max_shape_occurrences, max_source_vertices, max_estimated_gib, config, grid)
-    selected_top = top.name
-    del native, top
-    with LayoutDB.open(source, top_cell=selected_top) as database:
+    with database:
+        dbu_um, source_bytes = database.dbu_um, source.stat().st_size
+        dbu_nm = dbu_um * 1000.0
+        tile_dbu = _exact_dbu(tile_size_nm, dbu_nm, "tile_size_nm")
+        halo_dbu = _exact_dbu(halo_nm, dbu_nm, "halo_nm", allow_zero=True)
+        config = FragmentationConfig(
+            float(_exact_dbu(corner_nm, dbu_nm, "corner_nm")),
+            float(_exact_dbu(segment_nm, dbu_nm, "segment_nm")),
+            float(_exact_dbu(
+                max_displacement_nm, dbu_nm, "max_displacement_nm", allow_zero=True)))
+        grid = RectilinearCoreGrid(
+            _axis_cuts(selected_box.left, selected_box.right, tile_dbu),
+            _axis_cuts(selected_box.bottom, selected_box.top, tile_dbu), halo_dbu)
+        selected_top = database.top_cell.name
+        preflight = preflight_layout(
+            source, top_cell=selected_top, layer=selected_layer, box=selected_box,
+            corner_dbu=config.corner_length_dbu,
+            maximum_segment_dbu=config.max_segment_length_dbu, grid=grid,
+            memory_budget_bytes=int(_positive_limit(
+                max_estimated_gib, "max_estimated_gib") * _GIB),
+            max_file_bytes=int(_positive_limit(max_file_gib, "max_file_gib") * _GIB),
+            max_shape_occurrences=int(_positive_limit(
+                max_shape_occurrences, "max_shape_occurrences")),
+            max_source_vertices=int(_positive_limit(
+                max_source_vertices, "max_source_vertices")))
+        if not preflight["accepted"]:
+            raise ValueError(f"ROI 物化前预检拒绝：{preflight['reason']}")
         batch = database.query([selected_layer], selected_box).materialize()
         if batch.region(selected_layer).is_empty():
             raise ValueError("选定 ROI 和 Layer 中没有可提取的物理图形")

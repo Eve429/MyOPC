@@ -5,15 +5,32 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
 import klayout.db as kdb
 
-from layout.types import LayerSpec
+from layout.types import DbuBox, LayerSpec
 
 from .errors import PatchConflictError
-from .types import GeometryPatch
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryPatch:
+    """由一个 core 矩形负责、位于全局坐标系的单层结果。"""
+
+    patch_id: str
+    layer: LayerSpec
+    region: kdb.Region
+    ownership_box: DbuBox
+
+    def __post_init__(self) -> None:
+        """尽早拒绝空标识或非 KLayout Region 数据。"""
+        if not self.patch_id.strip():
+            raise ValueError("patch_id must be non-empty")
+        if not isinstance(self.region, kdb.Region):
+            raise TypeError("region must be a KLayout Region")
 
 
 class PatchSet:

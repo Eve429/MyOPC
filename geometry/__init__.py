@@ -1,20 +1,18 @@
 """与具体 OPC 方法解耦的局部计算几何公共接口。"""
 
-from .contour import contours_to_region, extract_contour, extract_contours
+from .contour import ContourBatch, contours_to_region, extract_contour, extract_contours
 from .errors import (
     GeometryError,
     PatchConflictError,
     RasterizationError,
 )
-from .patch import PatchSet, PatchWriter
-from .raster import render_layout_region, render_region_batch
-from .types import (
-    ContourBatch,
-    GeometryPatch,
-    ValidationIssue,
-    ValidationReport,
+from .patch import GeometryPatch, PatchSet, PatchWriter
+from .raster import (
+    iter_region_coverage_tiles,
+    render_layout_region,
+    render_region_batch,
 )
-from .validate import validate_contours
+from .validate import ValidationIssue, ValidationReport, validate_contours
 
 __all__ = [
     "ContourBatch",
@@ -29,6 +27,7 @@ __all__ = [
     "contours_to_region",
     "extract_contour",
     "extract_contours",
+    "iter_region_coverage_tiles",
     "render_layout_region",
     "render_region_batch",
     "validate_contours",

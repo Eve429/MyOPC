@@ -2,11 +2,35 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from layout import LayerSpec
 
-from .types import ContourBatch, ValidationIssue, ValidationReport
+from .contour import ContourBatch
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationIssue:
+    """一条顺序稳定、便于测试和报告的校验问题。"""
+
+    code: str
+    message: str
+    layer: LayerSpec
+    indices: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationReport:
+    """不修改输入数据的几何校验汇总结果。"""
+
+    issues: tuple[ValidationIssue, ...] = ()
+
+    @property
+    def is_valid(self) -> bool:
+        """未发现任何问题时返回 True。"""
+        return not self.issues
 
 
 def validate_contours(contours: ContourBatch, layer: LayerSpec) -> ValidationReport:

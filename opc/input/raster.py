@@ -8,6 +8,7 @@ import klayout.db as kdb
 import numpy as np
 from numpy.typing import NDArray
 
+from geometry import iter_region_coverage_tiles
 from layout import DbuBox
 
 
@@ -24,19 +25,12 @@ def rasterize_region_canvas(region: kdb.Region, box: DbuBox, pixel_dbu: int,
         raise ValueError(
             f"局部框需要 {width}x{height} 像素，超过 {canvas}x{canvas} 光刻画布")
     result = np.zeros((canvas, canvas), dtype=np.float32)
-    if region.is_empty():
-        return result
-    # 原生 rasterize 的第 0 行对应低 Y，与后续探针坐标 `(y-bottom)/pixel` 一致，
-    # 因此这里不执行 PNG 所需的上下翻转。合并限制在当前 box，避免重叠图形重复面积。
-    clipped = (region & kdb.Region(box.to_native())).merged()
-    areas = np.asarray(clipped.rasterize(
-        kdb.Point(box.left, box.bottom), kdb.Vector(pixel_dbu, pixel_dbu),
-        width, height), dtype=np.float32)
-    # 当前 tile 的面积矩阵直接原位归一化；避免在每轮、每个 core 上额外分配同尺寸
-    # float32 临时数组。最终画布仍是固定大小，超出有效 ROI 的区域保持为零。
-    areas /= float(pixel_dbu * pixel_dbu)
-    np.clip(areas, 0.0, 1.0, out=areas)
-    result[:height, :width] = areas
+    # 公共底层分块输出保持左下原点，正好与探针 `(y-bottom)/pixel` 一致；这里
+    # 只负责固定 canvas 的 padding，不再维护第二份裁剪、合并和面积归一化逻辑。
+    for y0, x0, areas in iter_region_coverage_tiles(
+            region, box, pixel_dbu, (height, width), dtype=np.dtype(np.float32)):
+        rows, columns = areas.shape
+        result[y0:y0 + rows, x0:x0 + columns] = areas
     return result
 
 

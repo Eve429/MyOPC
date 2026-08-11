@@ -117,3 +117,44 @@ def test_grid_count_and_physical_tile_size_are_mutually_exclusive() -> None:
     """一次运行只能选择按数量或按物理尺寸切分，避免参数优先级不明确。"""
     with pytest.raises(SystemExit):
         build_parser().parse_args(["--grid", "2", "1", "--tile-size-nm", "100"])
+
+
+def test_skip_artifacts_keeps_verification_and_detailed_resource_stats(tmp_path: Path) -> None:
+    """跳过大型产物时仍应完成重建验证并记录各阶段时间和内存。"""
+    args = build_parser().parse_args([
+        "--output-dir", str(tmp_path), "--skip-artifacts",
+    ])
+    result = run(args)
+    assert result["status"] == "completed"
+    assert result["verification"]["zero_displacement_xor_area"] == 0
+    assert result["artifacts"] == {
+        "json": str((tmp_path / "summary.json").resolve()),
+        "npz": None, "png": None, "gds": None,
+    }
+    expected = {
+        "layout_open", "preflight", "roi_materialize", "problem_prepare",
+        "demo_update", "segment_materialize_and_probes", "reconstruct",
+        "verification", "npz", "gds", "png", "geometry_suite", "total",
+    }
+    assert expected <= result["timing_seconds"].keys()
+    assert expected <= result["memory_checkpoints"].keys()
+    assert all(result["timing_seconds"][name] >= 0.0 for name in expected)
+
+
+def test_real_frontend_preflight_only_and_low_budget_rejection(
+        tmp_path: Path) -> None:
+    """真实版图应支持只预检，并在低预算下于 Region 物化前稳定拒绝。"""
+    source = write_advanced_layout(tmp_path / "preflight.gds")
+    accepted = run(build_parser().parse_args([
+        str(source), "--layer", "1/0", "--preflight-only",
+        "--output-dir", str(tmp_path / "accepted"),
+    ]))
+    assert accepted["status"] == "preflight_only"
+    assert accepted["preflight"]["accepted"] is True
+    rejected = run(build_parser().parse_args([
+        str(source), "--layer", "1/0", "--memory-budget-gib", "0.000000001",
+        "--output-dir", str(tmp_path / "rejected"),
+    ]))
+    assert rejected["status"] == "rejected"
+    assert rejected["preflight"]["memory_budget_ok"] is False
+    assert rejected["preflight"]["recommended_mode"] == "sharded_required"

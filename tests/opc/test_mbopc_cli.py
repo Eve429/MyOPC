@@ -62,3 +62,24 @@ def test_runner_rejects_tile_not_aligned_to_pixel_before_model_load(tmp_path: Pa
     ])
     with pytest.raises(ValueError, match="整数倍"):
         run(args)
+
+
+def test_solver_preflight_only_does_not_load_lithography_model(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """实际求解入口只预检时不得加载光刻资产或构造 GPU 模型。"""
+    source = _write_single_layer_layout(tmp_path / "preflight.gds")
+
+    def forbidden_model(*args: object, **kwargs: object) -> None:
+        """若预检路径错误进入光刻模型构造，就让回归明确失败。"""
+        raise AssertionError("preflight-only 不应加载光刻模型")
+
+    monkeypatch.setattr("run_mbopc.ICCAD13Lithography", forbidden_model)
+    args = build_parser().parse_args([
+        str(source), "--box", "0", "0", "256", "256",
+        "--tile-size-nm", "256", "--halo-nm", "0", "--pixel-nm", "1",
+        "--preflight-only", "--output-dir", str(tmp_path / "result"),
+    ])
+    result = run(args)
+    assert result["status"] == "preflight_only"
+    assert result["preflight"]["accepted"] is True
+    assert Path(result["artifacts"]["summary"]).is_file()

@@ -1,4 +1,4 @@
-"""简单 MB-OPC 的迭代配置、轮次记录和最终结果契约。"""
+"""定义简单 MB-OPC 迭代器的配置、轮次记录和最终结果契约。"""
 
 from __future__ import annotations
 

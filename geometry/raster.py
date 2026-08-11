@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import tempfile
+from collections.abc import Iterator
 from numbers import Integral, Real
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 _MAX_STRIPE_PIXELS = 1_000_000
 _DEFAULT_MAX_PIXELS = 64_000_000
+_FLOAT64_DTYPE = np.dtype(np.float64)
 
 
 def _pixel_size_dbu(dbu_um: float, pixel_size_nm: float) -> int:
@@ -55,36 +57,51 @@ def _image_shape(box: DbuBox, pixel_dbu: int, max_pixels: int) -> tuple[int, int
     return height, width
 
 
-def _rasterize(region: kdb.Region, box: DbuBox, pixel_dbu: int,
-               shape: tuple[int, int]) -> NDArray[np.uint8]:
-    """分块调用原生面积栅格器，并转换为顶部朝上的八位灰度数组。"""
+def iter_region_coverage_tiles(
+        region: kdb.Region, box: DbuBox, pixel_dbu: int,
+        shape: tuple[int, int], *, dtype: np.dtype = _FLOAT64_DTYPE,
+        max_tile_pixels: int = _MAX_STRIPE_PIXELS,
+        ) -> Iterator[tuple[int, int, NDArray]]:
+    """按左下原点分块生成裁剪、合并后的像素覆盖率数组。"""
     height, width = shape
-    pixels = np.zeros(shape, dtype=np.uint8)
-    if region.is_empty():
-        return pixels
-    # 原生 rasterize 返回从左下角开始的 Python 浮点矩阵。这里按最多约一百万
-    # 临时像素切成二维块，避免大 ROI 同时生成数千万个 Python float；最终数组
-    # 只保留 uint8 覆盖率，因此稳定内存主要由实际 PNG 尺寸决定。
-    tile_width = min(width, _MAX_STRIPE_PIXELS)
-    tile_rows = max(1, _MAX_STRIPE_PIXELS // tile_width)
+    if (not isinstance(pixel_dbu, Integral) or isinstance(pixel_dbu, bool) or pixel_dbu <= 0 or
+            height <= 0 or width <= 0 or max_tile_pixels <= 0):
+        raise RasterizationError("像素 DBU、栅格尺寸和分块像素上限必须为正整数")
+    # 两个上层调用都需要相同的集合语义：只计算当前 ROI，并在原生端合并重叠
+    # Polygon，避免面积重复。显示层和 OPC 层只在坐标方向、类型与 padding 上分工。
+    clipped = (region & kdb.Region(box.to_native())).merged()
+    if clipped.is_empty():
+        return
+    tile_width = min(width, max_tile_pixels)
+    tile_rows = max(1, max_tile_pixels // tile_width)
     pixel_area = float(pixel_dbu * pixel_dbu)
     for y0 in range(0, height, tile_rows):
         rows = min(tile_rows, height - y0)
         for x0 in range(0, width, tile_width):
             columns = min(tile_width, width - x0)
             origin = kdb.Point(box.left + x0 * pixel_dbu, box.bottom + y0 * pixel_dbu)
-            areas = np.asarray(region.rasterize(
-                origin, kdb.Vector(pixel_dbu, pixel_dbu), columns, rows), dtype=np.float64)
+            areas = np.asarray(clipped.rasterize(
+                origin, kdb.Vector(pixel_dbu, pixel_dbu), columns, rows), dtype=dtype)
             # 面积矩阵是当前块唯一的大型浮点临时量；在原数组上归一化、裁界和取整，
             # 避免表达式链为每个百万像素块再产生两到三份 float64 中间数组。
             areas /= pixel_area
             np.clip(areas, 0.0, 1.0, out=areas)
-            areas *= 255.0
-            np.rint(areas, out=areas)
-            # 图片第 0 行位于顶部，而版图栅格第 0 行位于底部。块内翻转后再映射到
-            # 全局反向行区间，保证 planner 坐标系的 +Y 在最终图片中仍然朝上。
-            top = height - y0 - rows
-            pixels[top:height - y0, x0:x0 + columns] = np.flipud(areas).astype(np.uint8)
+            yield y0, x0, areas
+
+
+def _rasterize(region: kdb.Region, box: DbuBox, pixel_dbu: int,
+               shape: tuple[int, int]) -> NDArray[np.uint8]:
+    """消费公共覆盖率分块，并转换为顶部朝上的八位灰度数组。"""
+    height, _ = shape
+    pixels = np.zeros(shape, dtype=np.uint8)
+    for y0, x0, areas in iter_region_coverage_tiles(region, box, pixel_dbu, shape):
+        rows, columns = areas.shape
+        areas *= 255.0
+        np.rint(areas, out=areas)
+        # 图片第 0 行位于顶部，而版图栅格第 0 行位于底部。块内翻转后再映射到
+        # 全局反向行区间，保证 planner 坐标系的 +Y 在最终图片中仍然朝上。
+        top = height - y0 - rows
+        pixels[top:height - y0, x0:x0 + columns] = np.flipud(areas).astype(np.uint8)
     return pixels
 
 
@@ -117,11 +134,7 @@ def render_region_batch(batch: RegionBatch, layer: LayerSpec, dbu_um: float,
         raise RasterizationError(f"批次不包含图层 {layer.layer}/{layer.datatype}")
     pixel_dbu = _pixel_size_dbu(dbu_um, pixel_size_nm)
     shape = _image_shape(batch.query_box, pixel_dbu, max_pixels)
-    clip = kdb.Region(batch.query_box.to_native())
-    # 原生栅格接口不采用 Region 的 merged semantics。局部裁剪后显式合并，可避免
-    # 重叠 Polygon 被重复计算面积，同时把 merge 成本限制在 planner 当前 ROI 内。
-    region = (batch.region(layer) & clip).merged()
-    pixels = _rasterize(region, batch.query_box, pixel_dbu, shape)
+    pixels = _rasterize(batch.region(layer), batch.query_box, pixel_dbu, shape)
     if output_path is not None:
         _save_png(pixels, output_path)
     if show:

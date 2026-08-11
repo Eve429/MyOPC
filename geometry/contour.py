@@ -4,14 +4,59 @@ from __future__ import annotations
 
 from array import array
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 
 import klayout.db as kdb
 import numpy as np
+from numpy.typing import NDArray
 
 from layout.types import LayerSpec, RegionBatch
 
-from .types import ContourBatch
+
+@dataclass(frozen=True, slots=True)
+class ContourBatch:
+    """用两级 CSR 连续数组保存 Polygon、轮廓环和整数顶点。"""
+
+    vertices: NDArray[np.int64]
+    ring_offsets: NDArray[np.int64]
+    polygon_ring_offsets: NDArray[np.int64]
+
+    def __post_init__(self) -> None:
+        """规范化内存布局，并校验 Polygon/Ring 两级 CSR 编码。"""
+        vertices = np.ascontiguousarray(self.vertices, dtype=np.int64)
+        ring_offsets = np.ascontiguousarray(self.ring_offsets, dtype=np.int64)
+        polygon_offsets = np.ascontiguousarray(self.polygon_ring_offsets, dtype=np.int64)
+        if vertices.ndim != 2 or vertices.shape[1] != 2:
+            raise ValueError("vertices must have shape (N, 2)")
+        if ring_offsets.ndim != 1 or len(ring_offsets) == 0 or ring_offsets[0] != 0:
+            raise ValueError("ring_offsets must be a vector starting at zero")
+        if ring_offsets[-1] != len(vertices) or np.any(np.diff(ring_offsets) < 0):
+            raise ValueError("ring_offsets must be monotonic and end at vertex count")
+        ring_count = len(ring_offsets) - 1
+        if ring_count and np.any(np.diff(ring_offsets) < 3):
+            raise ValueError("every ring must contain at least three vertices")
+        if (polygon_offsets.ndim != 1 or len(polygon_offsets) == 0 or
+                polygon_offsets[0] != 0):
+            raise ValueError("polygon_ring_offsets must be a vector starting at zero")
+        # 每个 Polygon 至少含一个 ring；首 ring 为 hull，后续 ring 为 hole。
+        # 连续范围已经能表达 polygon_id/is_hole，避免为每个 ring 重复常驻元数据。
+        if (polygon_offsets[-1] != ring_count or
+                (len(polygon_offsets) > 1 and np.any(np.diff(polygon_offsets) < 1))):
+            raise ValueError("every polygon must own at least one contour ring")
+        object.__setattr__(self, "vertices", vertices)
+        object.__setattr__(self, "ring_offsets", ring_offsets)
+        object.__setattr__(self, "polygon_ring_offsets", polygon_offsets)
+
+    @property
+    def ring_count(self) -> int:
+        """返回外轮廓与孔洞环的总数。"""
+        return len(self.ring_offsets) - 1
+
+    @property
+    def polygon_count(self) -> int:
+        """返回当前局部批次的 Polygon 数量。"""
+        return len(self.polygon_ring_offsets) - 1
 
 
 def extract_contours(batch: RegionBatch) -> Mapping[LayerSpec, ContourBatch]:

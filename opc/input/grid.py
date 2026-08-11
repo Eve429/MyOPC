@@ -1,4 +1,4 @@
-"""OPC 方法共享的规则 core 网格数据契约。"""
+"""定义 OPC 方法共享的规则 core 网格及其坐标归属操作。"""
 
 from __future__ import annotations
 
@@ -10,27 +10,10 @@ from numpy.typing import NDArray
 
 from layout import DbuBox
 
+from ._arrays import as_points, as_vector
+
 IntArray = NDArray[np.int64]
 Int32Array = NDArray[np.int32]
-FloatArray = NDArray[np.float64]
-
-
-def _vector(value: object, dtype: np.dtype, name: str) -> NDArray:
-    """把一维输入转换为连续数组，并统一拒绝隐藏的二维广播。"""
-    array = np.ascontiguousarray(value, dtype=dtype)
-    if array.ndim != 1:
-        raise ValueError(f"{name} must be one-dimensional")
-    return array
-
-
-def _points(value: object, name: str) -> FloatArray:
-    """把坐标输入规范化为连续的 N×2 浮点数组。"""
-    array = np.ascontiguousarray(value, dtype=np.float64)
-    if array.ndim != 2 or array.shape[1] != 2:
-        raise ValueError(f"{name} must have shape (N, 2)")
-    if not np.all(np.isfinite(array)):
-        raise ValueError(f"{name} must contain finite values")
-    return array
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +44,8 @@ class RectilinearCoreGrid:
 
     def __post_init__(self) -> None:
         """规范化切线，并拒绝空网格、重复切线和负 halo。"""
-        x_cuts = _vector(self.x_cuts, np.dtype(np.int64), "x_cuts")
-        y_cuts = _vector(self.y_cuts, np.dtype(np.int64), "y_cuts")
+        x_cuts = as_vector(self.x_cuts, np.dtype(np.int64), "x_cuts")
+        y_cuts = as_vector(self.y_cuts, np.dtype(np.int64), "y_cuts")
         if len(x_cuts) < 2 or len(y_cuts) < 2:
             raise ValueError("core grid needs at least two cuts per axis")
         if np.any(np.diff(x_cuts) <= 0) or np.any(np.diff(y_cuts) <= 0):
@@ -106,12 +89,12 @@ class RectilinearCoreGrid:
 
     def locate_points(self, points: object) -> Int32Array:
         """向量化返回点的 core 索引，范围外点使用 -1。"""
-        coords = _points(points, "points")
+        coords = as_points(points, "points")
         x, y = coords[:, 0], coords[:, 1]
         columns = np.searchsorted(self.x_cuts, x, side="right") - 1
         rows = np.searchsorted(self.y_cuts, y, side="right") - 1
-        # 半开区间可以让内部共享边界稳定归右侧/上侧 core；整体最大边界没有相邻
-        # core 接管，因此单独归入最后一列/行，避免版图最外沿边段成为无 owner 数据。
+        # 内部共享边界使用半开区间并稳定归右侧/上侧；整体最大边界没有后继
+        # core，因此显式归入最后一列/行，保证最外沿边段仍有唯一 owner。
         columns[x == self.x_cuts[-1]] = self.column_count - 1
         rows[y == self.y_cuts[-1]] = self.row_count - 1
         valid = ((columns >= 0) & (columns < self.column_count) &

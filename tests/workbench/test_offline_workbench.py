@@ -13,6 +13,7 @@ import pytest
 from PIL import Image
 
 from layout import DbuBox, LayerSpec, LayoutDB
+from layout.query import ShapeQuery
 from opc.input.edge import reconstruct_region
 from opc.input.raster import rasterize_region_canvas
 from tests.workbench.offline_inputs import (
@@ -86,11 +87,11 @@ def test_raster_size_guard_runs_before_public_materialization(
     """超出单 canvas 的 ROI 必须在进入 LayoutDB 物化路径前失败。"""
     source = _write_workbench_layout(tmp_path / "large.gds")
 
-    def forbidden_open(*args: object, **kwargs: object) -> None:
-        """如果像素尺寸拒绝后仍进入公共加载路径，就让测试明确失败。"""
-        raise AssertionError("超限 ROI 不应进入 LayoutDB.open")
+    def forbidden_materialize(*args: object, **kwargs: object) -> None:
+        """如果像素尺寸拒绝后仍物化完整 Region，就让测试明确失败。"""
+        raise AssertionError("超限 ROI 不应进入 ShapeQuery.materialize")
 
-    monkeypatch.setattr(LayoutDB, "open", forbidden_open)
+    monkeypatch.setattr(ShapeQuery, "materialize", forbidden_materialize)
     with pytest.raises(ValueError, match="超过 256x256 canvas"):
         prepare_raster_input(
             source, tmp_path / "too_large.npz", layer=LayerSpec(1, 0),
@@ -102,11 +103,11 @@ def test_strict_shape_guard_runs_before_region_materialization(
     """层级展开图形数超限时必须在构造 KLayout Region 前停止。"""
     source = _write_workbench_layout(tmp_path / "complex.gds")
 
-    def forbidden_open(*args: object, **kwargs: object) -> None:
-        """预检超限后禁止进入第二次正式版图读取。"""
-        raise AssertionError("复杂度超限不应进入 LayoutDB.open")
+    def forbidden_materialize(*args: object, **kwargs: object) -> None:
+        """预检超限后禁止构造完整 Region。"""
+        raise AssertionError("复杂度超限不应进入 ShapeQuery.materialize")
 
-    monkeypatch.setattr(LayoutDB, "open", forbidden_open)
+    monkeypatch.setattr(ShapeQuery, "materialize", forbidden_materialize)
     with pytest.raises(ValueError, match="图形数超过上限"):
         prepare_segment_input(
             source, tmp_path / "too_complex.npz", layer=LayerSpec(1, 0),

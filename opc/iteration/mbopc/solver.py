@@ -17,7 +17,7 @@ from opc.input import CoreSpec
 from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_contours
 from opc.input.raster import ownership_canvas, rasterize_region_canvas
 
-from .types import IterationRecord, SimpleMBOPCConfig, SimpleMBOPCResult
+from .contracts import IterationRecord, SimpleMBOPCConfig, SimpleMBOPCResult
 
 
 def _subset_contours(contours: ContourBatch,

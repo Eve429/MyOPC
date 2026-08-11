@@ -129,7 +129,7 @@ sequenceDiagram
 
 内部主要调用：
 
-1. `_target_tile` 从固定物理 mask 构造并缓存 uint8 target；
+1. `_target_tile` 从固定物理 mask 构造并缓存 uint8 target，直到整个 batch 送设备时才统一转为 float32；
 2. `_current_tile` 同时接收本轮全局位移；局部全零时直接栅格化参考 Region，否则根据相关 polygon 构造当前 mask；
 3. `ICCAD13Lithography.forward` 批量生成三种工艺条件；
 4. `evaluate_process_window` 只在 core ownership 像素累计 L2/PVBand；
@@ -139,8 +139,13 @@ sequenceDiagram
 
 “batch 完成后立即累计”不会提前移动边：tile 输入始终来自 `current`，更新只写 `next_values`，直到 round barrier 才可见。
 
-target LRU 保存 `uint8`，current mask 保持未量化浮点覆盖率。零位移快路只省略几何
-重建，不直接复用 target 数组，所以光刻模型输入和历史评价值不发生量化变化。
+target LRU 和 CPU batch 保存 `uint8`，current mask 保持未量化浮点覆盖率。零位移快路
+只省略几何重建，不直接复用 target 数组；设备边界一次性归一化 target。`_owner_indices`
+从每 core 的 membership CSR 中筛唯一 owner，不再反复扫描全局 segment。
+
+`ICCAD13Lithography.forward` 对同一 mask 只做一次 FFT；focus 单位剂量强度供 nominal
+与 maximum 共享，defocus 单独传播，三者按 dose² 缩放后进入 sigmoid。共享频谱只在
+当前调用中存活，输出接口仍是 `LithographyResult`，因此求解器和独立工作台无需适配。
 
 ## 6. 探针和移动方向
 

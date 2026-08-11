@@ -56,6 +56,38 @@
 
 ---
 
+## [ERR-20260811-002] combined_validation_and_temp_cleanup
+
+**Logged**: 2026-08-11T00:00:00+08:00
+**Priority**: low
+**Status**: wont_fix
+**Area**: tests
+
+### Summary
+把 GDS 只读验证和递归清理临时输出组合在同一 PowerShell 命令中，被安全策略拒绝。
+
+### Error
+`rejected: blocked by policy`
+
+### Context
+- 被拒绝发生在命令执行前，没有删除或修改任何文件。
+- 拆分后的只读 KLayout 检查已经成功；两个目标均为本轮创建的系统临时目录，不在仓库内。
+- 单独的 `Remove-Item -Recurse` 仍被环境策略拒绝，因此没有改用其它 shell 绕过限制。
+
+### Suggested Fix
+测试输出优先使用框架自动管理的临时目录；若需清理，保持验证与清理为两个独立操作，并遵循运行环境允许的回收机制。
+
+### Metadata
+- Reproducible: yes
+- Related Files: none
+- See Also: ERR-20260811-001
+
+### Resolution
+- **Resolved**: 2026-08-11T00:00:00+08:00
+- **Notes**: 不绕过安全策略；临时结果不在工作树内，可由系统临时目录回收机制处理。
+
+---
+
 ## [ERR-20260810-001] stale_edge_module_guess
 
 **Logged**: 2026-08-10T10:00:00+08:00

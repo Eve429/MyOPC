@@ -76,7 +76,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
   run_layout_geometry.py run_mbopc_frontend.py run_mbopc.py
 ```
 
-当前结果：全仓库 127 项通过；OPC/光刻/评价专项历史基线 77 项、综合语句/分支覆盖率 92%；Layout/Geometry 专项 38 项、综合覆盖率 91%。阶段 30–33 新增 10 项离线工作台回归，覆盖四个数据接口、两个直接运行入口、物化前限制、损坏归档和多图形跨 core 恢复。
+当前结果：全仓库 135 项通过；OPC/光刻/评价专项 81 项、综合语句/分支覆盖率 92%。新增测试覆盖 Layout 独立导入、连续轮廓缓冲生命周期、光刻共享频谱数值/梯度、uint8 target 设备边界、membership owner 等价和前端基准 CLI。
 
 ## 5. 严格性能基准
 
@@ -86,20 +86,20 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 严格门槛检查 5,000 个图形、110,000 个 segment：零位移 XOR、最大段长、owner 完整性、halo 稀疏性，以及紧凑常驻数组相对展开表示至少节省 60%。当前结果：
 
-| 指标 | 阶段 29 当前值 | 本轮修改前基线 |
+| 指标 | 本轮当前值 | 本轮修改前基线 |
 |---|---:|---:|
-| prepare | 115.55 ms | 126.69 ms |
-| materialize | 12.19 ms | 12.31 ms |
-| zero reconstruct（显式 API） | 576.01 ms | 579.56 ms |
-| persistent arrays | 2.441 MiB | — |
-| 相对展开节省 | 69.38% | 69.38% |
+| prepare | 122.358 ms | 117.32 ms |
+| materialize | 13.097 ms | 13.48 ms |
+| zero reconstruct（显式 API） | 398.755 ms | 394.95 ms |
+| persistent arrays | 2.594 MiB | 2.594 MiB |
+| 相对展开节省 | 67.46% | 67.46% |
 
 基准不再测试 key lookup，因为生产迭代直接使用数组下标且已删除该路径。
 
-补充热点等价基准：11 万 segment 的内部 `_build_ownership` 中位耗时从 40.20 ms 降到
-37.15 ms，tracemalloc 峰值从 24.56 MiB 降到 17.85 MiB，三组归属数组逐项一致；
-500 polygons/11,000 segments 的零位移 `_current_tile` 从 44.35 ms 降到 11.06 ms，
-输出像素逐项一致。`zero reconstruct` 仍保留为显式诊断/最终输出 API，但已从求解器零位移初始化路径移除。
+补充热点等价基准：20,000 矩形 contour 峰值下降约 72%；CUDA batch=8 的 ICCAD13
+三工艺角由 25.0241 ms 降到 16.4560 ms，GPU 峰值不增加，最大逐像素误差
+5.82e-7；223,553 segment/870 core 的 owner 索引合成对照由 45.908 ms 降到
+13.178 ms。`zero reconstruct` 仍保留为显式诊断/最终输出 API。
 
 ## 6. 图形与边界必测矩阵
 
@@ -120,7 +120,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 - 同一轮所有 batch 读取相同 `current`，`next_values` 只在轮次屏障后发布；
 - 同一 segment 仅由唯一 owner 更新，halo 只读；
-- target LRU 首次与命中结果一致，浮点范围为 `[0,1]`；
+- target LRU 首次与命中结果一致，CPU 侧保持 `uint8 [0,255]`，设备 batch 统一归一化到 `[0,1]`；
 - L2/PVBand 只累计 core ownership 像素，不重不漏；
 - batch 结束后不持有整张 reticle tensor；
 - 非法候选整轮回滚，合法结果从固定全局参考边统一重建；
@@ -130,7 +130,7 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 `gcd_45nm.gds` Layer 11/0 最新前端结果：1,776 polygons、21,590 edges、223,553 segments、870 cores、880,801 memberships；完整 problem 常驻 NumPy 数组 9,802,180 bytes，相比本次结构重构前同口径 10,688,650 bytes 减少 8.29%；prepare 233.34 ms；零位移重建、core coverage 和 overlap 校验均为 0。
 
-阶段 29 再次执行三轮 CUDA 完整流程：870 cores、880,801 memberships；EPE `129645 -> 74592 -> 48348`，L2 `1038629.522 -> 563335.522 -> 440251.431`；GPU 峰值分配 271,544,320 bytes；总耗时 79.117 s（阶段 28 为 85.892 s）；结果 GDS 合法且无全流程 NPZ。
+本轮再次执行三轮 CUDA 完整流程：870 cores、880,801 memberships；EPE `129645 -> 74592 -> 48348`，L2 `1038629.525 -> 563335.526 -> 440251.433`，PVBand `115627.016 -> 134541.151 -> 147187.144`；GPU 峰值分配 267,334,656 bytes；总耗时 79.834 s（阶段 28 为 85.892 s）；结果 GDS 可重新读取且无全流程 NPZ。
 
 PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改善指标。
 
@@ -171,3 +171,5 @@ PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改�
 ```
 
 当前聚焦结果为 10 项通过；工作台自身综合 statement/branch coverage 为 74%。未命中主要是三个 CLI 的错误退出、外部工作目录 bootstrap 和低概率损坏归档分支；四个核心接口、两个真实模型成功路径、两种物化前保护和主要损坏输入均已覆盖。详细矩阵与真实数据见 [离线工作台测试报告](offline_workbench_test_report.md)。
+
+本轮完整矩阵、性能和真实版图数据见[代码优化测试报告](code_optimization_test_report.md)。

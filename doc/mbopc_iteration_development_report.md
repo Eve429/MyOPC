@@ -8,11 +8,13 @@
 
 ## 2. 流式整图方案
 
-CPU 常驻全局参考 problem 和一维 displacement。每个 batch 只生成 core+halo 的 current/target/ownership 图，在设备上运行模型后立即把 core 指标和 owner 方向累计到 CPU，并释放输出 tensor。target 使用有字节上限的 uint8 LRU。
+CPU 常驻全局参考 problem 和一维 displacement。每个 batch 只生成 core+halo 的 current/target/ownership 图，在设备上运行模型后立即把 core 指标和 owner 方向累计到 CPU，并释放输出 tensor。target 使用有字节上限的 uint8 LRU，CPU batch 也保持 uint8，送设备时才一次性转为 float32；current mask 仍保留未量化覆盖率。
 
 每轮所有 batch 只读 `current`，写入 `next_values`；完成全部 batch 和全局拓扑验证后才发布。该同步屏障保证 core 处理顺序不改变结果，也避免边被某个早完成 batch 提前更新。
 
 最终从最佳全局 displacement 重建一次完整 Region。halo 从不写最终结果，core 也不裁剪最终 Polygon。
+
+owner segment 索引由每 core 的 membership CSR 直接过滤，避免对全局 segment 数组重复扫描。ICCAD13 在一次 `forward` 内共享 mask FFT 和 focus 单位剂量强度；这些优化不改变轮次状态、segment 身份或模型输出接口。
 
 ## 3. 评价与更新
 

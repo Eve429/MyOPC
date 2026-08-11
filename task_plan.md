@@ -197,8 +197,8 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 39 | 已完成 | 锁定当前契约、功能基线、性能基线和可接受数值误差 |
 | 40 | 已完成 | 收敛 Layout/Geometry API，删除反向依赖与无调用文件，优化轮廓/栅格热路径 |
 | 41 | 已完成 | 复用光刻频谱与工艺角强度，压缩 OPC tile 批处理内存并优化 owner 索引 |
-| 42 | 进行中 | 执行聚焦/全量/真实版图/性能/覆盖率验证并核对所有验收门槛 |
-| 43 | 待开始 | 编写大 reticle 独立方案及开发/测试报告，完成冗余、调用点和依赖审计并提交 |
+| 42 | 已完成 | 执行聚焦/全量/真实版图/性能/覆盖率验证并核对所有验收门槛 |
+| 43 | 已完成 | 编写大 reticle 独立方案及开发/测试报告，完成冗余、调用点和依赖审计并提交 |
 
 ## 本轮新增错误记录
 
@@ -211,3 +211,4 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 工作台探查猜测了不存在的入口文件 | 1 | 以 `rg --files` 为准，实际入口为 `tests/workbench/run_lithography.py` |
 | MB-OPC 前端基准仍引用已删除字段 | 1 | 本轮修正当前紧凑契约并增加直接 CLI 回归 |
 | 新增基准 CLI 回归使用 10 图形/64 core 导致 halo 比例失真 | 1 | 改为仍可快速执行的 100 图形，并保留严格门槛验证 |
+| 把只读 GDS 验证与递归临时清理组合后被安全策略拒绝 | 2 | 验证已拆分并通过；不绕过策略，临时目录留给系统回收且不在工作树内 |

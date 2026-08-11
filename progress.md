@@ -184,3 +184,7 @@
 - 轮廓提取改为单连续 64 位缓冲，两个栅格入口改为原位归一化；46 项 Layout/Geometry/栅格回归通过，严格基准为 0.10170 ms ROI 与 483.731 ms 2048² 栅格，结果精确且无性能退化。
 - 阶段 41 完成：光刻三工艺角共享一次 mask FFT 和 focus 强度；OPC target 保持 uint8 到设备边界，CPU batch 一次预分配，owner 从 membership CSR 过滤。
 - 28 项光刻/求解/CLI 聚焦回归通过；共享频谱提升 1.5207 倍、GPU 峰值不增加、最大误差 5.82e-7，`simple.gds` 三轮 EPE/质量/移动统计保持验收范围内一致。
+- 阶段 42 完成：Ruff、compileall、135 项全仓库测试通过；OPC/光刻/评价 81 项、综合 statement/branch coverage 92%。
+- `gcd_45nm` 三轮 CUDA 完整验证通过，EPE/owner/拓扑统计与历史一致，总耗时 79.834 s、GPU 峰值 267,334,656 bytes；两个结果 GDS 均已由 KLayout 重新读取验证。
+- 阶段 43 完成：同步主开发/测试手册、函数调用关系、Layout/Geometry 与迭代报告；新增代码优化开发/测试报告和未实施的大 reticle 独立方案。
+- 最终审计覆盖 74 个 Python 文件和全部 doc Markdown：中文 docstring、链接、围栏、删除符号、依赖方向、diff whitespace、未调用函数和用户文件检查均通过；待本地文档提交。

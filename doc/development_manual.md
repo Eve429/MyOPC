@@ -92,13 +92,19 @@ layout -> geometry -> opc.input -> opc.iteration.mbopc
 `reconstruct_contours`。某个 core 的全部 context segment 仍为精确零位移时，
 `_current_tile` 直接栅格化固定参考 Region，跳过局部 contour 子集和 Region 差分。
 target 缓存为降低常驻内存使用 `uint8`，而 current mask 保留浮点面积覆盖率，因此快路
-不能直接把量化 target 当作 current mask；这一数值边界有专门回归保护。
+不能直接把量化 target 当作 current mask；这一数值边界有专门回归保护。target 在
+CPU batch 中始终保持 `uint8`，只在一次性送到模型设备时转为 `float32` 并除以 255；
+三组 CPU batch 数组都预分配后原位填充，不再逐 tile 建列表再 `stack`。
+
+每个 core 的 owner segment 直接从现有 membership CSR 切片中过滤，不再对完整
+`owner_indices` 做 `core_count` 次全局扫描。该变化只缩短索引准备，不改变 segment
+全局下标、唯一 owner、halo 只读或轮次屏障。
 
 拓扑保护会拒绝 ring 绕向翻转和 hole 逃逸。当前 v1 采用整轮回滚，避免发布局部损坏图形；没有为假设中的局部恢复预建接口。
 
 ## 6. 光刻与评价替换
 
-`ICCAD13Lithography` 独立位于 `lithography/`，迭代只依赖其批量 nominal/maximum/minimum 输出。新模型应保持当前张量坐标、画布和设备语义，不把模型细节写回输入层。
+`ICCAD13Lithography` 独立位于 `lithography/`，迭代只依赖其批量 nominal/maximum/minimum 输出。三工艺角共享一次 mask FFT；focus 单位剂量强度同时乘 `dose_nominal²` 和 `dose_max²`，defocus 强度乘 `dose_min²`。共享中间量只存在于一次 `forward` 内，保留 autograd，不增加跨调用缓存。新模型应保持当前张量坐标、画布和设备语义，不把模型细节写回输入层。
 
 `evaluate_process_window` 只在 ownership 像素累计 L2/PVBand。`evaluate_edge_probes` 根据 target 的内外语义产生 `-1/0/+1` 法向移动方向；同一 probe 同时触发相反要求时记为 ambiguous 且不移动。更换迭代算法可以复用评价函数，也可以在独立方法目录实现新损失，但不能让公共输入依赖具体算法。
 
@@ -135,3 +141,5 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 `tests/workbench/run_lithography.py` 只消费像素归档，输出三工艺角连续数组和可选 PNG；`tests/workbench/run_mbopc_iteration.py` 只消费边段归档，输出最佳位移、迭代 JSON、GDS 和可选标注图。两个入口均可从任意工作目录直接运行，不需要安装本项目。
 
 详细字段、内存边界和设计审计见 [离线工作台开发报告](offline_workbench_development_report.md)。
+
+本轮函数与内存收敛见[代码优化开发报告](code_optimization_development_report.md)；尚未实施的大 reticle 稀疏/macro 路径见[独立开发方案](large_reticle_streaming_plan.md)。

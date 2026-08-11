@@ -287,3 +287,33 @@
 - `run_mbopc_iteration.py` 继续只接受边段 NPZ，因为直接 GDS 的完整 MB-OPC 已由 `run_mbopc.py` 提供；避免同一前端存在两个实现。
 - `simple.gds` 直接 CPU 光刻与一轮 SimpleILT 均退出 0，光刻 shape 为 256²，SimpleILT binary L2 为 1900；两条命令均未准备 raster NPZ。
 - 函数体审计只发现 `run_mbopc.py` 中一份与公共 `parse_layer` 完全相同的实现；删除后重复函数体为 0，30 项相关入口回归通过。
+
+## 阶段 59 接口审查约束
+
+- 接口文档以当前源码为唯一依据，区分包级公共导出、模块级可调用接口、内部辅助函数和命令行入口，不把未来大 reticle 方案写成当前能力。
+- 每项核心接口需要明确数据类型、数组 shape/dtype、坐标系与单位、对象生命周期、可变性、异常、内存/性能语义和主要调用方；本轮不通过修改生产代码来“配合文档”。
+- 当前生产代码共 45 个 Python 模块：`layout` 6、`geometry` 6、`opc` 21、`lithography` 2、`evaluation` 2、`main` 8（含各包 `__init__`）；接口文档将逐一覆盖，并单列 7 个直接运行入口。
+- 包级公共入口由 `layout/__init__.py`、`geometry/__init__.py`、`opc/input/__init__.py`、`opc/input/edge/__init__.py`、`lithography/__init__.py`、`evaluation/__init__.py` 和两个迭代子包定义；`_arrays.py`、ownership 及 runner 私有辅助函数只记录为内部契约，不宣传为稳定 API。
+- Layout 的核心生命周期是 `LayoutDB.open -> query -> ShapeQuery.materialize -> RegionBatch`；`ShapeQuery` 持有数据库引用，数据库关闭后不可物化，而已经返回的 `RegionBatch` 持有原生 Region。ROI 的候选筛选和精确裁剪均在 KLayout 侧完成，`preserve_properties=True` 只导入并继承属性，不过滤无属性图形。
+- Geometry 有三组独立输出契约：`ContourBatch` 是 Polygon→Ring→Vertex 两级 CSR；`PatchSet` 是按 ownership 裁剪、同层无正面积重叠的结果集合；显示 raster 是顶部朝上的 `uint8`，而底层 coverage tile 是左下原点浮点覆盖率，接口文档必须避免混淆坐标方向。
+- OPC 公共输入分为三层：`PhysicalMask` 保存合并后的单层物理 Region；`RectilinearCoreGrid` 定义唯一写入 core 与只读 halo；`MBOPCProblem` 再加入固定参考轮廓、segment 参数区间、owner 向量和 core→segment CSR。`prepare_problem` 是这三层的组合边界，一次准备后供多轮迭代复用。
+- `SegmentBatch` 不常驻端点；它以 `edge_ids + t0/t1` 引用数学边，`materialize(displacements)` 才输出三个 `float64[S,2]` 数组。owner 由参考边段中点唯一决定；membership 由参考边段 bbox 扩 halo 后形成 CSR，同一 segment 可属于多个 core context 但只能有一个 owner。
+- 栅格接口存在有意的方向差异：`opc.input.raster.rasterize_region_canvas` 返回左下原点、固定 `canvas×canvas` 的 `float32`；`geometry.render_*` 返回顶部朝上的可视化 `uint8`。光刻、探针换算和 ILT 使用前者，PNG 展示使用后者。
+- `preflight_layout` 会单独读取版图并扫描层级 ROI，在完整 Region/Segment 分配前返回字节估算和接受判断；提前超预算时计数是下界且 `scan_complete=False`，当前拒绝结果指向尚未实现的 `sharded_required`，不能写成自动切换流式求解。
+- 光刻公共接口是 `ICCAD13Lithography.forward(mask, condition)` 和 `forward_many(mask, conditions)`；输入为 `[H,W]` 或 `[B,H,W]`，输出形状与输入一致、值为连续光刻胶概率。模型内部居中 padding 到 canvas、必要时最近邻缩放到 resolution，并在一次 `forward_many` 内共享 mask FFT 和同 kernel bank 的单位剂量强度；原生 PyTorch autograd 提供 backward。
+- Evaluation 的 L2/PVBand 返回 Python `int` 像素计数；EPE 返回五个逐探针 Tensor，其中方向 +1 为沿外法向外移、-1 为内移、同时冲突为 0 且 `ambiguous=True`。这些接口接受的像素图必须 shape/device 一致，ownership mask 只控制计分，不裁剪卷积上下文。
+- SimpleILT 的输入是目标像素 Tensor 和光刻模型，不依赖 `MBOPCProblem`；返回最优参数、软 mask、二值 mask 和逐轮连续损失。SimpleMBOPC 的输入是固定边段问题和光刻模型；每轮全部 core 从同一 `current` 读取，owner 更新暂存到 `next_values`，全局拓扑检查通过后才发布。
+- MB-OPC 当前是“按 GPU batch 流式像素张量、CPU 常驻完整问题”的实现：target tile 可按字节上限 LRU 缓存，GPU batch 结束即释放；但完整 `SegmentBatch`、owner/membership CSR 和全局位移仍在内存中。接口文档必须把这一点和未来 macro shard 方案严格分开。
+- `main/offline_inputs.py` 是当前文件级数据契约边界：raster NPZ v1 保存 `float32[canvas,canvas]` 与 JSON metadata；segment NPZ v2 保存轮廓 CSR、边/段数组、owner/membership CSR 和 grid cuts，可恢复完整 `MBOPCProblem`。两个 loader 都先限制归档及解压尺寸、禁止 pickle，并执行结构和跨数组校验。
+- `resolve_raster_input` 只按 `.npz` 与非 `.npz` 分派：NPZ 中的 Layer/ROI/pixel 已由 metadata 固定，调用时传入的版图参数不会覆盖；GDS/OASIS 分支执行同一 preflight→materialize→raster 流程且不写隐式中间文件。
+- `main/run_mbopc.py` 是直接 GDS→完整前端→迭代→最佳 GDS/JSON/可选 PNG 的生产验证入口；`run_mbopc_frontend.py` 是几何前端/归属/重建/诊断入口，不执行光刻优化；`run_layout_geometry.py` 是单 ROI 查询、轮廓计数、PNG/Patch 验证入口。
+- `run_lithography_test` 返回仍在模型设备上的三工艺条件 Tensor 字典，输出目录只控制额外 NPZ/JSON/PNG；`run_simpleilt` 返回 `(SimpleILTResult, summary)` 且总会写结果 NPZ/JSON；`run_mbopc_iteration_test` 只接受 segment NPZ，返回 `SimpleMBOPCResult` 并写 GDS/result NPZ/JSON/可选 PNG。
+- 七个可直接运行脚本是：`offline_inputs.py`、`run_layout_geometry.py`、`run_lithography.py`、`run_mbopc_frontend.py`、`run_mbopc.py`、`run_mbopc_iteration.py`、`run_simpleilt.py`。所有入口把仓库根按脚本位置加入 `sys.path`，所以无需安装项目包；正常成功返回 0，可预期输入/领域错误返回 2。
+- `run_mbopc_frontend` 的诊断 NPZ（`save_problem_npz`）与可恢复离线 segment NPZ（`prepare_segment_input`）用途不同：前者用于带位移的可视化诊断，后者是严格版本化的 `MBOPCProblem` 输入。接口文档必须明确禁止把两者互换。
+- `opc.diagnostics` 的四类输出均是显式副作用接口：按 segment 下标对齐的诊断 NPZ v3、含 `REFERENCE/RECONSTRUCTED` 两个 top cell 的 GDS、顶部原点标注 PNG、五类确定性几何用例 JSON/PNG。它不被输入或求解热路径反向依赖。
+- 现有 `function_call_architecture.md` 已较好解释 MB-OPC/ILT 数据流，但不是逐模块 API 参考：缺少 dataclass 全字段、返回 shape/dtype、对象生命周期、完整异常和七个 runner 的输入输出差异。本轮应新增独立 `module_interface_reference.md`，避免把调用关系文档膨胀成难以查询的混合手册。
+- 当前运行时 Python 要求 `>=3.12`；核心依赖 KLayout/NumPy/Pillow/PyTorch，`psutil` 实际被生产 preflight 导入，虽然 `pyproject.toml` 把它列在 dev 可选组、`requirements.txt` 已包含。此次只记录现状，不顺带修改依赖配置。
+- 测试目录按 Layout、Geometry、OPC、Lithography、Evaluation、离线工作台分层，公开入口均存在生产或测试调用证据；文档可用这些真实调用边界判断“公共”与“内部”，不需要为说明目的新增接口。
+- `opc.iteration.ilt.optimize` 与 `opc.iteration.mbopc.optimize` 同名但属于不同算法命名空间，调用方必须从明确子包导入或使用别名；顶层 `opc.iteration` 有意不做聚合导出，避免含义冲突。
+- 最终接口参考为 763 行，逐路径覆盖 45 个生产模块和全部包级 `__all__` 符号；49 个相对链接全部存在，代码围栏平衡，Python 示例均可编译。
+- 本轮没有修改任何生产 Python、`layout/`、`geometry/` 或用户版图；只新增接口文档并更新手册导航、计划记录和一次已解决的模块计数审计学习。

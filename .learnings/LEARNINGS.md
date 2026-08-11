@@ -1,5 +1,36 @@
 # Learnings
 
+## [LRN-20260812-001] best_practice
+
+**Logged**: 2026-08-12T12:00:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: docs
+
+### Summary
+递归模块总数必须由实际文件清单按顶层目录分组计算，不能根据手写包列表心算。
+
+### Details
+接口审查已正确覆盖全部文件，但过程记录先把嵌套的 `opc` 子包和 `main/__init__.py` 漏算，误写为 39。使用与审查相同过滤条件的 `rg --files` 并按顶层目录分组后，当前生产模块准确数量为 45：layout 6、geometry 6、opc 21、lithography 2、evaluation 2、main 8。
+
+### Suggested Action
+以后所有“全模块覆盖”报告同时保存机器生成的文件总数、分组计数和缺失模块列表；正文覆盖检查以真实路径集合为准，不以人工总数作为权威。
+
+### Metadata
+- Source: error
+- Related Files: doc/module_interface_reference.md, findings.md, progress.md
+- Tags: docs, inventory, module-count, audit
+- Pattern-Key: docs.module_inventory_from_files
+- Recurrence-Count: 1
+- First-Seen: 2026-08-12
+- Last-Seen: 2026-08-12
+
+### Resolution
+- **Resolved**: 2026-08-12T12:05:00+08:00
+- **Notes**: 已使用实际文件清单确认 45 个生产模块，修正过程记录，并保留自动化模块/导出覆盖检查。
+
+---
+
 ## [LRN-20260809-005] correction
 
 **Logged**: 2026-08-09T14:35:00+08:00

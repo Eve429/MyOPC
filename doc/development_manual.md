@@ -1,6 +1,6 @@
 # MyOPC 开发手册
 
-函数级入口、调用顺序和数据生命周期见 [MyOPC 函数调用关系与数据流](function_call_architecture.md)。
+逐模块输入输出、数组 shape/dtype、坐标单位、异常和文件协议见[模块输入输出接口参考](module_interface_reference.md)；函数级入口、调用顺序和数据生命周期见[函数调用关系与数据流](function_call_architecture.md)。
 
 ## 1. 设计目标
 

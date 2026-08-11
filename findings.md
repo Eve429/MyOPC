@@ -244,3 +244,10 @@
 - 2048² raster 公共底层复用后为 416.94 ms、RSS 增量 7.62 MiB，覆盖率精确；相比最近 483–502 ms 项目基线无退化。
 - 当前结构已无第一方旧深层 types 导入；`_arrays.py` 仅含三种有多个现实调用方的数组校验，不承担无边界的通用工具职责。
 - 最终重复实现审计发现固定 tile cuts 在三个当前入口完全相同；已归入 `grid.axis_cuts_by_size` 并删除三个本地版本。数量均分 `_axis_cuts` 只服务 frontend 的另一种 CLI 语义，继续保留。
+
+## 阶段 48 大 Reticle 方案结论
+
+- `ShapeQuery.materialize()` 的精确 ROI 裁剪适合显示、栅格化和局部画布，但会产生 ROI 框轮廓；当前 `prepare_problem()` 不区分裁剪边和物理边，因此它不能直接用于阶段 2 的跨 macro 提边。
+- macro 必须同时具有唯一写入的 `ownership_box` 和只读上下文的 `context_box`。未来取得 Layout 修改授权后，应增加未裁剪的完整候选 occurrence 批量入口，同时保持现有 `materialize()` 语义不变。
+- 阶段 2 采用“每一轮逐 macro 展开、计算、释放，轮末统一发布”，不采用“一个 macro 完成全部轮次再处理下一个”。数学边的分段相位锚定完整真实边，避免斜边被独立裁剪后出现 33/34 DBU 分歧。
+- 百亿 segment 不能依赖全局 `int32` 或全部 RAM 常驻；采用 shard-local `int32`、全局 `int64` offset，并根据预检在 RAM 紧凑状态与 memmap 双代状态之间选择内部路径。

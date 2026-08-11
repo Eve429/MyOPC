@@ -209,6 +209,12 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 46 | 已完成 | 为前端增加关键阶段时间、进程内存和产物跳过统计 |
 | 47 | 已完成 | 聚焦/全量/真实版图验证，文档、简化审计与本地关键提交 |
 
+## 阶段 48：大 Reticle 阶段 2 方案固化
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 48 | 已完成 | 固化 CPU macro/GPU core 两级流式、未裁剪候选提边、RAM/memmap 状态、全局轮次屏障及验收矩阵；仅更新设计文档，不实施生产代码 |
+
 ## 本轮新增错误记录
 
 | 错误 | 次数 | 处理 |

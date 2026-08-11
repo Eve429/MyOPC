@@ -212,3 +212,4 @@
 - 最终 Ruff、compileall 和全仓库 141 项测试再次通过（25.69 s）；Geometry/OPC 聚焦 108 项综合 branch coverage 92%。
 - 最终静态审计通过：72 个第一方 Python 文件中文模块/函数 docstring 无缺失；旧 types 路径、重复 `_vector/_matrix/_points` 和三份 tile cuts 均无残留；25 份 doc Markdown 无断链或围栏错误。
 - 阶段 44–47 全部完成，待创建文档/最终精简里程碑提交；阶段 2 保持未实施。
+- 阶段 48 完成：重写 `doc/large_reticle_streaming_plan.md`，明确当前能力边界、CPU macro/GPU core 两级流式、macro 边界不产生物理边、RAM/memmap 状态、全局轮次屏障、ILT/PB-OPC 复用边界和完整验收矩阵；未修改任何生产代码。

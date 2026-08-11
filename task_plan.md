@@ -233,7 +233,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 55 | 已完成 | 从现有离线 raster 准备流程提取受同一容量保护约束的内存接口，并保留 NPZ 契约 |
 | 56 | 已完成 | 为光刻和 SimpleILT 根入口增加 GDS/OASIS/NPZ 自动分派及版图范围参数 |
 | 57 | 已完成 | 增加直接版图、NPZ 兼容、结果一致性、容量拒绝及仓库外 CLI 回归 |
-| 58 | 进行中 | 同步手册与专项报告，执行全量测试、简化审计、保护目录审计并创建本地提交 |
+| 58 | 已完成 | 同步手册与专项报告，执行全量测试、简化审计、保护目录审计并创建本地提交 |
 
 ## 本轮新增错误记录
 

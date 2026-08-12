@@ -132,6 +132,20 @@ class LayoutDB:
         self._native_cell(selected)
         return ShapeQuery(self, selected, normalized, box, preserve_properties)
 
+    def recursive_polygon_shapes(
+            self, layer: LayerSpec, box: DbuBox,
+            cell: CellRef | None = None) -> kdb.RecursiveShapeIterator:
+        """创建只读层级 Polygon 类图形迭代器，供物化前容量扫描使用。"""
+        # 迭代器仍借用当前 LayoutDB 的原生数据库，调用方必须在数据库关闭前
+        # 完成遍历。公共方法统一解析 Cell/Layer 和 shape flags，上层无需访问
+        # `_native_*` 私有对象，也不会因查询不存在的 Layer 创建空层。
+        selected = cell or self._top_cell
+        iterator = kdb.RecursiveShapeIterator(
+            self._native_layout, self._native_cell(selected),
+            self._native_layer_index(layer), box.to_native(), True)
+        iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
+        return iterator
+
     def close(self) -> None:
         """释放原生版图；已有惰性查询此后会安全失败。"""
         self._layout = None

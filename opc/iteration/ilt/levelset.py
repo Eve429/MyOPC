@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch.nn import functional
 
-from lithography import ICCAD13Lithography, ProcessCondition
+from lithography import LithographyModel, ProcessCondition
 
 from .simple import ILTIterationRecord, SimpleILTResult, _curvature_loss, _image_batch
 
@@ -138,7 +138,7 @@ def signed_distance_initialization(target: torch.Tensor,
     return result[0] if target.ndim == 2 else result
 
 
-def optimize_levelset(target: torch.Tensor, model: ICCAD13Lithography,
+def optimize_levelset(target: torch.Tensor, model: LithographyModel,
                       config: LevelSetConfig,
                       initial_levelset: torch.Tensor | None = None,
                       optimization_mask: torch.Tensor | None = None,

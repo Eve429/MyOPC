@@ -11,12 +11,12 @@ dependencies = [
     "klayout>=0.30.10,<0.31",
     "numpy>=2.5,<3",
     "pillow>=12,<13",
+    "psutil>=7",
     "torch>=2.4,<3",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "psutil>=7",
     "pytest>=8,<10",
     "pytest-cov>=5,<8",
     "ruff>=0.12,<1",

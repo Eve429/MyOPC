@@ -9,7 +9,7 @@ from time import perf_counter
 
 import torch
 
-from lithography import ICCAD13Lithography, ProcessCondition
+from lithography import LithographyModel, ProcessCondition
 
 from .simple import (
     ILTIterationRecord,
@@ -60,7 +60,7 @@ class CurvMultiConfig:
 
 
 def optimize_curvmulti(
-        target: torch.Tensor, model: ICCAD13Lithography,
+        target: torch.Tensor, model: LithographyModel,
         config: CurvMultiConfig,
         initial_parameters: torch.Tensor | None = None,
         optimization_mask: torch.Tensor | None = None,

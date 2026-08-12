@@ -174,7 +174,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         memory_checkpoints["roi_materialize"] = process_memory_snapshot()
         # 层级遍历只在 materialize 时发生一次；prepare_problem 批量生成全局参考边、
         # 参数化 segment 和 owner/context CSR，之后每轮不会重新读取源版图。
-        problem = prepare_problem(batch, layer, fragmentation, grid, args.polarity)
+        problem = prepare_problem(
+            batch, layer, fragmentation, grid, args.polarity,
+            max_memberships=int(preflight["max_memberships"]))
     prepared = perf_counter()
     memory_checkpoints["problem_prepare"] = process_memory_snapshot()
 

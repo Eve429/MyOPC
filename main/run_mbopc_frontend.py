@@ -284,7 +284,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             batch = database.query([layer], box).materialize()
             _finish_stage(timings, checkpoints, "roi_materialize", stage)
             stage = perf_counter()
-            problem = prepare_problem(batch, layer, config, grid, args.polarity)
+            problem = prepare_problem(
+                batch, layer, config, grid, args.polarity,
+                max_memberships=int(preflight["max_memberships"]))
             _finish_stage(timings, checkpoints, "problem_prepare", stage)
 
     dbu_nm = dbu_um * 1000.0

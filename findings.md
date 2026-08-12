@@ -419,3 +419,12 @@
 - `OwnershipError` 只有定义和包级导出，没有任何抛出点、捕获点或测试；当前 ownership 不变量实际抛 `ValueError`。这是确定的无实现公共抽象，应删除，或将真实 ownership 错误统一改抛它；从精简角度更建议删除，除非用户明确要稳定领域异常 API。
 - `GeometryError`/`OPCError` 基类本身不直接抛出但由 runner 统一捕获子类，属于有效抽象；其他具体异常均有真实抛出点，不应删除。
 - 阶段 88 最终验证：Ruff、compileall、226 项全量测试（60.08 秒）、文档链接/围栏、diff whitespace 和保护目录差异全部通过；评审结论记录于 `doc/current_architecture_review.md`，验证记录位于 `doc/current_architecture_review_test_report.md`。
+
+# 2026-08-12：阶段 89–93 P1/P2 实施决策
+
+- P1/P2 以 `doc/current_architecture_review.md` 第 4、5 节为唯一范围；P3 明确不在本轮实施。
+- `layout` 修复应公开“构造受生命周期约束的原生递归图形迭代器”，而不是公开整个原生 Layout/Cell 或让 preflight 继续调用 `_native_*`。
+- 光刻抽象只使用静态 `Protocol` 表达当前 solver 已实际消费的能力；runner 继续直接构造 ICCAD13，不新增运行期分派。
+- SimpleILT 兼容入口需要保留结果对象返回值，因此统一 `run_ilt` 的内部结果应提供一个不破坏现有 `run_ilt -> summary` API 的私有/可选返回通道，或抽取共享执行函数；优先选择最少包装和单一产物路径的方案。
+- `LayoutDB.recursive_polygon_shapes` 是本轮唯一新增的 layout 公共能力：返回仍绑定数据库生命周期的原生 iterator，不暴露 Layout/Cell/layer index，也不物化 Region。
+- preflight 从预算按 32 B/membership 推导构造硬上限；`prepare_problem(max_memberships=...)` 保持旧小 ROI 调用兼容，真实输入路径显式传入该上限。

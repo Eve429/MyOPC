@@ -72,8 +72,9 @@ class MBOPCProblem:
 
 def prepare_problem(batch: RegionBatch, layer: LayerSpec, config: FragmentationConfig,
                     grid: RectilinearCoreGrid | None = None,
-                    polarity: MaskPolarity | str = MaskPolarity.CLEAR) -> MBOPCProblem:
-    """一次性准备可供多轮 MB-OPC 复用的完整前端问题。"""
+                    polarity: MaskPolarity | str = MaskPolarity.CLEAR, *,
+                    max_memberships: int | None = None) -> MBOPCProblem:
+    """在显式 membership 上限内准备可供多轮边段 OPC 复用的内存问题。"""
     physical = normalize_physical_mask(batch, layer, polarity)
     # PhysicalMask 仅保留所有 OPC 方法共享的原生 Region。边段型输入在这里执行
     # 唯一一次数值轮廓提取，之后由 SegmentBatch 成为该拓扑的唯一持有者。
@@ -85,5 +86,5 @@ def prepare_problem(batch: RegionBatch, layer: LayerSpec, config: FragmentationC
         grid = RectilinearCoreGrid(
             np.array([box.left, box.right], dtype=np.int64),
             np.array([box.bottom, box.top], dtype=np.int64))
-    owners, offsets, members = _build_ownership(segments, grid)
+    owners, offsets, members = _build_ownership(segments, grid, max_memberships)
     return MBOPCProblem(physical, config, segments, grid, owners, offsets, members)

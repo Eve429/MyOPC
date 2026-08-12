@@ -135,11 +135,7 @@ def preflight_layout(
         raise ValueError("边段预检长度必须为正")
     # 预检与后续 ROI 物化共享同一个只读 LayoutDB，避免大型 GDS/OASIS 重复解析；
     # GLP 也因此只经过一次严格文本解析。这里仍只扫描层级迭代器，不构造完整 Region。
-    layout = database._native_layout
-    top = database._native_cell(database.top_cell)
-    layer_index = database._native_layer_index(layer)
-    iterator = kdb.RecursiveShapeIterator(layout, top, layer_index, box.to_native(), True)
-    iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
+    iterator = database.recursive_polygon_shapes(layer, box)
     shapes = vertices = segments = memberships = 0
     scan_complete = True
     for item in iterator:
@@ -188,6 +184,10 @@ def preflight_layout(
         reason = "segment 或 membership 超过当前全局 int32 容量"
     elif not memory_ok:
         reason = "当前全局准备/求解路径预计超过 CPU 内存预算"
+    # membership 构造需要排序、局部索引和最终 CSR 多张数组，按预检相同的
+    # 32 B/membership 上界从本次预算推导硬限制。真实构造器会在 np.repeat
+    # 前检查此值，防止布尔合并新增交点时绕过扫描估算后直接巨量分配。
+    membership_limit = min(_INT32_MAX, int(memory_budget_bytes) // 32)
     return {
         "source_file_bytes": file_bytes, "shape_occurrences": shapes,
         "source_vertices": vertices, "estimated_segments": segments,
@@ -198,5 +198,6 @@ def preflight_layout(
         "int32_capacity_ok": int32_ok, "memory_budget_ok": memory_ok,
         "scan_complete": scan_complete, "counts_are_lower_bounds": not scan_complete,
         "accepted": accepted, "reason": reason,
+        "max_memberships": membership_limit,
         "recommended_mode": "in_memory" if accepted else "sharded_required",
     }

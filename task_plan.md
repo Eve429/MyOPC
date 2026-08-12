@@ -346,6 +346,24 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 |---|---|---|
 | 88 | 已完成 | 只读审查当前生产模块的数据所有权、依赖方向、调用关系、重复实现、入口组织、内存/性能路径与异常边界；输出分级问题和最小改进建议，不修改生产代码 |
 
+## 阶段 89–93：P1/P2 架构收敛实施
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 89 | 已完成 | 固定 P1/P2 公共接口、归档、入口、性能和测试基线；确认本次 `layout/` 最小修改授权 |
+| 90 | 已完成 | 实施 P1：运行依赖、LayoutDB 受控扫描、光刻模型 Protocol、in-memory builder 显式容量契约 |
+| 91 | 进行中 | 实施 P2：产物 I/O 拆分、SimpleILT 单实现、Layer parser/ILT helper/owner 查询/切分计数去重 |
+| 92 | 待开始 | 专项与全量测试、CPU/CUDA 数值一致性、性能/内存和兼容性回归 |
+| 93 | 待开始 | 未调用函数、私有跨模块导入、重复实现和 bug 修复残留审计；同步手册、报告并本地提交 |
+
+### 阶段 89–93 实施约束
+
+- 用户已明确要求实现评审报告 P1/P2，本轮允许为受控层级扫描公共接口最小修改 `layout/`；`geometry/` 仍保持零修改。
+- 不实施 P3 的 `EdgeOPCProblem` 改名、项目身份改名、生成产物清理或历史归档格式改名，避免扩大公共迁移范围。
+- 不建立 runner 基类、模型注册器、算法工厂、配置继承或第二个 ownership 数据结构。
+- `run_simpleilt.py` 保留直接运行和 Python 返回 `(SimpleILTResult, summary)` 的兼容契约，但核心执行与产物统一委托 `run_ilt(method="simple")`。
+- `prepare_problem` 的容量保护必须在 membership 大数组分配前生效；默认仍兼容现有小 ROI 调用，真实入口继续显式传递预检得到的安全上限。
+
 ## 阶段 82–87 实施约束
 
 - 本轮经用户明确授权，只允许为 GLP 输入最小修改 `layout/`；`geometry/` 保持零修改。
@@ -370,3 +388,5 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 阶段 88 静态函数清单临时使用了 `Set-Content` | 1 | 立即用 `apply_patch` 删除临时文件；后续审查结果直接读取或写入正式评审文档，不再用 shell 写文件 |
 | 阶段 88 分段读取命令中的 `$f:$start` 被 PowerShell 当作作用域变量 | 1 | 命令在解析期失败且未改文件；改用 `-f` 格式化字符串，避免变量后紧接冒号 |
 | 阶段 88 一次 `rg` 再次把 `main/run_*.py` 当作 Windows 路径 | 1 | 前置只读结果有效，末项未执行；后续只传 `main` 目录并用 `--glob 'run_*.py'` 过滤 |
+| 阶段 90 首个 P1 原子补丁使用了不匹配的 `LayoutDB.query` 签名上下文 | 1 | 原子补丁整体失败且无文件变化；读取精确实现后按依赖、Layout、Protocol 拆分短补丁 |
+| 阶段 90 首个 P1 测试补丁使用了不存在的生命周期断言锚点 | 1 | 原子补丁整体失败；读取真实测试尾部后追加独立回归，不猜测测试内容 |

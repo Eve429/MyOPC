@@ -10,7 +10,7 @@ from time import perf_counter
 import torch
 from torch.nn import functional
 
-from lithography import ICCAD13Lithography, ProcessCondition
+from lithography import LithographyModel, ProcessCondition
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +96,7 @@ def _smooth_sigmoid_mask(parameters: torch.Tensor, kernel: int,
     return torch.sigmoid(steepness * (pooled - offset))
 
 
-def optimize(target: torch.Tensor, model: ICCAD13Lithography,
+def optimize(target: torch.Tensor, model: LithographyModel,
              config: SimpleILTConfig, initial_parameters: torch.Tensor | None = None,
              optimization_mask: torch.Tensor | None = None,
              nominal_condition: ProcessCondition | None = None,

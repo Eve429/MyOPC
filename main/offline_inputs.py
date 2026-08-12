@@ -572,7 +572,8 @@ def materialize_segment_input(
         if batch.region(selected_layer).is_empty():
             raise ValueError("选定 ROI 和 Layer 中没有可提取的物理图形")
         problem = prepare_problem(
-            batch, selected_layer, config, grid, normalized_polarity)
+            batch, selected_layer, config, grid, normalized_polarity,
+            max_memberships=int(preflight["max_memberships"]))
     actual_peak = _post_prepare_bytes(problem, source_bytes)
     if actual_peak > max_estimated_gib * _GIB:
         raise ValueError(

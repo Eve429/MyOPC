@@ -58,6 +58,35 @@ def test_ownership_does_not_materialize_unused_segment_normals(
     assert np.array_equal(actual.member_segment_indices, problem.member_segment_indices)
 
 
+def test_membership_limit_rejects_before_large_array_allocation(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """显式 membership 上限必须在 repeat/argsort 大数组路径之前拒绝。"""
+    batch = _batch(kdb.Region(kdb.Box(0, 0, 100, 60)), LayerSpec(1, 0))
+    grid = RectilinearCoreGrid(np.array([0, 50, 100]), np.array([0, 60]), 20)
+    config = FragmentationConfig(5, 20, 4)
+    original_repeat = np.repeat
+
+    def guarded_repeat(values: object, repeats: object, *args: object,
+                       **kwargs: object) -> np.ndarray:
+        """允许边段准备的小数组，拒绝 ownership 尝试展开超过上限的 membership。"""
+        array = np.asarray(repeats)
+        if array.ndim and int(array.sum()) > 1:
+            raise AssertionError("membership 上限检查发生得太晚")
+        return original_repeat(values, repeats, *args, **kwargs)
+
+    # Segment fragmentation 自身也使用 repeat，先完成到 SegmentBatch，再只监控
+    # ownership 分配阶段；这样回归精确锁定上限检查的位置而不耦合切分实现。
+    from geometry import extract_contour
+    from opc.input.edge.fragmentation import fragment_edges
+    from opc.input.mask import normalize_physical_mask
+    from opc.input.edge.ownership import _build_ownership
+    physical = normalize_physical_mask(batch, LayerSpec(1, 0))
+    segments = fragment_edges(extract_contour(physical.region), config)
+    monkeypatch.setattr(np, "repeat", guarded_repeat)
+    with pytest.raises(MemoryError, match="构造上限"):
+        _build_ownership(segments, grid, max_memberships=1)
+
+
 def test_owner_index_update_synchronizes_all_context_views() -> None:
     """唯一 owner 写入全局位移后，所有 context 应读取同一移动边段。"""
     problem, _ = _rectangle_problem()

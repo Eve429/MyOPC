@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from lithography import ICCAD13Lithography, ProcessCondition
+from lithography import ICCAD13Lithography, LithographyModel, ProcessCondition
 from opc.iteration.ilt import SimpleILTConfig, optimize
 
 
@@ -34,6 +34,12 @@ class _IdentityLithography:
         return {condition.name: torch.clamp(
             mask + offsets.get(condition.name, 0.0), 0.0, 1.0)
                 for condition in conditions}
+
+
+def test_solver_model_protocol_accepts_structural_implementation() -> None:
+    """求解器光刻契约应接受结构兼容模型，不要求继承 ICCAD13 实现。"""
+    model = _IdentityLithography()
+    assert isinstance(model, LithographyModel)
 
 
 def test_simple_ilt_loss_decreases_and_returns_binary_mask() -> None:

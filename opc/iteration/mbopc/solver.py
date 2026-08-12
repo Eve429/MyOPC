@@ -10,7 +10,7 @@ import torch
 
 from evaluation import evaluate_binary_l2, evaluate_edge_probes, evaluate_pvband
 from geometry import ContourBatch, contours_to_region
-from lithography import ICCAD13Lithography
+from lithography import LithographyModel
 from opc.errors import ReconstructionError
 from opc.input import CoreSpec
 from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_contours
@@ -121,7 +121,7 @@ def _owner_indices(problem: MBOPCProblem) -> tuple[np.ndarray, ...]:
     return tuple(owners)
 
 
-def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
+def optimize(problem: MBOPCProblem, model: LithographyModel,
              config: SimpleMBOPCConfig) -> SimpleMBOPCResult:
     """以 tile batch 评价当前状态，并在轮次屏障后统一发布 owner 更新。"""
     if config.canvas > model.config.canvas:

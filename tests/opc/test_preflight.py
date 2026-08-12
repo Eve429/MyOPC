@@ -39,6 +39,7 @@ def test_preflight_accepts_small_layout_and_reports_all_capacity_fields(tmp_path
     assert result["estimated_memberships"] >= result["estimated_segments"]
     assert result["estimated_prepare_peak_bytes"] > 0
     assert result["estimated_solver_peak_bytes"] > 0
+    assert 0 < result["max_memberships"] <= np.iinfo(np.int32).max
     assert result["recommended_mode"] == "in_memory"
 
 

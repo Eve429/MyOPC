@@ -285,3 +285,11 @@
 - 已完成入口与文件职责审查：确认 Layer 解析重复、私有 I/O helper 跨模块泄漏、SimpleILT 双入口重复实现和 offline_inputs 职责过载；同时确认核心 Problem/Segment/Contour 分层不是错误复制。
 - 已完成专项评审与验证报告；Ruff、compileall 和 226 项全量测试通过（60.08 秒），Markdown 链接/围栏、diff whitespace 和保护目录审计通过。
 - 阶段 88 完成：本轮仅修改评审、验证、手册导航和规划文档，未修改任何生产 Python、`layout/`、`geometry/` 或用户文件。
+
+# 2026-08-12：阶段 89–93 P1/P2 架构收敛
+
+- 用户明确要求实施评审报告中的 P1 和 P2；本次授权包含 P1 所需的 `layout/` 最小公共扫描接口修改，`geometry/` 不修改。
+- 工作树开始时干净，基线提交为 `ea1a5ff`，基线全量测试为 226 项通过。
+- 已锁定不实施 P3，避免把命名/归档迁移和用户产物清理混入本轮结构收敛。
+- 阶段 90 完成：修正 `psutil` 运行依赖；LayoutDB 增加受控递归 Polygon 扫描且 preflight 私有访问归零；增加最小 `LithographyModel` Protocol；真实入口将预检容量传给 in-memory problem builder，并在 membership 大数组分配前拒绝。
+- P1 专项 Ruff/compileall 和 56 项测试通过（10.09 秒）。

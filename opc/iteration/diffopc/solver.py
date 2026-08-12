@@ -9,7 +9,7 @@ import torch
 from torch.nn import functional
 
 from evaluation import evaluate_binary_l2, evaluate_edge_probes, evaluate_pvband
-from lithography import ICCAD13Lithography
+from lithography import LithographyModel
 from opc.errors import ReconstructionError
 from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_region
 from opc.input.raster import ownership_canvas, rasterize_mask_canvas
@@ -62,7 +62,7 @@ def _target_tile(problem: MBOPCProblem, core_index: int, core: object,
     return compact
 
 
-def _validate_problem(problem: MBOPCProblem, model: ICCAD13Lithography,
+def _validate_problem(problem: MBOPCProblem, model: LithographyModel,
                       config: DiffOPCConfig) -> tuple[object, ...]:
     """在分配优化器和 GPU 张量前校验画布、位移及非空问题。"""
     if config.canvas > model.config.canvas:
@@ -80,7 +80,7 @@ def _validate_problem(problem: MBOPCProblem, model: ICCAD13Lithography,
     return cores
 
 
-def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
+def optimize(problem: MBOPCProblem, model: LithographyModel,
              config: DiffOPCConfig) -> DiffOPCResult:
     """流式累计全局位移梯度，并只在轮次屏障后发布合法候选状态。"""
     cores = _validate_problem(problem, model, config)

@@ -77,6 +77,18 @@ def test_materialized_region_batch_survives_database_close(tmp_path: Path) -> No
     assert expected[0] > 0 and expected[1] > 0
 
 
+def test_recursive_polygon_scan_is_public_and_lifetime_bounded(tmp_path: Path) -> None:
+    """公共容量扫描迭代器应只依赖打开的数据库，并能遍历 Polygon 类图形。"""
+    source = write_advanced_layout(tmp_path / "scan.gds")
+    database = LayoutDB.open(source)
+    layer = LayerSpec(1, 0); box = database.bbox()
+    assert box is not None
+    assert sum(1 for _ in database.recursive_polygon_shapes(layer, box)) > 0
+    database.close()
+    with pytest.raises(ClosedLayoutError):
+        database.recursive_polygon_shapes(layer, box)
+
+
 def test_importing_layout_does_not_load_geometry() -> None:
     """基础版图层不得因公共导入而反向加载几何输出层。"""
     command = "import sys, layout; assert not any(n == 'geometry' or n.startswith('geometry.') for n in sys.modules)"

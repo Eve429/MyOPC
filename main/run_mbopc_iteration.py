@@ -23,6 +23,7 @@ from main.offline_inputs import (
     _atomic_npz,
     _exact_dbu,
     load_segment_input,
+    save_final_lithography_tiles,
 )
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input.edge import edge_probe_points, reconstruct_region
@@ -34,7 +35,8 @@ def run_mbopc_iteration_test(
         step_nm: float = 8.0, decay_every: int = 4,
         epe_distance_nm: float = 16.0, pixel_nm: float = 8.0,
         batch_size: int = 8, target_cache_mb: int = 512,
-        device: str = "auto", save_preview: bool = True) -> SimpleMBOPCResult:
+        device: str = "auto", save_preview: bool = True,
+        save_final_lithography_png: bool = True) -> SimpleMBOPCResult:
     """仅从离线边段问题运行同步迭代并保存可继续分析的完整结果。"""
     loaded = perf_counter()
     problem, metadata = load_segment_input(input_path)
@@ -64,6 +66,10 @@ def run_mbopc_iteration_test(
     reconstructed = reconstruct_region(problem, optimized.best_displacements)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    final_lithography = save_final_lithography_tiles(
+        output / "final_lithography", reconstructed, problem.grid, model,
+        pixel_dbu=pixel_dbu, canvas=model.config.canvas,
+        batch_size=batch_size, save_png=save_final_lithography_png)
     layer, box = problem.physical_mask.layer, problem.physical_mask.query_box
     gds_path = write_debug_gds(
         problem.physical_mask.region, reconstructed, output / "mbopc_result.gds",
@@ -109,7 +115,8 @@ def run_mbopc_iteration_test(
         "verification": {"reconstructed_valid": bool(reconstructed.has_valid_polygons())},
         "artifacts": {"summary": str(output / "summary.json"),
                       "result_npz": str(result_path), "gds": str(gds_path),
-                      "preview": None if preview_path is None else str(preview_path)},
+                      "preview": None if preview_path is None else str(preview_path),
+                      "final_lithography": final_lithography},
     }
     _atomic_json(output / "summary.json", summary)
     return optimized
@@ -131,6 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto", help="auto、cpu 或 cuda[:序号]")
     parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=True,
                         help="保存边段、owner、core 和探针标注图")
+    parser.add_argument("--no-final-lithography-png", action="store_true",
+                        help="只保存最终光刻 NPZ 和 manifest，不保存 tile PNG")
     return parser
 
 
@@ -143,7 +152,8 @@ def main(argv: list[str] | None = None) -> int:
             step_nm=args.step_nm, decay_every=args.decay_every,
             epe_distance_nm=args.epe_distance_nm, pixel_nm=args.pixel_nm,
             batch_size=args.batch_size, target_cache_mb=args.target_cache_mb,
-            device=args.device, save_preview=args.preview)
+            device=args.device, save_preview=args.preview,
+            save_final_lithography_png=not args.no_final_lithography_png)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2

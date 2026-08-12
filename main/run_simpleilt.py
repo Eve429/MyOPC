@@ -25,6 +25,7 @@ from main.offline_inputs import (
     _atomic_png,
     add_layout_source_arguments,
     resolve_raster_input,
+    save_final_lithography_result,
 )
 from opc.iteration.ilt import SimpleILTConfig, SimpleILTResult, optimize
 
@@ -83,6 +84,8 @@ def run_simpleilt(
     parameters = result.best_parameters.detach().cpu().numpy().astype(np.float32, copy=False)
     soft_mask = result.soft_mask.detach().cpu().numpy().astype(np.float32, copy=False)
     binary_mask = result.binary_mask.detach().cpu().numpy().astype(np.uint8, copy=False)
+    final_lithography = save_final_lithography_result(
+        output, binary_mask, printed, save_png=save_png)
     result_path = _atomic_npz(output / "simpleilt_result.npz", {
         "format_name": np.array("myopc.simpleilt-result"),
         "format_version": np.array(1, dtype=np.int32),
@@ -111,6 +114,7 @@ def run_simpleilt(
             int(torch.cuda.max_memory_allocated(model.device))
             if model.device.type == "cuda" else 0),
         "artifacts": {"result_npz": str(result_path), "images": images,
+                      "final_lithography": final_lithography,
                       "summary": str(output / "summary.json")},
     }
     _atomic_json(output / "summary.json", summary)

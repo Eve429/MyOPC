@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 from PIL import Image
 
 # 这些脚本明确要求能从任意工作目录直接执行。Python 直接运行深层脚本时只把
@@ -35,13 +36,15 @@ from opc.input.edge import (
 )
 from opc.input.grid import axis_cuts_by_size
 from opc.input.preflight import estimate_prepare_peak_bytes
-from opc.input.raster import rasterize_region_canvas
+from opc.input.raster import ownership_canvas, rasterize_region_canvas
 
 _GIB = 1024 ** 3
 _RASTER_FORMAT = "myopc.raster-input"
 _SEGMENT_FORMAT = "myopc.mbopc-input"
 _RASTER_VERSION = 1
 _SEGMENT_VERSION = 2
+_FINAL_LITHOGRAPHY_FORMAT = "myopc.final-lithography"
+_FINAL_LITHOGRAPHY_VERSION = 1
 
 
 def _output_npz(path: str | Path) -> Path:
@@ -164,6 +167,136 @@ def _atomic_png(path: str | Path, values: np.ndarray) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return output
+
+
+def _final_arrays(mask: object, printed: dict[str, object]) -> dict[str, np.ndarray]:
+    """规范化最终 mask 和三种工艺角为连续二维 float32 数组。"""
+    arrays: dict[str, np.ndarray] = {}
+    values = {"mask": mask, **printed}
+    for name in ("mask", "nominal", "dose_max", "defocus_min"):
+        if name not in values:
+            raise ValueError(f"最终光刻结果缺少 {name} 数组")
+        value = values[name]
+        if hasattr(value, "detach"):
+            value = value.detach().cpu().numpy()
+        array = np.ascontiguousarray(value, dtype=np.float32)
+        if array.ndim == 3 and array.shape[0] == 1:
+            array = array[0]
+        if array.ndim != 2 or not np.all(np.isfinite(array)):
+            raise ValueError(f"最终光刻结果 {name} 必须是有限二维数组")
+        arrays[name] = array
+    shape = arrays["mask"].shape
+    if any(array.shape != shape for array in arrays.values()):
+        raise ValueError("最终光刻结果的 mask 与工艺角尺寸不一致")
+    return arrays
+
+
+def save_final_lithography_result(
+        output_dir: str | Path, mask: object, printed: dict[str, object], *,
+        save_png: bool = True) -> dict[str, object]:
+    """保存完整二维最终光刻结果，并返回稳定的产物索引。"""
+    arrays = _final_arrays(mask, printed)
+    output = Path(output_dir).expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    result_path = _atomic_npz(output / "final_lithography.npz", {
+        "format_name": np.array(_FINAL_LITHOGRAPHY_FORMAT),
+        "format_version": np.array(_FINAL_LITHOGRAPHY_VERSION, dtype=np.int32),
+        **arrays,
+    })
+    images: dict[str, str] = {}
+    if save_png:
+        for name, values in arrays.items():
+            images[name] = str(_atomic_png(output / f"final_{name}.png", values))
+    return {"npz": str(result_path), "images": images,
+            "shape": list(arrays["mask"].shape),
+            "format": _FINAL_LITHOGRAPHY_FORMAT,
+            "version": _FINAL_LITHOGRAPHY_VERSION}
+
+
+def _ownership_slice(core: object, context: object, pixel_dbu: int,
+                     canvas: int) -> tuple[slice, slice, list[int]]:
+    """返回 context 画布中 ownership 的矩形切片及其 DBU 原点。"""
+    ownership = ownership_canvas(core, context, pixel_dbu, canvas)
+    rows, columns = np.where(ownership)
+    if len(rows) == 0 or len(columns) == 0:
+        raise ValueError("core 在当前 pixel/canvas 下没有可保存的 ownership 像素")
+    y0, y1 = int(rows.min()), int(rows.max()) + 1
+    x0, x1 = int(columns.min()), int(columns.max()) + 1
+    # 正交 core 的中心采样形成连续矩形；若出现空洞说明坐标配置破坏了
+    # ownership 不变量，立即失败而不是保存含 halo 的伪 ownership 图。
+    if not np.all(ownership[y0:y1, x0:x1]):
+        raise ValueError("ownership 像素不是连续矩形，无法生成稳定 tile")
+    return (slice(y0, y1), slice(x0, x1),
+            [int(context.left + x0 * pixel_dbu),
+             int(context.bottom + y0 * pixel_dbu)])
+
+
+def save_final_lithography_tiles(
+        output_dir: str | Path, region: object, grid: object, model: object,
+        *, pixel_dbu: int, canvas: int, batch_size: int = 1,
+        save_png: bool = True) -> dict[str, object]:
+    """按 core 批量仿真并保存 ownership-only 最终光刻 tile。"""
+    if not isinstance(pixel_dbu, int) or pixel_dbu <= 0:
+        raise ValueError("pixel_dbu 必须是正整数")
+    if not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("batch_size 必须是正整数")
+    cores = grid.cores()
+    output = Path(output_dir).expanduser().resolve()
+    tile_dir = output / "tiles"
+    tile_dir.mkdir(parents=True, exist_ok=True)
+    conditions = tuple(model.condition(name) for name in (
+        "nominal", "dose_max", "defocus_min"))
+    manifest_tiles: list[dict[str, object]] = []
+    for start in range(0, len(cores), batch_size):
+        group = cores[start:start + batch_size]
+        masks: list[np.ndarray] = []
+        slices: list[tuple[slice, slice, list[int]]] = []
+        for core in group:
+            slices.append(_ownership_slice(core.ownership_box, core.context_box,
+                                           pixel_dbu, canvas))
+            masks.append(rasterize_region_canvas(
+                region, core.context_box, pixel_dbu, canvas))
+        tensor = torch.as_tensor(np.stack(masks), device=model.device)
+        with torch.no_grad():
+            printed = model.forward_many(tensor, conditions)
+        for local, core in enumerate(group):
+            y_slice, x_slice, origin = slices[local]
+            arrays = {"mask": masks[local][y_slice, x_slice]}
+            for name in ("nominal", "dose_max", "defocus_min"):
+                arrays[name] = np.ascontiguousarray(
+                    printed[name][local].detach().cpu().numpy()[y_slice, x_slice],
+                    dtype=np.float32)
+            tile_base = tile_dir / core.core_id
+            tile_npz = _atomic_npz(tile_base.with_suffix(".npz"), {
+                "format_name": np.array(_FINAL_LITHOGRAPHY_FORMAT),
+                "format_version": np.array(_FINAL_LITHOGRAPHY_VERSION, dtype=np.int32),
+                **arrays,
+            })
+            png_paths: dict[str, str] = {}
+            if save_png:
+                for name, values in arrays.items():
+                    png_paths[name] = str(_atomic_png(
+                        tile_base.with_name(f"{tile_base.name}_{name}.png"), values))
+            manifest_tiles.append({
+                "core_id": core.core_id, "core_index": start + local,
+                "ownership_box_dbu": [core.ownership_box.left, core.ownership_box.bottom,
+                                      core.ownership_box.right, core.ownership_box.top],
+                "context_box_dbu": [core.context_box.left, core.context_box.bottom,
+                                    core.context_box.right, core.context_box.top],
+                "origin_dbu": origin, "shape": list(arrays["mask"].shape),
+                "npz": str(tile_npz), "images": png_paths,
+            })
+        del printed, tensor, masks
+    manifest = {
+        "format": _FINAL_LITHOGRAPHY_FORMAT, "version": _FINAL_LITHOGRAPHY_VERSION,
+        "orientation": "bottom_left", "pixel_dbu": pixel_dbu, "canvas": canvas,
+        "conditions": [condition.name for condition in conditions],
+        "tile_count": len(manifest_tiles), "tiles": manifest_tiles,
+    }
+    manifest_path = _atomic_json(output / "manifest.json", manifest)
+    return {"manifest": str(manifest_path), "tile_dir": str(tile_dir),
+            "tile_count": len(manifest_tiles), "format": _FINAL_LITHOGRAPHY_FORMAT,
+            "version": _FINAL_LITHOGRAPHY_VERSION}
 
 
 def _archive_members(path: str | Path, max_archive_gib: float) -> tuple[Path, set[str]]:

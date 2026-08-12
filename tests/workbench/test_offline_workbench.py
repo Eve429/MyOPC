@@ -274,6 +274,13 @@ def test_mbopc_runner_optimizes_loaded_cross_core_problem(tmp_path: Path) -> Non
     assert len(result.records) == 1
     assert (output / "mbopc_result.gds").is_file()
     assert (output / "mbopc_result.png").is_file()
+    manifest = output / "final_lithography" / "manifest.json"
+    assert manifest.is_file()
+    manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert manifest_data["tile_count"] == 2
+    assert all(Path(tile["npz"]).is_file() for tile in manifest_data["tiles"])
+    assert all(Path(path).is_file() for tile in manifest_data["tiles"]
+               for path in tile["images"].values())
     assert (output / "summary.json").is_file()
 
 
@@ -295,6 +302,9 @@ def test_simpleilt_runner_optimizes_saved_raster_and_reports_metrics(tmp_path: P
     assert summary["evaluation"]["pvband"] >= 0
     assert summary["evaluation"]["rectangular_shot_estimate"] >= 0
     assert (output / "soft_mask.png").is_file()
+    assert (output / "final_lithography.npz").is_file()
+    assert all((output / f"final_{name}.png").is_file()
+               for name in ("mask", "nominal", "dose_max", "defocus_min"))
     assert (output / "summary.json").is_file()
 
 
@@ -310,6 +320,8 @@ def test_simpleilt_runner_accepts_layout_without_intermediate_npz(tmp_path: Path
     assert summary["source_layout"] == str(source.resolve())
     assert not any(tmp_path.glob("*input*.npz"))
     assert (output / "simpleilt_result.npz").is_file()
+    assert (output / "final_lithography.npz").is_file()
+    assert not (output / "final_mask.png").exists()
     assert (output / "summary.json").is_file()
 
 

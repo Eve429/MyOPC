@@ -237,3 +237,5 @@
 - 阶段 59 完成：逐文件审查 45 个生产 Python 模块、包级导出、核心数据结构、七个直接运行脚本和四类 NPZ 协议。
 - 阶段 60 完成：新增 `doc/module_interface_reference.md`，覆盖输入/输出、shape/dtype、坐标单位、生命周期、异常、性能、持久化协议、runner 副作用和当前能力边界。
 - 阶段 61 完成：机器核对 45 个生产模块与全部公共导出无遗漏；28 份 Markdown 无断链/围栏错误，新文档 Python 示例可编译，`git diff --check` 通过，保护目录零差异。
+
+- 阶段 62：已实现在线/离线 MB-OPC ownership-only 最终光刻 tile，以及 SimpleILT 最终 mask/三工艺角 NPZ/PNG 保存；19 项定向回归通过。

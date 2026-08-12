@@ -20,7 +20,12 @@ import torch
 from evaluation import estimate_rectangular_shots
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 from lithography import ICCAD13Lithography
-from main.offline_inputs import _atomic_json, _exact_dbu, parse_layer
+from main.offline_inputs import (
+    _atomic_json,
+    _exact_dbu,
+    parse_layer,
+    save_final_lithography_tiles,
+)
 from opc import OPCError
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input import (
@@ -77,6 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="结果目录，默认 output/mbopc")
     parser.add_argument("--preview", action="store_true",
                         help="额外保存带分段、法向、探针和 core 的诊断 PNG",default=True)
+    parser.add_argument("--no-final-lithography-png", action="store_true",
+                        help="只保存最终光刻 NPZ 和 manifest，不保存 tile PNG")
     parser.add_argument("--json", action="store_true", help="终端输出完整 JSON")
     parser.add_argument("--preflight-only", action="store_true",
                         help="只扫描版图容量，不物化 Region、边段或光刻模型")
@@ -180,6 +187,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # 最佳状态在所有 tile 完成后只做一次全局矢量重建。core 从不裁最终 Polygon，
     # 所以跨 core 与斜边不会产生两套取整端点；halo 也从不回写。
     reconstructed = reconstruct_region(problem, optimized.best_displacements)
+    final_lithography = save_final_lithography_tiles(
+        output_dir / "final_lithography", reconstructed, problem.grid, model,
+        pixel_dbu=pixel_dbu, canvas=model.config.canvas,
+        batch_size=args.batch_size, save_png=not args.no_final_lithography_png)
     reference = problem.physical_mask.region
     # Shot 只在最终最佳几何上计算一次。固定 512×512 诊断画布使内存有严格上界；
     # 像素 DBU 向上取整以完整覆盖 ROI，避免为整张 reticle 常驻高分辨率 mask。
@@ -242,7 +253,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "verification": {"reconstructed_valid": bool(reconstructed.has_valid_polygons())},
         "artifacts": {"summary": str(output_dir / "summary.json"),
                       "gds": str(gds_path),
-                      "preview": None if preview_path is None else str(preview_path)},
+                      "preview": None if preview_path is None else str(preview_path),
+                      "final_lithography": final_lithography},
     }
     _atomic_json(output_dir / "summary.json", result)
     return result

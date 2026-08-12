@@ -317,3 +317,5 @@
 - `opc.iteration.ilt.optimize` 与 `opc.iteration.mbopc.optimize` 同名但属于不同算法命名空间，调用方必须从明确子包导入或使用别名；顶层 `opc.iteration` 有意不做聚合导出，避免含义冲突。
 - 最终接口参考为 763 行，逐路径覆盖 45 个生产模块和全部包级 `__all__` 符号；49 个相对链接全部存在，代码围栏平衡，Python 示例均可编译。
 - 本轮没有修改任何生产 Python、`layout/`、`geometry/` 或用户版图；只新增接口文档并更新手册导航、计划记录和一次已解决的模块计数审计学习。
+
+- 最终光刻输出采用共享原子 I/O；MB-OPC 只按 batch 保留当前 core context，manifest 记录 ownership-only 裁剪，避免整张 reticle tensor 常驻。

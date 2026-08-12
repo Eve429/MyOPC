@@ -199,3 +199,5 @@ PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改�
 ```
 
 必须覆盖：小版图完整扫描、低预算拒绝、百亿 segment 只估算不分配、正式求解预检不加载光刻模型、`skip-artifacts` 不生成大型文件、阶段时间非负和所有内存检查点字段完整。真实 `gcd_45nm` 还需比较预检/实际 segment，检查零位移 XOR、core 缺口和重叠均为 0。当前完整结果见[容量预检测试报告](frontend_preflight_test_report.md)。
+
+最终光刻结果还需检查 MB-OPC 的 final_lithography/manifest.json、ownership-only tile NPZ 和 PNG，以及 SimpleILT 的 final_lithography.npz 和四张 final_*.png。使用 --no-final-lithography-png 验证 NPZ-only 路径。

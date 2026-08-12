@@ -44,4 +44,3 @@ SRAF 是新多边形，会增加 ring、数学边、segment、owner 和 core mem
 - 主图形 EPE probe 数不因 SRAF 增加，L2/PVBand 能感知 SRAF。
 - MRC 拒绝、跨 tile 重复和原子发布失败均不改变当前问题版本。
 - 受控内存测试证明峰值与“当前热点批次 + 新增边段”相关，而不是整张 reticle 像素数。
-

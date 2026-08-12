@@ -27,4 +27,3 @@ GLP 第一版支持 `BEGIN`、`EQUIV ... MICRON [+X,+Y]`、`CNAME`、`LEVEL`、`
 ## 5. 简化审查
 
 没有新增格式注册器、求解器包装基类或 SRAF 占位实现。GLP 只有一个当前调用方 `LayoutDB.open`；配置只有一个 CLI 合并器；普通 Region coverage 保留为底层函数，极性只增加一个光学语义包装。旧重复版图读取逻辑已从 preflight 删除，没有保留兼容分支。
-

@@ -20,4 +20,3 @@ OpenILT `benchmark/ICCAD2013/M1_test1.glp` 通过直接运行：DBU `0.001um`，
 - Ruff、compileall 和 `git diff --check` 作为最终静态门禁执行。
 
 opaque 测试显式检查处理框外 halo 为 0，且处理框没有进入 contours；因此不会产生四条虚假可移动边。旧 clear 测试和历史 NPZ 契约继续通过。
-

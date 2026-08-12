@@ -241,3 +241,4 @@
 - 阶段 62：已实现在线/离线 MB-OPC ownership-only 最终光刻 tile，以及 SimpleILT 最终 mask/三工艺角 NPZ/PNG 保存；19 项定向回归通过。
 
 - 阶段 63：新增 LevelSetILT、粗到细多尺度 ILT、独立 DiffOPC 软边段栅格器/solver 和两个直接运行入口；新增 3 项定向回归，现有光刻/工作台 26 项继续通过。
+- 阶段 65：根据质量审查修正 LevelSetILT 的 SDF、曲率、配置、空工艺窗口和 hard/soft mask 语义；统一入口补齐 GDS/ROI、安全参数、最终光刻输出和性能摘要。8 项 LevelSet 专项、16 项 ILT 定向、167 项全量回归通过，EDT 与暴力解逐像素一致；`layout/`、`geometry/` 零修改。

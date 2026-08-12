@@ -73,7 +73,16 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 & $python -m compileall -q layout geometry opc lithography evaluation main tests benchmarks
 ```
 
-当前结果：全仓库 152 项通过（最终复跑 38.63 s）；本阶段光刻/评价/SimpleILT/MB-OPC 专项 39 项通过（最终复跑 13.54 s），综合 statement/branch coverage 为 92%。新增测试覆盖独立工艺条件、非均匀上游梯度有限差分、二值 L2/PVBand、确定性 shot、ILT 优化窗口/曲率/真实 Hopkins backward、EPE 独占最佳状态选择，以及 `main/` 脚本在仓库外直接启动。
+第一阶段 LevelSetILT 可单独执行：
+
+```powershell
+& $python -m pytest tests\opc\test_levelset_ilt.py -q
+& $python main\run_ilt.py input.gds --method levelset --layer 1/0 `
+  --box 0 0 2048 2048 --pixel-nm 8 --iterations 20 --device cuda `
+  --output-dir output\levelset --json
+```
+
+当前最终结果：全仓库 167 项通过（48.34 s），其中 8 项 LevelSet 专项覆盖精确 SDF、代理梯度、严格配置/输入、空工艺窗口、固定区域、曲率、零等值线、真实 Hopkins backward、GDS 入口及仓库外直接运行。入口保存 `ilt_result.npz`、`summary.json`、最终三工艺角 NPZ 和可选 PNG；时间分开记录输入、优化、评价和输出。
 
 ## 5. 严格性能基准
 

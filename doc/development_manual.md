@@ -27,7 +27,7 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 | `opc/input/` | 物理 mask、规则 core 网格等共享输入 |
 | `opc/input/edge/` | 边段切分、唯一 owner、探针坐标、全局矢量重建 |
 | `opc/iteration/mbopc/` | simple MB-OPC 的流式同步迭代 |
-| `opc/iteration/ilt/` | 可微像素参数 SimpleILT；不依赖边段输入 |
+| `opc/iteration/ilt/` | SimpleILT 与 LevelSetILT；均不依赖边段输入 |
 | `lithography/` | 可独立替换的光刻模型；当前为 ICCAD13 Hopkins 模型 |
 | `evaluation/` | 二值 L2、PVBand、EPE 和确定性矩形 shot 估计 |
 | `opc/diagnostics.py` | 显式请求才执行的 NPZ/GDS/PNG 与几何图集 |
@@ -37,6 +37,7 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 | `main/run_lithography.py` | 独立光刻模型验证入口 |
 | `main/run_mbopc_iteration.py` | 独立 MB-OPC 迭代验证入口 |
 | `main/run_simpleilt.py` | 独立 SimpleILT 入口 |
+| `main/run_ilt.py` | 统一 ILT 入口；第一阶段已验收 LevelSetILT |
 
 诊断代码不属于输入模型，求解器不反向依赖某个输出格式。未来 ILT 可复用版图、Region 栅格、光刻和评价层，但不必依赖边段重建。
 
@@ -119,7 +120,9 @@ CPU batch 中始终保持 `uint8`，只在一次性送到模型设备时转为 `
 
 `opc.iteration.ilt.optimize` 直接消费 `[H,W]` 或 `[B,H,W]` target，不构造 `MBOPCProblem` 或边段。默认参数由 target 映射到 `-1/+1`，每轮通过 sigmoid 得到软 mask；`optimization_mask` 可把窗口外区域固定为初始软值。损失由标称连续 L2、调用方传入的任意 process conditions 对 target 的连续 L2、这些条件逐像素范围的连续 PVBand，以及可选曲率项组成。
 
-求解结果只保留历史总损失最优轮的参数、软 mask、二值 mask 和逐轮标量记录。默认条件是 nominal、dose_max、defocus_min，但调用方可传入完全不同的独立条件，也可传空元组只优化标称条件。配置、记录、结果和算法集中在 `simple.py`；当前只有一个 ILT 方法，因此没有建立基类、注册器或额外 contracts 文件。
+求解结果只保留历史总损失最优轮的参数、软 mask、二值 mask 和逐轮标量记录。默认条件是 nominal、dose_max、defocus_min，但调用方可传入完全不同的独立条件，也可传空元组只优化标称条件。配置、记录、结果和算法集中在 `simple.py`；各 ILT 方法复用同一结果契约，没有建立基类、注册器或额外 contracts 文件。
+
+LevelSetILT 以 `phi < 0` 作为硬开窗条件，并用 `-|∇phi|` 代理梯度把光刻损失传回边界。默认初值是一次性在 CPU 计算、再送到模型设备的精确像素中心欧氏 SDF，前景为负、背景为正；它不在迭代热路径重复计算。最终 `soft_mask=sigmoid(-phi)` 仅用于诊断，权威硬结果仍严格按 `phi < 0` 生成。算法常驻模型设备的主要新增状态为参数、固定初值、优化窗口和 Adam 两份状态，均为 `O(BHW)`；不会物化边段或整张 reticle 的矢量结构。
 
 ## 8. 输出约定
 
@@ -182,4 +185,6 @@ python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
 
 ## 13. 新增 ILT 与 DiffOPC
 
-main/run_ilt.py --method levelset|curvmulti|multilevel 统一运行新增 ILT；main/run_diffopc.py 读取 segment NPZ，使用独立软边段栅格器优化位移。当前 DiffOPC 首版只承诺 L2/PVBand 梯度路径，EPE 连续损失、MRC 和 SRAF 仍在后续计划中。
+`main/run_ilt.py --method levelset|curvmulti|multilevel` 统一运行新增 ILT；`main/run_diffopc.py` 读取 segment NPZ，使用独立软边段栅格器优化位移。当前只把 LevelSetILT 视为完成专项验收的第一阶段；CurvMulti、Multilevel 和 DiffOPC 仍是后续待验收阶段，不能按完整迁移能力使用。
+
+LevelSetILT 使用前景为负的精确欧氏 SDF 初始化和硬二值代理梯度；SDF 只在优化前计算一次。`run_ilt.py --method levelset` 支持 `--layer`、`--box`、`--top-cell`、像素/画布和容量上限，并保存 `ilt_result.npz`、`summary.json`、最终三工艺角 NPZ 及可选 PNG。

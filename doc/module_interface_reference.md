@@ -516,7 +516,27 @@ ownership mask 必须与提升后的 batch shape/device 一致；它只选择计
 
 记录和最佳状态对应该轮执行参数更新**之前**评价出的状态；二维输入会在结果中去掉 batch 维。
 
-### 8.3 [`opc/iteration/mbopc/contracts.py`](../opc/iteration/mbopc/contracts.py)
+### 8.3 [`opc/iteration/ilt/levelset.py`](../opc/iteration/ilt/levelset.py)
+
+#### `LevelSetConfig`
+
+字段为正 `iterations`、正有限 `step_size` 以及非负有限的 `weight_process_l2`、`weight_pvband`、`curvature_weight`。水平集硬边界固定为零等值线，不提供会改变算法语义的第二个 mask 阈值。
+
+#### `signed_distance_initialization(target, threshold=0.5) -> Tensor`
+
+输入 `[H,W]` 或 `[B,H,W]` 有限 Tensor；阈值必须在 `(0,1)`。输出与输入 shape/device 一致的 float32 精确像素中心欧氏 SDF，前景为负、背景为正。CPU 使用两遍一维下包络距离变换，时间和临时内存均为 `O(BHW)`；只用于一次性初始化，不进入光刻迭代热路径。
+
+#### `optimize_levelset(...) -> SimpleILTResult`
+
+输入契约与 SimpleILT 的 target、优化窗口和独立工艺条件一致，但可选初值是同形 `initial_levelset`。target 必须为 `[0,1]` 内有限数；初值和窗口也必须有限。硬前向固定为 `phi < 0`，自定义 backward 以 `-|∇phi|` 调制光刻模型给出的上游梯度；Adam 更新 phi。曲率复用 SimpleILT 的 3×3 零和核。
+
+输出复用 `SimpleILTResult`：`best_parameters` 是最优 phi，`soft_mask=sigmoid(-phi)` 只作连续诊断，`binary_mask` 严格按 `phi < 0` 生成。显式空 `process_conditions` 只计算 nominal，不回退默认工艺窗；二维输入会去掉 batch 维。
+
+### 8.4 [`opc/iteration/ilt/multiscale.py`](../opc/iteration/ilt/multiscale.py)
+
+当前文件包含粗到细原型调度，尚未完成 CurvMulti/Multilevel 的独立质量验收；不能把存在 `MultiScaleILTConfig/optimize_multiscale` 解读为完整迁移能力。调用方若进行后续阶段开发，应重新核对缩放语义、跨阶段记录、最终尺寸和专项性能门槛。
+
+### 8.5 [`opc/iteration/mbopc/contracts.py`](../opc/iteration/mbopc/contracts.py)
 
 包导出定义见 [`opc/iteration/mbopc/__init__.py`](../opc/iteration/mbopc/__init__.py)。
 
@@ -531,7 +551,7 @@ ownership mask 必须与提升后的 batch shape/device 一致；它只选择计
 
 `stop_reason` 当前可能为 `iteration_limit`、`zero_epe` 或 `no_legal_update`。
 
-### 8.4 [`opc/iteration/mbopc/solver.py`](../opc/iteration/mbopc/solver.py)
+### 8.6 [`opc/iteration/mbopc/solver.py`](../opc/iteration/mbopc/solver.py)
 
 #### `optimize(problem, model, config) -> SimpleMBOPCResult`
 
@@ -548,6 +568,12 @@ ownership mask 必须与提升后的 batch shape/device 一致；它只选择计
 7. 最佳状态只按 EPE 严格改善选择，EPE 相同保留更早轮，L2/PVBand 不影响几何选择。
 
 固定 target tile 使用字节上限 LRU 缓存；上限 0 可关闭。GPU 只常驻当前 batch，但 CPU 当前仍常驻完整 problem、全局位移和少量索引。输出的 `best_displacements` 不一定是最后一轮位移，调用方必须用它重建最终结果。
+
+### 8.7 [`opc/iteration/diffopc/`](../opc/iteration/diffopc)
+
+包级原型导出为 `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult` 和 `optimize`。`contracts.py` 保存配置/记录/结果；`rasterizer.py` 的 `rasterize_soft_edges` 以参考 mask、`[S,2]` 起终点/法向和 `[S]` 位移生成可微软 mask；`solver.py` 在现有 `MBOPCProblem` 上优化全局位移。
+
+这些符号已有测试和 runner 调用方，因此保留在当前目录，但尚未通过后续阶段的连续 EPE、MRC/SRAF、大图内存和完整产物验收。当前接口参考只记录原型现实，不把它声明为生产完成能力。
 
 ## 9. `opc` 异常与显式诊断
 
@@ -639,7 +665,7 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 成功输出路径并返回 0；可预期错误输出到 stderr 并返回 2。
 
-## 11. `main`：七个可直接运行入口
+## 11. `main`：九个可直接运行入口
 
 ### 11.1 [`main/run_layout_geometry.py`](../main/run_layout_geometry.py)
 
@@ -671,11 +697,21 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 `run_simpleilt(input_path, output_dir, ...) -> (SimpleILTResult, summary)` 接受 GDS/OASIS 或 raster NPZ。总会写 `simpleilt_result.npz` 和 summary JSON，可选 PNG。结果 NPZ v1 保存 `best_parameters`、`soft_mask`、`binary_mask(uint8)`、`best_iteration`；summary 额外保存配置、逐轮损失、二值 L2、PVBand、shot、时间和 GPU 峰值。
 
-### 11.6 [`main/run_mbopc_iteration.py`](../main/run_mbopc_iteration.py)
+### 11.6 [`main/run_ilt.py`](../main/run_ilt.py)
+
+`run_ilt(input_path, output_dir, method=..., ...) -> summary` 接受 GDS/OASIS 或 raster NPZ。第一阶段已验收 `method=levelset`：输入参数包括迭代/损失、device、Layer/top/DBU ROI、pixel/canvas 和容量上限；保存 `ilt_result.npz`、最终三工艺角光刻结果、可选 target/soft/binary PNG 及 summary JSON。summary 包含配置、逐轮损失、二值 L2/PVBand/shot、输入/优化/评价/输出时间和 GPU 峰值。CLI 支持 `--json`，可从仓库外直接执行。
+
+同一入口中的 `curvmulti/multilevel` 仍属于后续待验收阶段。
+
+### 11.7 [`main/run_diffopc.py`](../main/run_diffopc.py)
+
+读取 segment NPZ 并调用 DiffOPC 原型；当前只用于后续阶段开发验证，尚未完成连续 EPE、MRC/SRAF、入口产物和大图性能专项验收，不属于第一阶段完成能力。
+
+### 11.8 [`main/run_mbopc_iteration.py`](../main/run_mbopc_iteration.py)
 
 `run_mbopc_iteration_test(input_path, output_dir, ...) -> SimpleMBOPCResult` **只接受** `prepare_segment_input` 生成的 segment NPZ v2。它不读取源 GDS、不重新提边、不重新分 owner。输出 GDS、`mbopc_result.npz`、summary JSON和可选 preview；结果 NPZ v1 保存最佳位移、最佳轮次和停止原因。
 
-### 11.7 [`main/offline_inputs.py`](../main/offline_inputs.py) 与 [`main/__init__.py`](../main/__init__.py)
+### 11.9 [`main/offline_inputs.py`](../main/offline_inputs.py) 与 [`main/__init__.py`](../main/__init__.py)
 
 `main/__init__.py` 不聚合导出。离线接口既可直接从 Python 导入，也可作为命令运行；其私有 `_atomic_*`、`_exact_dbu` 当前被同目录 runner 复用，但不是跨包稳定 API。
 
@@ -741,10 +777,10 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 - `opc`：`__init__`、`errors`、`diagnostics`；
 - `opc.input`：`__init__`、`_arrays`、`grid`、`mask`、`raster`、`preflight`；
 - `opc.input.edge`：`__init__`、`builder`、`fragmentation`、`ownership`、`sampling`、`reconstruction`；
-- `opc.iteration`：顶层 `__init__`、ILT 的 `__init__/simple`、MB-OPC 的 `__init__/contracts/solver`；
+- `opc.iteration`：顶层 `__init__`、ILT 的 `__init__/simple/levelset/multiscale`、MB-OPC 的 `__init__/contracts/solver`，以及待验收 DiffOPC 原型的四个模块；
 - `lithography`：`__init__`、`iccad13`；
 - `evaluation`：`__init__`、`metrics`；
-- `main`：`__init__`、`offline_inputs` 和六个 `run_*.py`。
+- `main`：`__init__`、`offline_inputs` 和八个 `run_*.py`。
 
 ## 15. 包级公共符号速查
 
@@ -757,7 +793,8 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 | `opc` | `OPCError`、`OwnershipError`、`PhysicalMaskError`、`ReconstructionError` |
 | `opc.input` | `CoreSpec`、`PhysicalMask`、`RectilinearCoreGrid`、`default_memory_budget_bytes`、`normalize_physical_mask`、`preflight_layout`、`process_memory_snapshot`、`resolve_memory_budget_bytes` |
 | `opc.input.edge` | `FragmentationConfig`、`MBOPCProblem`、`SegmentBatch`、`SegmentGeometry`、`edge_probe_points`、`fragment_edges`、`prepare_problem`、`reconstruct_contours`、`reconstruct_region` |
-| `opc.iteration.ilt` | `ILTIterationRecord`、`SimpleILTConfig`、`SimpleILTResult`、`optimize` |
+| `opc.iteration.ilt` | `ILTIterationRecord`、`LevelSetConfig`、`MultiScaleILTConfig`、`SimpleILTConfig`、`SimpleILTResult`、`optimize`、`optimize_levelset`、`optimize_multiscale`、`signed_distance_initialization` |
 | `opc.iteration.mbopc` | `IterationRecord`、`SimpleMBOPCConfig`、`SimpleMBOPCResult`、`optimize` |
+| `opc.iteration.diffopc` | `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult`、`optimize`（后续阶段待验收） |
 | `lithography` | `ICCAD13Config`、`ICCAD13Lithography`、`ProcessCondition` |
 | `evaluation` | `EPEEvaluation`、`estimate_rectangular_shots`、`evaluate_binary_l2`、`evaluate_edge_probes`、`evaluate_pvband` |

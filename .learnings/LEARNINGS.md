@@ -31,6 +31,37 @@
 
 ---
 
+## [LRN-20260812-002] correction
+
+**Logged**: 2026-08-12T15:10:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+多阶段任务必须按每阶段验收矩阵报告状态，原型代码和全仓库回归不能替代算法专项验收。
+
+### Details
+LevelSetILT 首版虽然可运行并通过既有回归，但缺少 SDF 初始化、正确曲率、严格契约和独立测试，不能标记为阶段完成；后续 CurvMulti/DiffOPC 原型也不能描述为完整迁移。
+
+### Suggested Action
+每阶段单独建立算法正确性、入口、产物、性能和测试门槛；只有门槛全部通过后才将该阶段标记 complete。
+
+### Metadata
+- Source: user_feedback
+- Related Files: task_plan.md, opc/iteration/ilt/levelset.py
+- Tags: phase-gate, testing, reporting
+- Pattern-Key: myopc.phase_specific_acceptance
+- Recurrence-Count: 1
+- First-Seen: 2026-08-12
+- Last-Seen: 2026-08-12
+
+### Resolution
+- **Resolved**: 2026-08-12T15:10:00+08:00
+- **Notes**: LevelSetILT 已按独立质量门槛修正，后续阶段恢复为 in progress。
+
+---
+
 ## [LRN-20260809-005] correction
 
 **Logged**: 2026-08-09T14:35:00+08:00

@@ -269,5 +269,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 首次全量验证把 shell 超时误设为 1 秒 | 1 | 命令被外层终止且未写文件；改用 180 秒时限完整重跑 |
 | 调用点搜索包含不存在的 `tests/main` 路径 | 1 | 搜索仍返回目标文件证据但退出 1；后续只使用实际 `tests/` 根目录 |
 | 接口审查过程记录人工误算生产模块总数 | 1 | 改用 `rg --files` 的真实路径集合按顶层目录分组，确认当前为 45 个，并用缺失路径检查验证正文覆盖 |
+| 默认 `python` 指向无 pytest/Ruff 的 Miniforge base | 1 | 未执行任何测试；后续显式使用 `D:\app\miniforge\envs\myopc\python.exe` |
+| coverage 插件在 Windows 重复加载 NumPy 失败 | 2 | 不再重复同一失败路径；以专项分支回归、全量测试和静态审计验收，并在测试报告如实记录无新增覆盖率数值 |
+| EDT 暴力对照脚本把标量当数组写入 | 1 | 仅辅助脚本失败、生产测试已通过；改为 `np.empty` 后 1×1 至 8×8 随机逐像素对照通过 |
 
-| 64. OpenILT ILT and DiffOPC migration | complete | LevelSet, multiscale ILT, independent soft edge rasterizer, DiffOPC solver, runners, tests and reports |
+| 64. OpenILT ILT and DiffOPC migration | in progress | Phase 1 LevelSet quality complete; later CurvMulti, Multilevel and DiffOPC acceptance remain |
+| 65. LevelSetILT quality closure | complete | Exact SDF, strict contracts, correct curvature, complete runner artifacts and dedicated tests |

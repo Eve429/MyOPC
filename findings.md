@@ -321,3 +321,6 @@
 - 最终光刻输出采用共享原子 I/O；MB-OPC 只按 batch 保留当前 core context，manifest 记录 ownership-only 裁剪，避免整张 reticle tensor 常驻。
 
 - OpenILT 的 LevelSet、CurvMulti、Multilevel 依赖旧 LithoSim/配置体系；本项目仅迁移参数化和调度思想，统一复用当前 ICCAD13 模型。DiffOPC 采用独立解析软边段 rasterizer，不能把不可微 KLayout rasterizer 改造成 autograd 路径。
+- LevelSet 的硬前向必须以 `phi < 0` 为唯一权威；`sigmoid(-phi)` 只是连续诊断图，不能再用 `>=0.5` 生成硬结果，否则 `phi==0` 会从关闭错误翻转为开启。
+- 精确欧氏 SDF 可用两遍一维下包络在 `O(HW)` 时间和内存内完成；本项目只在初始化执行一次并通过 1×1 至 8×8 随机图暴力对照，不在光刻迭代热路径重复计算。
+- 第一阶段只验收 LevelSetILT。CurvMulti、Multilevel 与 DiffOPC 虽有原型代码，但在各自专项数值、入口、产物和性能门槛完成前仍保持未验收状态。

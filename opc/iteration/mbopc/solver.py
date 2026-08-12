@@ -109,18 +109,6 @@ def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
         polarity=problem.physical_mask.polarity, field_box=problem.physical_mask.query_box)
 
 
-def _owner_indices(problem: MBOPCProblem) -> tuple[np.ndarray, ...]:
-    """一次性建立每个 core 的 owner segment 索引，供所有轮次复用。"""
-    # membership CSR 已在准备阶段按 core 保存所有 owner/halo segment；owner 必然
-    # 位于其自身 core 的 context。只过滤当前 CSR 切片可把复杂度从 core×全局 segment
-    # 降为总 membership 数，且返回原 int32 索引，不再为每个 core 扫描并转换全局数组。
-    owners: list[np.ndarray] = []
-    for core_index in range(problem.core_count):
-        members = problem.segments_for_core(core_index)
-        owners.append(members[problem.owner_indices[members] == core_index])
-    return tuple(owners)
-
-
 def optimize(problem: MBOPCProblem, model: LithographyModel,
              config: SimpleMBOPCConfig) -> SimpleMBOPCResult:
     """以 tile batch 评价当前状态，并在轮次屏障后统一发布 owner 更新。"""
@@ -134,7 +122,8 @@ def optimize(problem: MBOPCProblem, model: LithographyModel,
         required_height = (core.context_box.height + config.pixel_dbu - 1) // config.pixel_dbu
         if required_width > config.canvas or required_height > config.canvas:
             raise ValueError(f"core {core.core_id} context 超过固定光刻画布")
-    owners = _owner_indices(problem)
+    owners = tuple(problem.owner_segments_for_core(index)
+                   for index in range(problem.core_count))
     polygon_ids = tuple(_polygon_ids_for_core(problem, index) for index in range(len(cores)))
     reference_geometry = problem.segments.materialize()
     cache = ArrayTileCache(config.target_cache_bytes)

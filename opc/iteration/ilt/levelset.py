@@ -13,7 +13,8 @@ from torch.nn import functional
 
 from lithography import LithographyModel, ProcessCondition
 
-from .simple import ILTIterationRecord, SimpleILTResult, _curvature_loss, _image_batch
+from ._common import curvature_loss, image_batch
+from .simple import ILTIterationRecord, SimpleILTResult
 
 
 class _LevelSetBinarize(torch.autograd.Function):
@@ -146,7 +147,7 @@ def optimize_levelset(target: torch.Tensor, model: LithographyModel,
                       process_conditions: Sequence[ProcessCondition] | None = None
                       ) -> SimpleILTResult:
     """优化水平集 phi，并返回与 SimpleILT 相同的结果契约。"""
-    target_batch, squeeze = _image_batch(target, "target", model.device)
+    target_batch, squeeze = image_batch(target, "target", model.device)
     target_batch = target_batch.detach()
     if not torch.all(torch.isfinite(target_batch)) or torch.any(
             (target_batch < 0.0) | (target_batch > 1.0)):
@@ -159,10 +160,10 @@ def optimize_levelset(target: torch.Tensor, model: LithographyModel,
     if initial_levelset is None:
         # OpenILT 的代理梯度依赖 |grad(phi)|；±1 二值初值只在一层像素上有梯度，
         # 因此在 CPU 一次性生成精确 SDF，再传回模型设备，迭代中不重复计算。
-        parameters, _ = _image_batch(
+        parameters, _ = image_batch(
             signed_distance_initialization(target_batch), "initial_levelset", model.device)
     else:
-        parameters, initial_squeeze = _image_batch(initial_levelset, "initial_levelset", model.device)
+        parameters, initial_squeeze = image_batch(initial_levelset, "initial_levelset", model.device)
         if initial_squeeze != squeeze or parameters.shape != target_batch.shape:
             raise ValueError("initial_levelset 必须与 target 形状一致")
         if not torch.all(torch.isfinite(parameters)):
@@ -170,7 +171,7 @@ def optimize_levelset(target: torch.Tensor, model: LithographyModel,
     if optimization_mask is None:
         movable = torch.ones_like(target_batch)
     else:
-        movable, mask_squeeze = _image_batch(optimization_mask, "optimization_mask", model.device)
+        movable, mask_squeeze = image_batch(optimization_mask, "optimization_mask", model.device)
         if mask_squeeze != squeeze or movable.shape != target_batch.shape:
             raise ValueError("optimization_mask 必须与 target 形状一致")
         if not torch.all(torch.isfinite(movable)) or torch.any(
@@ -209,7 +210,7 @@ def optimize_levelset(target: torch.Tensor, model: LithographyModel,
         else:
             process_l2 = nominal_l2.new_zeros(())
             pvband = nominal_l2.new_zeros(())
-        curvature = (_curvature_loss(mask) if config.curvature_weight > 0.0 else
+        curvature = (curvature_loss(mask) if config.curvature_weight > 0.0 else
                      nominal_l2.new_zeros(()))
         loss = nominal_l2 + config.weight_process_l2 * process_l2 + config.weight_pvband * pvband + config.curvature_weight * curvature
         values = (float(loss.detach()), float(nominal_l2.detach()), float(process_l2.detach()),

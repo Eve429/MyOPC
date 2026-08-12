@@ -19,17 +19,17 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from evaluation import estimate_rectangular_shots  # noqa: E402
 from lithography import ICCAD13Lithography  # noqa: E402
+from main.artifacts import (  # noqa: E402
+    atomic_json, atomic_npz, save_final_lithography_tiles,
+)
 from main.offline_inputs import (  # noqa: E402
-    _atomic_json,
-    _atomic_npz,
-    _exact_dbu,
     add_layout_source_arguments,
     load_segment_input,
     materialize_segment_input,
-    save_final_lithography_tiles,
 )
 from main.configuration import (  # noqa: E402
     ConfiguredArgumentParser,
+    exact_dbu,
     glp_layer_map,
 )
 from opc.diagnostics import render_boundary_overlay, write_debug_gds  # noqa: E402
@@ -100,7 +100,7 @@ def run_diffopc(
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("DiffOPC 输入缺少有效 dbu_um") from exc
     dbu_nm = dbu_um * 1000.0
-    pixel_dbu = _exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
+    pixel_dbu = exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
     if not isinstance(target_cache_mb, int) or target_cache_mb < 0:
         raise ValueError("target_cache_mb 必须是非负整数")
     if max_displacement_nm is None:
@@ -127,7 +127,7 @@ def run_diffopc(
     reconstructed = reconstruct_region(problem, optimized.best_displacements)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    result_path = _atomic_npz(output / "diffopc_result.npz", {
+    result_path = atomic_npz(output / "diffopc_result.npz", {
         "format_name": np.array("myopc.diffopc-result"),
         "format_version": np.array(2, dtype=np.int32),
         "best_displacements": optimized.best_displacements,
@@ -206,7 +206,7 @@ def run_diffopc(
             "final_lithography": final_lithography,
         },
     }
-    _atomic_json(output / "summary.json", summary)
+    atomic_json(output / "summary.json", summary)
     return summary
 
 

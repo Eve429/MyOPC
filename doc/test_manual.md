@@ -18,8 +18,8 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 `requirements.txt` 与 `pyproject.toml` 使用相同版本范围；前者方便直接准备环境，
 后者继续声明 Python 3.12 及以上和项目元数据。源码仍从仓库根目录直接运行，不需要
-把 MyOPC 自身执行 `pip install`。运行依赖为 KLayout、NumPy、Pillow 和 PyTorch；
-开发验收另外使用 pytest、pytest-cov、Ruff 和 psutil。
+把 MyOPC 自身执行 `pip install`。运行依赖为 KLayout、NumPy、Pillow、PyTorch 和
+psutil；开发验收另外使用 pytest、pytest-cov 和 Ruff。
 
 ## 2. 前端输入验证
 
@@ -253,6 +253,8 @@ FAQ 契约专项回归：
 ```
 
 当前工作台回归包含光刻、MB-OPC 与 SimpleILT 三个真实模型成功路径、版图/NPZ 像素一致性、直接版图光刻结果一致性、直接版图 SimpleILT，以及四个 `main/` 工作台脚本的仓库外启动。详细矩阵与真实数据见 [离线工作台测试报告](offline_workbench_test_report.md)和[可微光刻/ILT 测试报告](lithography_ilt_evaluation_test_report.md)。
+
+SimpleILT 兼容入口和统一入口现在共同写 `ilt_result.npz`；回归必须断言不再生成第二套 `simpleilt_result.npz`。`tests/opc/test_fragment.py` 还会用固定随机种子比较共享计数公式与真实 `SegmentBatch.edge_ids`，防止预检与生产切分漂移。
 
 最终还对用户 `TestReticle/simple.gds` 执行 CPU 冒烟：独立光刻 256² 输出成功；SimpleILT 一轮 binary L2=1900；完整 MB-OPC 一轮得到 885 segments、8 cores、EPE/L2/PVBand=`338/3936/1607`、shot=325，GDS 可生成且 Region 合法。
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from time import perf_counter
@@ -19,7 +18,10 @@ import klayout.db as kdb
 import numpy as np
 
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, LayoutError, RegionBatch
-from main.configuration import ConfiguredArgumentParser, glp_layer_map, parse_glp_layer
+from main.artifacts import atomic_json
+from main.configuration import (
+    ConfiguredArgumentParser, glp_layer_map, parse_glp_layer, parse_layer_spec,
+)
 from opc import OPCError
 from opc.diagnostics import (
     render_boundary_overlay,
@@ -44,17 +46,6 @@ from opc.input.edge import (
 from opc.input.grid import axis_cuts_by_size
 
 
-def parse_layer(value: str) -> LayerSpec:
-    """解析 `layer/datatype` 或单独 layer 参数。"""
-    parts = value.replace(":", "/").split("/")
-    if len(parts) not in (1, 2):
-        raise argparse.ArgumentTypeError("Layer 格式应为 layer 或 layer/datatype")
-    try:
-        return LayerSpec(int(parts[0]), int(parts[1]) if len(parts) == 2 else 0)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"非法 Layer：{value}") from exc
-
-
 def build_parser() -> argparse.ArgumentParser:
     """构造支持无参数合成验证和真实 GDS 验证的中文命令行。"""
     parser = ConfiguredArgumentParser(
@@ -65,7 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-cell", help="可选顶层 Cell；多顶层版图必须指定")
     parser.add_argument("--glp-layer", dest="glp_layers", action="append", type=parse_glp_layer)
     parser.add_argument("--polarity", choices=[item.value for item in MaskPolarity])
-    parser.add_argument("--layer", type=parse_layer, help="真实版图目标 layer/datatype")
+    parser.add_argument("--layer", type=parse_layer_spec,
+                        help="真实版图目标 layer/datatype")
     parser.add_argument("--box", nargs=4, type=int, metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),
                         help="可选全局 DBU 处理范围；默认使用 top bbox")
     tiling = parser.add_mutually_exclusive_group()
@@ -173,19 +165,6 @@ def _finish_stage(timings: dict[str, float], checkpoints: dict[str, dict[str, in
     return finished
 
 
-def _atomic_summary(output_dir: Path, result: dict[str, Any]) -> Path:
-    """创建输出目录并原子写入统一 JSON 摘要。"""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    summary = output_dir / "summary.json"
-    temporary = summary.with_name(f".{summary.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temporary, summary)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return summary
-
-
 def _demo_displacements(problem: MBOPCProblem,
                         displacement_dbu: float) -> tuple[np.ndarray, np.ndarray]:
     """为每个有 owner 边段的 core 选择一段并返回全局对齐位移及变化索引。"""
@@ -240,7 +219,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "artifacts": {"json": str(output_dir / "summary.json")},
             }
             timings["total"] = perf_counter() - total_started
-            _atomic_summary(output_dir, result)
+            atomic_json(output_dir / "summary.json", result)
             return result
         stage = perf_counter()
         problem = prepare_problem(batch, layer, config, grid, args.polarity)
@@ -278,7 +257,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 }
                 timings["total"] = perf_counter() - total_started
                 checkpoints["total"] = process_memory_snapshot()
-                _atomic_summary(output_dir, result)
+                atomic_json(output_dir / "summary.json", result)
                 return result
             stage = perf_counter()
             batch = database.query([layer], box).materialize()
@@ -398,7 +377,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "gds": None if gds_path is None else str(gds_path),
         },
     }
-    _atomic_summary(output_dir, result)
+    atomic_json(output_dir / "summary.json", result)
     return result
 
 

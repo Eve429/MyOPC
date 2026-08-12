@@ -297,7 +297,7 @@ def test_simpleilt_runner_optimizes_saved_raster_and_reports_metrics(tmp_path: P
     result, summary = run_simpleilt(
         archive, output, iterations=1, step_size=1e-4,
         weight_process_l2=0.1, device="cpu", save_png=True)
-    with np.load(output / "simpleilt_result.npz", allow_pickle=False) as data:
+    with np.load(output / "ilt_result.npz", allow_pickle=False) as data:
         assert np.array_equal(data["binary_mask"],
                               result.binary_mask.detach().cpu().numpy())
         assert data["soft_mask"].shape == (256, 256)
@@ -309,6 +309,7 @@ def test_simpleilt_runner_optimizes_saved_raster_and_reports_metrics(tmp_path: P
     assert all((output / f"final_{name}.png").is_file()
                for name in ("mask", "nominal", "dose_max", "defocus_min"))
     assert (output / "summary.json").is_file()
+    assert not (output / "simpleilt_result.npz").exists()
 
 
 def test_simpleilt_runner_accepts_layout_without_intermediate_npz(tmp_path: Path) -> None:
@@ -322,7 +323,7 @@ def test_simpleilt_runner_accepts_layout_without_intermediate_npz(tmp_path: Path
     assert summary["input"] == str(source.resolve())
     assert summary["source_layout"] == str(source.resolve())
     assert not any(tmp_path.glob("*input*.npz"))
-    assert (output / "simpleilt_result.npz").is_file()
+    assert (output / "ilt_result.npz").is_file()
     assert (output / "final_lithography.npz").is_file()
     assert not (output / "final_mask.png").exists()
     assert (output / "summary.json").is_file()

@@ -428,3 +428,6 @@
 - SimpleILT 兼容入口需要保留结果对象返回值，因此统一 `run_ilt` 的内部结果应提供一个不破坏现有 `run_ilt -> summary` API 的私有/可选返回通道，或抽取共享执行函数；优先选择最少包装和单一产物路径的方案。
 - `LayoutDB.recursive_polygon_shapes` 是本轮唯一新增的 layout 公共能力：返回仍绑定数据库生命周期的原生 iterator，不暴露 Layout/Cell/layer index，也不物化 Region。
 - preflight 从预算按 32 B/membership 推导构造硬上限；`prepare_problem(max_memberships=...)` 保持旧小 ROI 调用兼容，真实输入路径显式传入该上限。
+- P2 实施后 `offline_inputs.py` 只保留共享输入物化、归档版本/损坏校验和 CLI；所有 runner 改从 `main.artifacts` 使用公共原子产物函数，不再把下划线私有函数当 API。
+- SimpleILT 的兼容要求不需要第二个执行对象或 runner 基类：`run_ilt(return_result=True)` 返回同次执行的 result/summary，默认仍只返回 summary；`run_simpleilt` 只负责固定 `method="simple"` 和历史默认值。
+- 共享边段计数 helper 必须使用不会与 `fragment_edges` 内部展开数组冲突的动词名 `count_edge_fragments`；固定随机种子回归已证明其逐边计数与真实 SegmentBatch 相同。

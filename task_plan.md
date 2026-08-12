@@ -83,6 +83,13 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - `layout/` and `geometry/` remain byte-for-byte untouched by phases 25-27.
 
 ## Errors Encountered
+
+- P2 首轮专项测试发现共享边段计数函数与生产函数内部 `fragment_counts` 数组同名，导致局部变量遮蔽并连带 27 项边段测试失败；将函数改为动词式 `count_edge_fragments`，不增加兼容别名。
+- P2 首轮 Ruff 发现统一 ILT 返回注解漏导入 `SimpleILTResult`、layer 入口残留未使用导入；均按真实调用修正。SimpleILT 的两项失败来自测试仍断言已合并掉的旧产物名，测试迁移到统一 `ilt_result.npz`。
+- P2 最终 `pytest-cov` 插桩在 Windows 收集阶段触发 PyTorch docstring 重复注册与 NumPy“同一进程重复加载”，测试体未执行；不修改生产导入顺序规避工具问题，不虚报覆盖率，以无插桩全量、专项分支和 AST 审计验收。
+- P2 静态检查时当前 `python` 环境未安装 `ruff`（`No module named ruff`）；代码编译已完成，后续改用项目已配置环境或可用解释器执行 Ruff，并以 pytest/compileall 继续验证。
+- P2 两次多文件原子补丁因上下文与现有导入位置不匹配而整体拒绝，确认未产生部分修改后拆成精确小补丁应用。
+- P2 一次 PowerShell“替换并 `rg` 确认”因预期无匹配令 `rg` 返回 1；替换已完成，随后用独立读取确认文件正常。
 | Error | Attempt | Resolution |
 |---|---|---|
 | Earlier Git probe ran before repository existed | 1 | Repository now exists; verify status before every commit |
@@ -352,9 +359,9 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 |---|---|---|
 | 89 | 已完成 | 固定 P1/P2 公共接口、归档、入口、性能和测试基线；确认本次 `layout/` 最小修改授权 |
 | 90 | 已完成 | 实施 P1：运行依赖、LayoutDB 受控扫描、光刻模型 Protocol、in-memory builder 显式容量契约 |
-| 91 | 进行中 | 实施 P2：产物 I/O 拆分、SimpleILT 单实现、Layer parser/ILT helper/owner 查询/切分计数去重 |
-| 92 | 待开始 | 专项与全量测试、CPU/CUDA 数值一致性、性能/内存和兼容性回归 |
-| 93 | 待开始 | 未调用函数、私有跨模块导入、重复实现和 bug 修复残留审计；同步手册、报告并本地提交 |
+| 91 | 已完成 | 实施 P2：产物 I/O 拆分、SimpleILT 单实现、Layer parser/ILT helper/owner 查询/切分计数去重 |
+| 92 | 已完成 | 专项与全量测试、CPU/CUDA 数值一致性、性能/内存和兼容性回归 |
+| 93 | 已完成 | 未调用函数、私有跨模块导入、重复实现和 bug 修复残留审计；同步手册、报告并本地提交 |
 
 ### 阶段 89–93 实施约束
 

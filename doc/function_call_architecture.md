@@ -146,8 +146,9 @@ sequenceDiagram
 “batch 完成后立即累计”不会提前移动边：tile 输入始终来自 `current`，更新只写 `next_values`，直到 round barrier 才可见。
 
 target LRU 和 CPU batch 保存 `uint8`，current mask 保持未量化浮点覆盖率。零位移快路
-只省略几何重建，不直接复用 target 数组；设备边界一次性归一化 target。`_owner_indices`
-从每 core 的 membership CSR 中筛唯一 owner，不再反复扫描全局 segment。
+只省略几何重建，不直接复用 target 数组；设备边界一次性归一化 target。
+`MBOPCProblem.owner_segments_for_core()` 从每 core 的 membership CSR 中筛唯一 owner，
+solver 启动时构造一次 tuple 并在所有轮次复用。
 
 `ICCAD13Lithography.forward_many` 对同一 mask 只做一次 FFT；相同 kernel bank 的条件
 共享单位剂量强度，各条件按自身 dose² 缩放后进入 sigmoid。共享频谱只在当前 autograd
@@ -171,9 +172,7 @@ flowchart LR
     E --> H[保存总损失最优状态]
 ```
 
-`run_simpleilt.py` 先由 `resolve_raster_input` 自动选择版图内存物化或 NPZ 加载，两条路径汇合为相同的 `float32` target。SimpleILT 不经过 `prepare_problem`、`SegmentBatch`、owner 或矢量重建。target、可选初始
-参数和优化窗口同形；调用方显式传入 nominal 与任意 process conditions。最终返回参数、
-软 mask、二值 mask 和逐轮标量，`main/run_simpleilt.py` 再负责持久化和最终评价。
+`run_simpleilt.py` 只把历史默认值映射到 `run_ilt(method="simple", return_result=True)`；输入解析、优化、评价、性能统计和产物写入均只有 `run_ilt` 一条实现。GDS/OASIS 内存物化与 raster NPZ 加载汇合为相同的 `float32` target，SimpleILT 不经过 `prepare_problem`、`SegmentBatch`、owner 或矢量重建。最终仍返回参数、软 mask、二值 mask、逐轮标量和 summary。
 
 ### 5.2 CurvMultiILT 调用顺序
 

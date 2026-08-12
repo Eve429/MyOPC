@@ -9,9 +9,29 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from layout import LayerSpec
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def exact_dbu(value_nm: float, dbu_nm: float, name: str,
+              allow_zero: bool = False) -> int:
+    """把必须落在版图格点上的纳米配置严格换算为整数 DBU。"""
+    value = float(value_nm)
+    if (not np.isfinite(value) or value < 0.0 or
+            (value == 0.0 and not allow_zero)):
+        requirement = "有限非负数" if allow_zero else "有限正数"
+        raise ValueError(f"{name} 必须是{requirement}")
+    raw = value / dbu_nm
+    rounded = round(raw)
+    # tile、halo、像素和边段配置共同决定运行坐标契约。静默取整会让输入边界、
+    # 光刻像素和后续迭代配置不一致，因此只接受当前 DBU 精确可表达的值。
+    if (rounded < 0 or (rounded == 0 and not allow_zero) or
+            not np.isclose(raw, rounded, atol=1e-9, rtol=0.0)):
+        raise ValueError(f"{name}={value_nm} nm 不能由当前 {dbu_nm} nm/DBU 精确表达")
+    return int(rounded)
 
 
 def _config_path(argv: Sequence[str]) -> tuple[list[str], Path | None]:

@@ -20,13 +20,11 @@ import torch
 from evaluation import estimate_rectangular_shots
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 from lithography import ICCAD13Lithography
-from main.offline_inputs import (
-    _atomic_json,
-    _exact_dbu,
-    parse_layer,
-    save_final_lithography_tiles,
+from main.artifacts import atomic_json, save_final_lithography_tiles
+from main.configuration import (
+    ConfiguredArgumentParser, exact_dbu, glp_layer_map, parse_glp_layer,
+    parse_layer_spec,
 )
-from main.configuration import ConfiguredArgumentParser, glp_layer_map, parse_glp_layer
 from opc import OPCError
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input import (
@@ -57,7 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="输入 GDS/OASIS，默认 TestReticle/simple.gds")
     parser.add_argument("--top-cell", help="可选顶层 Cell；多顶层版图必须指定")
     parser.add_argument("--glp-layer", dest="glp_layers", action="append", type=parse_glp_layer)
-    parser.add_argument("--layer", type=parse_layer, help="目标 layer/datatype；单层时可省略")
+    parser.add_argument("--layer", type=parse_layer_spec,
+                        help="目标 layer/datatype；单层时可省略")
     parser.add_argument("--box", nargs=4, type=int, metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),
                         help="可选 DBU 处理范围；默认使用顶层完整 bbox")
     parser.add_argument("--polarity", choices=[item.value for item in MaskPolarity],
@@ -130,9 +129,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         loaded = perf_counter()
         memory_checkpoints["layout_open"] = process_memory_snapshot()
         dbu_nm = dbu_um * 1000.0
-        pixel_dbu = _exact_dbu(args.pixel_nm, dbu_nm, "pixel-nm")
-        tile_dbu = _exact_dbu(args.tile_size_nm, dbu_nm, "tile-size-nm")
-        halo_dbu = _exact_dbu(args.halo_nm, dbu_nm, "halo-nm", allow_zero=True)
+        pixel_dbu = exact_dbu(args.pixel_nm, dbu_nm, "pixel-nm")
+        tile_dbu = exact_dbu(args.tile_size_nm, dbu_nm, "tile-size-nm")
+        halo_dbu = exact_dbu(args.halo_nm, dbu_nm, "halo-nm", allow_zero=True)
         if tile_dbu % pixel_dbu or halo_dbu % pixel_dbu:
             raise ValueError("tile-size-nm 和 halo-nm 必须是 pixel-nm 的整数倍")
         grid = RectilinearCoreGrid(
@@ -166,7 +165,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "artifacts": {"summary": str(output_dir / "summary.json")},
                 "run_configuration": args._configuration,
             }
-            _atomic_json(output_dir / "summary.json", result)
+            atomic_json(output_dir / "summary.json", result)
             return result
         materialize_started = perf_counter()
         batch = database.query([layer], box).materialize()
@@ -273,7 +272,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                       "preview": None if preview_path is None else str(preview_path),
                       "final_lithography": final_lithography},
     }
-    _atomic_json(output_dir / "summary.json", result)
+    atomic_json(output_dir / "summary.json", result)
     return result
 
 

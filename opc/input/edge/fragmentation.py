@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 
 from geometry import ContourBatch
 from opc.input._arrays import as_matrix, as_vector
+from opc.input._fragmentation import count_edge_fragments
 from opc.input.mask import MaskPolarity
 
 IntArray = NDArray[np.int64]
@@ -188,10 +189,8 @@ def fragment_edges(contours: ContourBatch, config: FragmentationConfig,
     if np.any(lengths <= 0.0):
         raise ValueError("physical boundary contains zero-length edges")
     maximum, corner = config.max_segment_length_dbu, config.corner_length_dbu
-    counts = np.ceil(lengths / maximum).astype(np.int64)
+    counts = count_edge_fragments(lengths, corner, maximum)
     long_edges = lengths > 2.0 * maximum
-    counts[long_edges] = 2 + np.ceil((lengths[long_edges] - 2.0 * corner) /
-                                     maximum).astype(np.int64)
     if len(counts) and (int(counts.max()) > np.iinfo(np.int32).max or
                         int(counts.sum()) > np.iinfo(np.int32).max):
         raise OverflowError("segment count exceeds compact int32 index capacity")

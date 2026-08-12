@@ -8,9 +8,10 @@ from math import isfinite
 from time import perf_counter
 
 import torch
-from torch.nn import functional
 
 from lithography import LithographyModel, ProcessCondition
+
+from ._common import curvature_loss, image_batch
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,46 +64,13 @@ class SimpleILTResult:
     records: tuple[ILTIterationRecord, ...]
 
 
-def _image_batch(image: torch.Tensor, name: str, device: torch.device) -> tuple[torch.Tensor, bool]:
-    """把二维或三维图像统一成设备上的 float32 batch，并记录是否需去 batch 维。"""
-    if image.ndim == 2:
-        return image.unsqueeze(0).to(device=device, dtype=torch.float32), True
-    if image.ndim == 3:
-        return image.to(device=device, dtype=torch.float32), False
-    raise ValueError(f"{name} 必须具有 [H,W] 或 [B,H,W] 形状")
-
-
-def _curvature_loss(mask: torch.Tensor) -> torch.Tensor:
-    """用固定三乘三离散曲率核惩罚局部高频和孤立像素。"""
-    kernel = mask.new_tensor((
-        (-1.0 / 16.0, 5.0 / 16.0, -1.0 / 16.0),
-        (5.0 / 16.0, -1.0, 5.0 / 16.0),
-        (-1.0 / 16.0, 5.0 / 16.0, -1.0 / 16.0),
-    )).reshape(1, 1, 3, 3)
-    curvature = functional.conv2d(mask[:, None], kernel)[:, 0]
-    return torch.sum(curvature.square())
-
-
-def _resize_image(image: torch.Tensor, shape: tuple[int, int], mode: str) -> torch.Tensor:
-    """保持 `[B,H,W]` 契约缩放目标、参数、wafer 或优化窗口。"""
-    return functional.interpolate(image[:, None], size=shape, mode=mode)[:, 0]
-
-
-def _smooth_sigmoid_mask(parameters: torch.Tensor, kernel: int,
-                         steepness: float, offset: float) -> torch.Tensor:
-    """对连续参数执行固定均值平滑和带偏移 sigmoid，生成可微软掩膜。"""
-    pooled = functional.avg_pool2d(
-        parameters[:, None], kernel, stride=1, padding=kernel // 2)[:, 0]
-    return torch.sigmoid(steepness * (pooled - offset))
-
-
 def optimize(target: torch.Tensor, model: LithographyModel,
              config: SimpleILTConfig, initial_parameters: torch.Tensor | None = None,
              optimization_mask: torch.Tensor | None = None,
              nominal_condition: ProcessCondition | None = None,
              process_conditions: Sequence[ProcessCondition] | None = None) -> SimpleILTResult:
     """优化连续像素参数，使独立工艺条件下的 wafer 接近目标图。"""
-    target_batch, squeeze = _image_batch(target, "target", model.device)
+    target_batch, squeeze = image_batch(target, "target", model.device)
     # target 是固定监督，不应把调用方可能携带的计算图带进每轮 backward；提前
     # detach 同时避免无意义的 target.grad 累积和跨轮图引用。
     target_batch = target_batch.detach()
@@ -114,14 +82,14 @@ def optimize(target: torch.Tensor, model: LithographyModel,
         # 行为，使 sigmoid 后初始 mask 已接近目标，同时不把初始化器另拆成无必要文件。
         initial = target_batch.mul(2.0).sub(1.0)
     else:
-        initial, initial_squeeze = _image_batch(
+        initial, initial_squeeze = image_batch(
             initial_parameters, "initial_parameters", model.device)
         if initial.shape != target_batch.shape or initial_squeeze != squeeze:
             raise ValueError("initial_parameters 必须与 target 形状一致")
     if optimization_mask is None:
         movable = torch.ones_like(target_batch)
     else:
-        movable, movable_squeeze = _image_batch(
+        movable, movable_squeeze = image_batch(
             optimization_mask, "optimization_mask", model.device)
         if movable.shape != target_batch.shape or movable_squeeze != squeeze:
             raise ValueError("optimization_mask 必须与 target 形状一致")
@@ -168,15 +136,15 @@ def optimize(target: torch.Tensor, model: LithographyModel,
         else:
             process_l2 = nominal_l2.new_zeros(())
             pvband_loss = nominal_l2.new_zeros(())
-        curvature_loss = (_curvature_loss(mask) if config.curvature_weight > 0.0 else
+        curvature_value = (curvature_loss(mask) if config.curvature_weight > 0.0 else
                           nominal_l2.new_zeros(()))
         loss = (nominal_l2 + config.weight_process_l2 * process_l2 +
                 config.weight_pvband * pvband_loss +
-                config.curvature_weight * curvature_loss)
+                config.curvature_weight * curvature_value)
         values = (
             float(loss.detach().item()), float(nominal_l2.detach().item()),
             float(process_l2.detach().item()), float(pvband_loss.detach().item()),
-            float(curvature_loss.detach().item()),
+            float(curvature_value.detach().item()),
         )
         if values[0] < best_loss:
             best_loss = values[0]

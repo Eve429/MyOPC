@@ -17,13 +17,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from layout import DbuBox, LayerSpec
 from lithography import ICCAD13Lithography
-from main.offline_inputs import (
-    _atomic_json,
-    _atomic_npz,
-    _atomic_png,
-    add_layout_source_arguments,
-    resolve_raster_input,
-)
+from main.artifacts import atomic_json, atomic_npz, atomic_png
+from main.offline_inputs import add_layout_source_arguments, resolve_raster_input
 from main.configuration import ConfiguredArgumentParser, glp_layer_map
 
 
@@ -77,7 +72,7 @@ def run_lithography_test(
     if output_dir is not None:
         output = Path(output_dir).expanduser().resolve()
         output.mkdir(parents=True, exist_ok=True)
-        result_path = _atomic_npz(output / "lithography_result.npz", {
+        result_path = atomic_npz(output / "lithography_result.npz", {
             "format_name": np.array("myopc.lithography-result"),
             "format_version": np.array(1, dtype=np.int32),
             "nominal": nominal, "maximum": maximum, "minimum": minimum,
@@ -86,7 +81,7 @@ def run_lithography_test(
         if save_png:
             for name, values in (("mask", mask), ("nominal", nominal),
                                  ("maximum", maximum), ("minimum", minimum)):
-                images[name] = str(_atomic_png(output / f"{name}.png", values))
+                images[name] = str(atomic_png(output / f"{name}.png", values))
         summary = {
             "input": str(Path(input_path).expanduser().resolve()),
             "source_layout": metadata.get("source"), "device": str(model.device),
@@ -103,7 +98,7 @@ def run_lithography_test(
                           "summary": str(output / "summary.json")},
             "run_configuration": run_configuration,
         }
-        _atomic_json(output / "summary.json", summary)
+        atomic_json(output / "summary.json", summary)
     return result
 
 

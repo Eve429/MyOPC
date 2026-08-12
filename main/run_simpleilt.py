@@ -4,31 +4,18 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import asdict
 from pathlib import Path
-from time import perf_counter
 from typing import Any
-
-import numpy as np
-import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation import estimate_rectangular_shots, evaluate_binary_l2, evaluate_pvband
 from layout import DbuBox, LayerSpec
-from lithography import ICCAD13Lithography
-from main.offline_inputs import (
-    _atomic_json,
-    _atomic_npz,
-    _atomic_png,
-    add_layout_source_arguments,
-    resolve_raster_input,
-    save_final_lithography_result,
-)
+from main.offline_inputs import add_layout_source_arguments
 from main.configuration import ConfiguredArgumentParser, glp_layer_map
-from opc.iteration.ilt import SimpleILTConfig, SimpleILTResult, optimize
+from main.run_ilt import run_ilt
+from opc.iteration.ilt import SimpleILTResult
 
 
 def run_simpleilt(
@@ -47,83 +34,22 @@ def run_simpleilt(
         glp_layers: dict[str, LayerSpec] | None = None,
         run_configuration: dict[str, object] | None = None
         ) -> tuple[SimpleILTResult, dict[str, Any]]:
-    """加载一次版图或像素目标，运行 ILT，并保存结果、评价与性能统计。"""
-    # GDS/OASIS 在此处按 ROI 直接生成 CPU mask，NPZ 则直接加载；优化器只看到
-    # 同一个连续 float32 目标，因此输入方式不会分叉梯度、评价或输出逻辑。
-    target_array, metadata = resolve_raster_input(
-        input_path, layer=layer, top_cell=top_cell, box=box,
-        pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
+    """把历史 SimpleILT 参数适配到统一 ILT 执行路径并返回内存结果。"""
+    # 兼容入口只映射参数和默认值；版图读取、优化、评价、资源统计与产物写入均
+    # 由 run_ilt 完成，防止两个入口修复同一问题后出现行为和文件格式分叉。
+    outcome = run_ilt(
+        input_path, output_dir, method="simple", iterations=iterations,
+        step_size=step_size, sigmoid_steepness=sigmoid_steepness,
+        weight_pvband=weight_pvband, weight_process_l2=weight_process_l2,
+        curvature_weight=curvature_weight, device=device, save_png=save_png,
+        layer=layer, top_cell=top_cell, box=box, pixel_nm=pixel_nm,
+        canvas=canvas, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
         max_source_vertices=max_source_vertices,
         max_estimated_gib=max_estimated_gib, polarity=polarity,
-        glp_layers=glp_layers)
-    model = ICCAD13Lithography(device=device)
-    if target_array.shape[0] > model.config.canvas or target_array.shape[1] > model.config.canvas:
-        raise ValueError("离线像素目标超过当前光刻模型 canvas")
-    config = SimpleILTConfig(
-        iterations, step_size, sigmoid_steepness, weight_pvband,
-        weight_process_l2, curvature_weight)
-    target = torch.as_tensor(target_array, device=model.device)
-    if model.device.type == "cuda":
-        torch.cuda.reset_peak_memory_stats(model.device)
-        torch.cuda.synchronize(model.device)
-    started = perf_counter()
-    result = optimize(target, model, config)
-    if model.device.type == "cuda":
-        torch.cuda.synchronize(model.device)
-    optimized = perf_counter()
-    conditions = tuple(model.condition(name) for name in (
-        "nominal", "dose_max", "defocus_min"))
-    with torch.no_grad():
-        printed = model.forward_many(result.binary_mask.to(torch.float32), conditions)
-        l2 = evaluate_binary_l2(
-            target, printed["nominal"], model.config.print_threshold)
-        pvband = evaluate_pvband(
-            printed["dose_max"], printed["defocus_min"],
-            model.config.print_threshold)
-        shots = estimate_rectangular_shots(result.binary_mask)
-    evaluated = perf_counter()
-    output = Path(output_dir).expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    parameters = result.best_parameters.detach().cpu().numpy().astype(np.float32, copy=False)
-    soft_mask = result.soft_mask.detach().cpu().numpy().astype(np.float32, copy=False)
-    binary_mask = result.binary_mask.detach().cpu().numpy().astype(np.uint8, copy=False)
-    final_lithography = save_final_lithography_result(
-        output, binary_mask, printed, save_png=save_png)
-    result_path = _atomic_npz(output / "simpleilt_result.npz", {
-        "format_name": np.array("myopc.simpleilt-result"),
-        "format_version": np.array(1, dtype=np.int32),
-        "best_parameters": parameters, "soft_mask": soft_mask,
-        "binary_mask": binary_mask,
-        "best_iteration": np.array(result.best_iteration, dtype=np.int32),
-    }, compressed=False)
-    images: dict[str, str] = {}
-    if save_png:
-        for name, values in (("target", target_array), ("soft_mask", soft_mask),
-                             ("binary_mask", binary_mask)):
-            images[name] = str(_atomic_png(output / f"{name}.png", values))
-    summary: dict[str, Any] = {
-        "run_configuration": run_configuration,
-        "status": "completed", "input": str(Path(input_path).expanduser().resolve()),
-        "source_layout": metadata.get("source"), "device": str(model.device),
-        "shape": list(target_array.shape), "config": asdict(config),
-        "best_iteration": result.best_iteration,
-        "records": [asdict(record) for record in result.records],
-        "evaluation": {"binary_l2": l2, "pvband": pvband,
-                       "rectangular_shot_estimate": shots,
-                       "shot_shape": [512, 512]},
-        "timing_seconds": {"optimization": optimized - started,
-                           "evaluation": evaluated - optimized,
-                           "total": evaluated - started},
-        "gpu_peak_allocated_bytes": (
-            int(torch.cuda.max_memory_allocated(model.device))
-            if model.device.type == "cuda" else 0),
-        "artifacts": {"result_npz": str(result_path), "images": images,
-                      "final_lithography": final_lithography,
-                      "summary": str(output / "summary.json")},
-    }
-    _atomic_json(output / "summary.json", summary)
-    return result, summary
+        glp_layers=glp_layers, run_configuration=run_configuration,
+        return_result=True)
+    return outcome
 
 
 def build_parser() -> argparse.ArgumentParser:

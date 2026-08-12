@@ -620,7 +620,7 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 ## 10. `main/offline_inputs.py`：文件级输入契约
 
-源码：[`main/offline_inputs.py`](../main/offline_inputs.py)。所有写盘采用同目录临时文件后 `os.replace`；raster 归档压缩，完整 segment 归档不压缩以降低准备时 CPU/峰值内存。
+源码：[`main/offline_inputs.py`](../main/offline_inputs.py)。该模块负责输入物化、归档版本与损坏校验；原子写入实现统一位于 [`main/artifacts.py`](../main/artifacts.py)。raster 归档压缩，完整 segment 归档不压缩以降低准备时 CPU/峰值内存。
 
 ### 10.1 内存 raster 接口
 
@@ -722,11 +722,11 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 ### 11.5 [`main/run_simpleilt.py`](../main/run_simpleilt.py)
 
-`run_simpleilt(input_path, output_dir, ...) -> (SimpleILTResult, summary)` 接受 GDS/OASIS 或 raster NPZ。总会写 `simpleilt_result.npz` 和 summary JSON，可选 PNG。结果 NPZ v1 保存 `best_parameters`、`soft_mask`、`binary_mask(uint8)`、`best_iteration`；summary 额外保存配置、逐轮损失、二值 L2、PVBand、shot、时间和 GPU 峰值。
+`run_simpleilt(input_path, output_dir, ...) -> (SimpleILTResult, summary)` 接受 GDS/OASIS 或 raster NPZ。它是 `run_ilt(method="simple", return_result=True)` 的参数适配层，保留历史默认值和 Python 返回值，不再重复输入、优化、评价或保存实现。统一写 `ilt_result.npz`、summary JSON、最终光刻 NPZ和可选 PNG；不会再生成 `simpleilt_result.npz`。
 
 ### 11.6 [`main/run_ilt.py`](../main/run_ilt.py)
 
-`run_ilt(input_path, output_dir, method=..., ...) -> summary` 接受 GDS/OASIS 或 raster NPZ。已验收 `method=levelset/curvmulti/multilevel`：输入参数包括迭代/损失、device、Layer/top/DBU ROI、pixel/canvas 和容量上限；CurvMulti/Multilevel 另接受 scales、平滑核、sigmoid steepness/offset 和 mask threshold，Multilevel 再接受逐级 iterations/step sizes。保存 `ilt_result.npz`、最终三工艺角光刻结果、可选 target/soft/binary PNG 及 summary JSON。summary 包含配置、逐轮/阶段损失、二值 L2/PVBand/shot、输入/优化/评价/输出时间、进程内存检查点和 GPU 峰值。CLI 支持 `--json`，可从仓库外直接执行。
+`run_ilt(input_path, output_dir, method=..., return_result=False, ...) -> summary | (SimpleILTResult, summary)` 接受 GDS/OASIS 或 raster NPZ。默认返回契约不变；兼容入口只有在显式 `return_result=True` 时取得同次执行的内存结果。已验收 `method=simple/levelset/curvmulti/multilevel`：输入参数包括迭代/损失、device、Layer/top/DBU ROI、pixel/canvas 和容量上限；CurvMulti/Multilevel 另接受 scales、平滑核、sigmoid steepness/offset 和 mask threshold，Multilevel 再接受逐级 iterations/step sizes。保存 `ilt_result.npz`、最终三工艺角光刻结果、可选 target/soft/binary PNG 及 summary JSON。summary 包含配置、逐轮/阶段损失、二值 L2/PVBand/shot、输入/优化/评价/输出时间、进程内存检查点和 GPU 峰值。
 
 ### 11.7 [`main/run_diffopc.py`](../main/run_diffopc.py)
 
@@ -736,9 +736,9 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 `run_mbopc_iteration_test(input_path, output_dir, ...) -> SimpleMBOPCResult` **只接受** `prepare_segment_input` 生成的 segment NPZ v2/v3。它不读取源 GDS、不重新提边、不重新分 owner。输出 GDS、`mbopc_result.npz`、summary JSON和可选 preview；结果 NPZ v1 保存最佳位移、最佳轮次和停止原因。
 
-### 11.9 [`main/offline_inputs.py`](../main/offline_inputs.py) 与 [`main/__init__.py`](../main/__init__.py)
+### 11.9 [`main/artifacts.py`](../main/artifacts.py)、[`main/offline_inputs.py`](../main/offline_inputs.py) 与 [`main/__init__.py`](../main/__init__.py)
 
-`main/__init__.py` 不聚合导出。离线接口既可直接从 Python 导入，也可作为命令运行；其私有 `_atomic_*`、`_exact_dbu` 当前被同目录 runner 复用，但不是跨包稳定 API。
+`main/__init__.py` 不聚合导出。`artifacts.py` 公开 `atomic_json/atomic_npz/atomic_png` 与两种最终光刻保存函数；`offline_inputs.py` 只保留版图到 raster/segment 的内存物化、归档读写校验和准备 CLI。纳米到 DBU 的严格转换是 `main.configuration.exact_dbu`，所有入口直接使用公共名称，不再跨模块导入下划线私有符号。
 
 ## 12. 常见组合方式
 

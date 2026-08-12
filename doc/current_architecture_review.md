@@ -225,3 +225,9 @@ Simple MB-OPC 的 `_owner_indices()` 和 DiffOPC 的 `_owner_segments()` 语义�
 当前代码并不是“结构体太多、文件太多”的失控设计。核心数据面已经比较克制，性能关键路径也有明确的缓存、CSR、owner-only 和轮次屏障语义。主要问题是项目从 Layout/Geometry 逐步长成完整 OPC 平台后，入口层和公共契约没有完全同步升级，形成了私有 helper 外泄、双入口重复、具体模型耦合和历史命名/文档漂移。
 
 因此下一轮优化应以“整理边界、删除真实重复、保持数据面不动”为原则，而不是再次大规模重写核心几何或把所有流程塞进统一框架。
+
+## 11. P1/P2 实施状态（2026-08-12）
+
+本报告第 4、5 节已按用户授权实施：`psutil` 转为运行依赖；LayoutDB 提供受控只读层级扫描；求解器依赖最小 `LithographyModel` Protocol；真实入口传递 membership 容量上限。入口层新增单一 `main/artifacts.py`，Layer/DBU 转换、ILT 张量 helper、owner 查询和边段计数公式均已去重，SimpleILT 兼容脚本只委托统一 `run_ilt`。
+
+本轮没有实施第 6 节 P3：`MBOPCProblem`/归档不改名，项目元数据身份、`OwnershipError` 与已跟踪产物不在此次修改范围。核心数据面没有新增结构体、runner 基类、注册器或工厂；`geometry/` 保持零修改。

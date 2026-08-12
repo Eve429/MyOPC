@@ -19,13 +19,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from evaluation import estimate_rectangular_shots, evaluate_binary_l2, evaluate_pvband
 from layout import DbuBox, LayerSpec
 from lithography import ICCAD13Lithography
+from main.artifacts import (
+    atomic_json, atomic_npz, atomic_png, save_final_lithography_result,
+)
 from main.offline_inputs import (
-    _atomic_json,
-    _atomic_npz,
-    _atomic_png,
     add_layout_source_arguments,
     resolve_raster_input,
-    save_final_lithography_result,
 )
 from main.configuration import ConfiguredArgumentParser, glp_layer_map
 from opc.input import process_memory_snapshot
@@ -34,6 +33,7 @@ from opc.iteration.ilt import (
     LevelSetConfig,
     MultilevelConfig,
     SimpleILTConfig,
+    SimpleILTResult,
     optimize,
     optimize_curvmulti,
     optimize_levelset,
@@ -62,8 +62,10 @@ def run_ilt(
         max_source_vertices: int = 20_000_000,
         max_estimated_gib: float = 8.0, polarity: str = "clear",
         glp_layers: dict[str, LayerSpec] | None = None,
-        run_configuration: dict[str, object] | None = None) -> dict[str, Any]:
-    """读取版图或 raster NPZ，运行指定 ILT 并保存评价、光刻图和资源统计。"""
+        run_configuration: dict[str, object] | None = None,
+        return_result: bool = False
+        ) -> dict[str, Any] | tuple[SimpleILTResult, dict[str, Any]]:
+    """运行指定 ILT；可选同时返回内存结果，并始终保存统一产物与统计。"""
     loaded_started = perf_counter()
     memory_checkpoints = {"start": process_memory_snapshot()}
     # GDS/OASIS 分支在 Region 物化前执行文件、层级图形、顶点、预计内存和
@@ -93,11 +95,13 @@ def run_ilt(
         config: object = SimpleILTConfig(
             10 if iterations is None else iterations,
             0.2 if step_size is None else step_size,
+            sigmoid_steepness=sigmoid_steepness,
             weight_pvband=0.0 if weight_pvband is None else weight_pvband,
             weight_process_l2=(1.0 if weight_process_l2 is None else
                                weight_process_l2),
             curvature_weight=(0.0 if curvature_weight is None else
-                              curvature_weight))
+                              curvature_weight),
+            mask_threshold=mask_threshold)
         result = optimize(target, model, config)
     elif method == "levelset":
         config = LevelSetConfig(
@@ -165,7 +169,7 @@ def run_ilt(
     parameters = result.best_parameters.detach().cpu().numpy().astype(np.float32, copy=False)
     soft_mask = result.soft_mask.detach().cpu().numpy().astype(np.float32, copy=False)
     binary_mask = result.binary_mask.detach().cpu().numpy().astype(np.uint8, copy=False)
-    result_path = _atomic_npz(output / "ilt_result.npz", {
+    result_path = atomic_npz(output / "ilt_result.npz", {
         "format_name": np.array("myopc.ilt-result"),
         "format_version": np.array(1, dtype=np.int32),
         "method": np.array(method), "best_parameters": parameters,
@@ -178,7 +182,7 @@ def run_ilt(
     if save_png:
         for name, values in (("target", target_array), ("soft_mask", soft_mask),
                              ("binary_mask", binary_mask)):
-            images[name] = str(_atomic_png(output / f"{name}.png", values))
+            images[name] = str(atomic_png(output / f"{name}.png", values))
     finished = perf_counter()
     memory_checkpoints["output"] = process_memory_snapshot()
     record_values: list[dict[str, Any]] = []
@@ -226,8 +230,10 @@ def run_ilt(
                       "final_lithography": final_lithography,
                       "summary": str(output / "summary.json")},
     }
-    _atomic_json(output / "summary.json", summary)
-    return summary
+    atomic_json(output / "summary.json", summary)
+    # 兼容统一入口原有 summary 返回值；SimpleILT 兼容脚本显式请求同一次执行
+    # 已生成的内存结果，绝不重新优化、重读产物或维护第二套评价流程。
+    return (result, summary) if return_result else summary
 
 
 def main(argv: list[str] | None = None) -> int:

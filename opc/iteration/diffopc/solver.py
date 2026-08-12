@@ -36,15 +36,6 @@ def _sample_probe(image: torch.Tensor, points: np.ndarray, origin: torch.Tensor,
         padding_mode="zeros", align_corners=True)[0, 0, :, 0]
 
 
-def _owner_segments(problem: MBOPCProblem) -> tuple[np.ndarray, ...]:
-    """从既有 membership CSR 一次建立每个 core 唯一拥有的 segment 视图。"""
-    result: list[np.ndarray] = []
-    for core_index in range(problem.core_count):
-        members = problem.segments_for_core(core_index)
-        result.append(members[problem.owner_indices[members] == core_index])
-    return tuple(result)
-
-
 def _target_tile(problem: MBOPCProblem, core_index: int, core: object,
                  pixel_dbu: int, canvas: int,
                  cache: ArrayTileCache) -> np.ndarray:
@@ -85,7 +76,8 @@ def optimize(problem: MBOPCProblem, model: LithographyModel,
     """流式累计全局位移梯度，并只在轮次屏障后发布合法候选状态。"""
     cores = _validate_problem(problem, model, config)
     geometry = problem.segments.materialize()
-    owners = _owner_segments(problem)
+    owners = tuple(problem.owner_segments_for_core(index)
+                   for index in range(problem.core_count))
     cache = ArrayTileCache(config.target_cache_bytes)
     # ownership 像素和 owner segment 在一次已准备问题内固定。全局分母使损失及
     # 梯度不随 tile 数、batch 大小或 halo membership 重复次数变化；只逐 core

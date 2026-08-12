@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import zipfile
 from itertools import pairwise
@@ -13,8 +12,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
-import torch
-from PIL import Image
 
 # 这些脚本明确要求能从任意工作目录直接执行。Python 直接运行深层脚本时只把
 # 当前文件目录加入 sys.path，因此按文件位置加入仓库根；这不是安装包，也不会
@@ -44,56 +41,25 @@ from opc.input.grid import axis_cuts_by_size  # noqa: E402
 from opc.input.preflight import estimate_prepare_peak_bytes  # noqa: E402
 from main.configuration import (  # noqa: E402
     ConfiguredArgumentParser,
+    exact_dbu,
     glp_layer_map,
     parse_glp_layer,
     parse_layer_spec,
 )
-from opc.input.raster import (  # noqa: E402
-    ownership_canvas,
-    rasterize_mask_canvas,
-)
+from main.artifacts import atomic_npz  # noqa: E402
+from opc.input.raster import rasterize_mask_canvas  # noqa: E402
 
 _GIB = 1024 ** 3
 _RASTER_FORMAT = "myopc.raster-input"
 _SEGMENT_FORMAT = "myopc.mbopc-input"
 _RASTER_VERSION = 2
 _SEGMENT_VERSION = 3
-_FINAL_LITHOGRAPHY_FORMAT = "myopc.final-lithography"
-_FINAL_LITHOGRAPHY_VERSION = 1
-
-
-def _output_npz(path: str | Path) -> Path:
-    """规范化 NPZ 输出路径，并拒绝容易误判格式的其他扩展名。"""
-    output = Path(path).expanduser().resolve()
-    if output.suffix.lower() != ".npz":
-        raise ValueError("离线输入输出必须使用 .npz 扩展名")
-    return output
-
-
 def _positive_limit(value: float, name: str) -> float:
     """把安全上限规范化为有限正数，避免零值意外关闭保护。"""
     result = float(value)
     if not np.isfinite(result) or result <= 0.0:
         raise ValueError(f"{name} 必须是有限正数")
     return result
-
-
-def _exact_dbu(value_nm: float, dbu_nm: float, name: str,
-               allow_zero: bool = False) -> int:
-    """把必须落在版图格点上的纳米配置严格换算为整数 DBU。"""
-    value = float(value_nm)
-    if (not np.isfinite(value) or value < 0.0 or
-            (value == 0.0 and not allow_zero)):
-        requirement = "有限非负数" if allow_zero else "有限正数"
-        raise ValueError(f"{name} 必须是{requirement}")
-    raw = value / dbu_nm
-    rounded = round(raw)
-    # tile、halo、像素和边段配置共同决定离线文件的坐标契约。静默取整会让
-    # 保存时的边界与后续迭代配置不一致，因此只接受当前 DBU 精确可表达的值。
-    if (rounded < 0 or (rounded == 0 and not allow_zero) or
-            not np.isclose(raw, rounded, atol=1e-9, rtol=0.0)):
-        raise ValueError(f"{name}={value_nm} nm 不能由当前 {dbu_nm} nm/DBU 精确表达")
-    return int(rounded)
 
 
 def _normalize_box(box: DbuBox | tuple[int, int, int, int] | None,
@@ -137,185 +103,6 @@ def _select_database_input(
         selected_layer = layer
     selected_box = _normalize_box(box, database.bbox())
     return database, selected_layer, selected_box
-
-
-def _atomic_npz(path: str | Path, arrays: dict[str, object],
-                compressed: bool = False) -> Path:
-    """把数组归档原子写入目标文件，异常时删除同目录临时文件。"""
-    output = _output_npz(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
-    try:
-        with temporary.open("wb") as stream:
-            writer = np.savez_compressed if compressed else np.savez
-            writer(stream, **arrays)
-        os.replace(temporary, output)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return output
-
-
-def _atomic_json(path: str | Path, value: dict[str, Any]) -> Path:
-    """以 UTF-8 中文和稳定缩进原子保存测试汇总 JSON。"""
-    output = Path(path).expanduser().resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temporary, output)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return output
-
-
-def _atomic_png(path: str | Path, values: np.ndarray) -> Path:
-    """原子保存左下原点的零到一数组为顶部原点八位灰度 PNG。"""
-    output = Path(path).expanduser().resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
-    # PNG 仅是显式请求的诊断产物；在写盘边界才执行裁剪、量化和纵轴翻转，
-    # 不让图片坐标或 uint8 表示回流到模型与优化器的数值路径。
-    image = np.flipud(np.rint(np.clip(values, 0.0, 1.0) * 255.0).astype(np.uint8))
-    try:
-        Image.fromarray(np.ascontiguousarray(image), mode="L").save(
-            temporary, format="PNG")
-        os.replace(temporary, output)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return output
-
-
-def _final_arrays(mask: object, printed: dict[str, object]) -> dict[str, np.ndarray]:
-    """规范化最终 mask 和三种工艺角为连续二维 float32 数组。"""
-    arrays: dict[str, np.ndarray] = {}
-    values = {"mask": mask, **printed}
-    for name in ("mask", "nominal", "dose_max", "defocus_min"):
-        if name not in values:
-            raise ValueError(f"最终光刻结果缺少 {name} 数组")
-        value = values[name]
-        if hasattr(value, "detach"):
-            value = value.detach().cpu().numpy()
-        array = np.ascontiguousarray(value, dtype=np.float32)
-        if array.ndim == 3 and array.shape[0] == 1:
-            array = array[0]
-        if array.ndim != 2 or not np.all(np.isfinite(array)):
-            raise ValueError(f"最终光刻结果 {name} 必须是有限二维数组")
-        arrays[name] = array
-    shape = arrays["mask"].shape
-    if any(array.shape != shape for array in arrays.values()):
-        raise ValueError("最终光刻结果的 mask 与工艺角尺寸不一致")
-    return arrays
-
-
-def save_final_lithography_result(
-        output_dir: str | Path, mask: object, printed: dict[str, object], *,
-        save_png: bool = True) -> dict[str, object]:
-    """保存完整二维最终光刻结果，并返回稳定的产物索引。"""
-    arrays = _final_arrays(mask, printed)
-    output = Path(output_dir).expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    result_path = _atomic_npz(output / "final_lithography.npz", {
-        "format_name": np.array(_FINAL_LITHOGRAPHY_FORMAT),
-        "format_version": np.array(_FINAL_LITHOGRAPHY_VERSION, dtype=np.int32),
-        **arrays,
-    })
-    images: dict[str, str] = {}
-    if save_png:
-        for name, values in arrays.items():
-            images[name] = str(_atomic_png(output / f"final_{name}.png", values))
-    return {"npz": str(result_path), "images": images,
-            "shape": list(arrays["mask"].shape),
-            "format": _FINAL_LITHOGRAPHY_FORMAT,
-            "version": _FINAL_LITHOGRAPHY_VERSION}
-
-
-def _ownership_slice(core: object, context: object, pixel_dbu: int,
-                     canvas: int) -> tuple[slice, slice, list[int]]:
-    """返回 context 画布中 ownership 的矩形切片及其 DBU 原点。"""
-    ownership = ownership_canvas(core, context, pixel_dbu, canvas)
-    rows, columns = np.where(ownership)
-    if len(rows) == 0 or len(columns) == 0:
-        raise ValueError("core 在当前 pixel/canvas 下没有可保存的 ownership 像素")
-    y0, y1 = int(rows.min()), int(rows.max()) + 1
-    x0, x1 = int(columns.min()), int(columns.max()) + 1
-    # 正交 core 的中心采样形成连续矩形；若出现空洞说明坐标配置破坏了
-    # ownership 不变量，立即失败而不是保存含 halo 的伪 ownership 图。
-    if not np.all(ownership[y0:y1, x0:x1]):
-        raise ValueError("ownership 像素不是连续矩形，无法生成稳定 tile")
-    return (slice(y0, y1), slice(x0, x1),
-            [int(context.left + x0 * pixel_dbu),
-             int(context.bottom + y0 * pixel_dbu)])
-
-
-def save_final_lithography_tiles(
-        output_dir: str | Path, region: object, grid: object, model: object,
-        *, pixel_dbu: int, canvas: int, batch_size: int = 1,
-        save_png: bool = True, polarity: MaskPolarity | str = MaskPolarity.CLEAR,
-        field_box: DbuBox | None = None) -> dict[str, object]:
-    """按 core 批量仿真并保存 ownership-only 最终光刻 tile。"""
-    if not isinstance(pixel_dbu, int) or pixel_dbu <= 0:
-        raise ValueError("pixel_dbu 必须是正整数")
-    if not isinstance(batch_size, int) or batch_size <= 0:
-        raise ValueError("batch_size 必须是正整数")
-    cores = grid.cores()
-    output = Path(output_dir).expanduser().resolve()
-    tile_dir = output / "tiles"
-    tile_dir.mkdir(parents=True, exist_ok=True)
-    conditions = tuple(model.condition(name) for name in (
-        "nominal", "dose_max", "defocus_min"))
-    manifest_tiles: list[dict[str, object]] = []
-    for start in range(0, len(cores), batch_size):
-        group = cores[start:start + batch_size]
-        masks: list[np.ndarray] = []
-        slices: list[tuple[slice, slice, list[int]]] = []
-        for core in group:
-            slices.append(_ownership_slice(core.ownership_box, core.context_box,
-                                           pixel_dbu, canvas))
-            masks.append(rasterize_mask_canvas(
-                region, core.context_box, pixel_dbu, canvas,
-                polarity=polarity, field_box=field_box))
-        tensor = torch.as_tensor(np.stack(masks), device=model.device)
-        with torch.no_grad():
-            printed = model.forward_many(tensor, conditions)
-        for local, core in enumerate(group):
-            y_slice, x_slice, origin = slices[local]
-            arrays = {"mask": masks[local][y_slice, x_slice]}
-            for name in ("nominal", "dose_max", "defocus_min"):
-                arrays[name] = np.ascontiguousarray(
-                    printed[name][local].detach().cpu().numpy()[y_slice, x_slice],
-                    dtype=np.float32)
-            tile_base = tile_dir / core.core_id
-            tile_npz = _atomic_npz(tile_base.with_suffix(".npz"), {
-                "format_name": np.array(_FINAL_LITHOGRAPHY_FORMAT),
-                "format_version": np.array(_FINAL_LITHOGRAPHY_VERSION, dtype=np.int32),
-                **arrays,
-            })
-            png_paths: dict[str, str] = {}
-            if save_png:
-                for name, values in arrays.items():
-                    png_paths[name] = str(_atomic_png(
-                        tile_base.with_name(f"{tile_base.name}_{name}.png"), values))
-            manifest_tiles.append({
-                "core_id": core.core_id, "core_index": start + local,
-                "ownership_box_dbu": [core.ownership_box.left, core.ownership_box.bottom,
-                                      core.ownership_box.right, core.ownership_box.top],
-                "context_box_dbu": [core.context_box.left, core.context_box.bottom,
-                                    core.context_box.right, core.context_box.top],
-                "origin_dbu": origin, "shape": list(arrays["mask"].shape),
-                "npz": str(tile_npz), "images": png_paths,
-            })
-        del printed, tensor, masks
-    manifest = {
-        "format": _FINAL_LITHOGRAPHY_FORMAT, "version": _FINAL_LITHOGRAPHY_VERSION,
-        "orientation": "bottom_left", "pixel_dbu": pixel_dbu, "canvas": canvas,
-        "polarity": MaskPolarity(polarity).value,
-        "conditions": [condition.name for condition in conditions],
-        "tile_count": len(manifest_tiles), "tiles": manifest_tiles,
-    }
-    manifest_path = _atomic_json(output / "manifest.json", manifest)
-    return {"manifest": str(manifest_path), "tile_dir": str(tile_dir),
-            "tile_count": len(manifest_tiles), "format": _FINAL_LITHOGRAPHY_FORMAT,
-            "version": _FINAL_LITHOGRAPHY_VERSION}
 
 
 def _archive_members(path: str | Path, max_archive_gib: float) -> tuple[Path, set[str]]:
@@ -387,7 +174,7 @@ def materialize_raster_input(
     with database:
         dbu_um = database.dbu_um
         dbu_nm = dbu_um * 1000.0
-        pixel_dbu = _exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
+        pixel_dbu = exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
         if not isinstance(canvas, int) or canvas <= 0:
             raise ValueError("canvas 必须是正整数")
         width = (selected_box.width + pixel_dbu - 1) // pixel_dbu
@@ -452,7 +239,7 @@ def prepare_raster_input(
         glp_layers=glp_layers)
     if run_configuration is not None:
         metadata["run_configuration"] = run_configuration
-    return _atomic_npz(output_path, {
+    return atomic_npz(output_path, {
         "format_name": np.array(_RASTER_FORMAT),
         "format_version": np.array(_RASTER_VERSION, dtype=np.int32),
         "metadata_json": np.array(json.dumps(metadata, ensure_ascii=False)),
@@ -544,12 +331,12 @@ def materialize_segment_input(
     with database:
         dbu_um, source_bytes = database.dbu_um, source.stat().st_size
         dbu_nm = dbu_um * 1000.0
-        tile_dbu = _exact_dbu(tile_size_nm, dbu_nm, "tile_size_nm")
-        halo_dbu = _exact_dbu(halo_nm, dbu_nm, "halo_nm", allow_zero=True)
+        tile_dbu = exact_dbu(tile_size_nm, dbu_nm, "tile_size_nm")
+        halo_dbu = exact_dbu(halo_nm, dbu_nm, "halo_nm", allow_zero=True)
         config = FragmentationConfig(
-            float(_exact_dbu(corner_nm, dbu_nm, "corner_nm")),
-            float(_exact_dbu(segment_nm, dbu_nm, "segment_nm")),
-            float(_exact_dbu(
+            float(exact_dbu(corner_nm, dbu_nm, "corner_nm")),
+            float(exact_dbu(segment_nm, dbu_nm, "segment_nm")),
+            float(exact_dbu(
                 max_displacement_nm, dbu_nm, "max_displacement_nm", allow_zero=True)))
         grid = RectilinearCoreGrid(
             axis_cuts_by_size(selected_box.left, selected_box.right, tile_dbu),
@@ -651,7 +438,7 @@ def prepare_segment_input(
     }
     # 大边段归档不压缩，避免一次性压缩整张 reticle 时增加 CPU 时间和临时内存；
     # 输入只准备一次，后续模型/迭代专项测试可以直接顺序读取连续数组。
-    return _atomic_npz(output_path, arrays, compressed=False)
+    return atomic_npz(output_path, arrays, compressed=False)
 
 
 def _validate_loaded_problem(problem: MBOPCProblem) -> None:
@@ -773,15 +560,10 @@ def load_segment_input(
     return problem, metadata
 
 
-def parse_layer(value: str) -> LayerSpec:
-    """解析命令行中的 `layer` 或 `layer/datatype`。"""
-    return parse_layer_spec(value)
-
-
 def add_layout_source_arguments(parser: argparse.ArgumentParser) -> None:
     """加入直接版图输入共用的范围选择和物化安全参数。"""
     parser.add_argument("--top-cell", help="多顶层版图必须指定")
-    parser.add_argument("--layer", type=parse_layer, help="目标 layer/datatype")
+    parser.add_argument("--layer", type=parse_layer_spec, help="目标 layer/datatype")
     parser.add_argument("--box", nargs=4, type=int,
                         metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"), help="可选 DBU ROI")
     parser.add_argument("--polarity", choices=[item.value for item in MaskPolarity])

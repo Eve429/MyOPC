@@ -6,6 +6,7 @@ import numpy as np
 from geometry import extract_contour
 from layout import LayerSpec
 from opc.input import normalize_physical_mask
+from opc.input._fragmentation import count_edge_fragments
 from opc.input.edge import FragmentationConfig, fragment_edges
 
 from .test_common import _batch
@@ -83,3 +84,28 @@ def test_compact_batch_does_not_persist_expanded_segment_geometry() -> None:
     assert not hasattr(segments, "edges")
     assert not hasattr(segments, "keys")
     assert not hasattr(segments, "edge_segment_offsets")
+
+
+def test_shared_fragment_count_formula_matches_real_randomized_batches() -> None:
+    """共享纯数组公式应对随机边长逐边等于真实 SegmentBatch 计数。"""
+    random = np.random.default_rng(20260812)
+    corner, maximum = 7.0, 23.0
+    for lengths in random.integers(1, 2000, size=(20, 8)):
+        # 把随机整数边长构成彼此分离的矩形，避免 Region 合并改变输入数学边；
+        # 生产切分得到的 edge_ids bincount 是最直接的逐边实际分配数量。
+        region = kdb.Region()
+        offset = 0
+        for width, height in lengths.reshape(-1, 2):
+            region.insert(kdb.Box(offset, 0, offset + int(width), int(height)))
+            offset += int(width) + 10
+        layer = LayerSpec(1, 0)
+        contours = extract_contour(normalize_physical_mask(_batch(region, layer), layer).region)
+        segments = fragment_edges(
+            contours, FragmentationConfig(corner, maximum, 4.0))
+        vertices = contours.vertices
+        edge_next = np.arange(len(vertices), dtype=np.int32) + 1
+        edge_next[contours.ring_offsets[1:] - 1] = contours.ring_offsets[:-1]
+        edge_lengths = np.linalg.norm(vertices[edge_next] - vertices, axis=1)
+        expected = count_edge_fragments(edge_lengths, corner, maximum)
+        actual = np.bincount(segments.edge_ids, minlength=len(edge_lengths))
+        np.testing.assert_array_equal(actual, expected)

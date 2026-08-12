@@ -69,6 +69,13 @@ class MBOPCProblem:
         start, end = self.core_offsets[core_index:core_index + 2]
         return self.member_segment_indices[start:end]
 
+    def owner_segments_for_core(self, core_index: int) -> NDArray[np.int32]:
+        """返回指定 core 唯一可写的 segment 索引。"""
+        members = self.segments_for_core(core_index)
+        # owner 必然属于自身 context，故只过滤该 core 的 CSR 局部视图；这避免每个
+        # 求解器再次扫描全局 segment，并把唯一写入者语义固定在问题公共接口中。
+        return members[self.owner_indices[members] == core_index]
+
 
 def prepare_problem(batch: RegionBatch, layer: LayerSpec, config: FragmentationConfig,
                     grid: RectilinearCoreGrid | None = None,

@@ -11,14 +11,8 @@ import torch
 
 from lithography import LithographyModel, ProcessCondition
 
-from .simple import (
-    ILTIterationRecord,
-    SimpleILTResult,
-    _curvature_loss,
-    _image_batch,
-    _resize_image,
-    _smooth_sigmoid_mask,
-)
+from ._common import curvature_loss, image_batch, resize_image, smooth_sigmoid_mask
+from .simple import ILTIterationRecord, SimpleILTResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +62,7 @@ def optimize_curvmulti(
         process_conditions: Sequence[ProcessCondition] | None = None
         ) -> SimpleILTResult:
     """按粗到细尺度优化连续平滑参数，并返回最终尺度的统一 ILT 结果。"""
-    target_batch, squeeze = _image_batch(target, "target", model.device)
+    target_batch, squeeze = image_batch(target, "target", model.device)
     target_batch = target_batch.detach()
     height, width = target_batch.shape[-2:]
     if height <= 0 or width <= 0:
@@ -91,7 +85,7 @@ def optimize_curvmulti(
         # 参数初值可在平滑后形成对称软边；无需复制 LevelSet 的 SDF 表示。
         initial = target_batch
     else:
-        initial, initial_squeeze = _image_batch(
+        initial, initial_squeeze = image_batch(
             initial_parameters, "initial_parameters", model.device)
         if initial_squeeze != squeeze or initial.shape != target_batch.shape:
             raise ValueError("initial_parameters 必须与 target 形状一致")
@@ -101,7 +95,7 @@ def optimize_curvmulti(
     if optimization_mask is None:
         full_movable = torch.ones_like(target_batch)
     else:
-        full_movable, movable_squeeze = _image_batch(
+        full_movable, movable_squeeze = image_batch(
             optimization_mask, "optimization_mask", model.device)
         if movable_squeeze != squeeze or full_movable.shape != target_batch.shape:
             raise ValueError("optimization_mask 必须与 target 形状一致")
@@ -121,7 +115,7 @@ def optimize_curvmulti(
         raise ValueError("CurvMultiILT 工艺条件名称不能重复")
 
     previous_parameters: torch.Tensor | None = None
-    fixed_full_mask = _smooth_sigmoid_mask(
+    fixed_full_mask = smooth_sigmoid_mask(
         initial, config.smoothing_kernel,
         config.sigmoid_steepness, config.sigmoid_offset).detach()
     final_parameters = initial.detach().clone()
@@ -131,12 +125,12 @@ def optimize_curvmulti(
     global_iteration = 0
     for scale in config.scales:
         shape = (height // scale, width // scale)
-        stage_reference = _resize_image(initial, shape, "area")
+        stage_reference = resize_image(initial, shape, "area")
         # 当前尺度参考用 area 保持覆盖率；跨阶段参数按 OpenILT 使用 nearest
         # warm-start，不在阶段间凭空引入新灰度。窗口也用 nearest 保持边界明确。
         stage_initial = (stage_reference if previous_parameters is None else
-                         _resize_image(previous_parameters, shape, "nearest"))
-        movable = _resize_image(full_movable, shape, "nearest")
+                         resize_image(previous_parameters, shape, "nearest"))
+        movable = resize_image(full_movable, shape, "nearest")
         parameters = stage_initial.detach().clone().requires_grad_(True)
         optimizer = torch.optim.SGD((parameters,), lr=config.step_size)
         stage_best_loss = float("inf")
@@ -149,13 +143,13 @@ def optimize_curvmulti(
             # 在平滑前钉住固定区，防止不可动参数通过 7×7 邻域影响可动边界；平滑后
             # 再混合一次 fixed_mask，保证窗口外输出逐像素保持本尺度参考值。
             effective = parameters * movable + stage_reference * (1.0 - movable)
-            stage_mask = _smooth_sigmoid_mask(
+            stage_mask = smooth_sigmoid_mask(
                 effective, config.smoothing_kernel,
                 config.sigmoid_steepness, config.sigmoid_offset)
             # Hopkins 核只在模型固定像素网格上具有既定物理含义；粗尺度只减少
             # 参数自由度，不能把小图直接补零送入模型，否则图形物理尺寸会缩小。
             # 因此每轮把控制网格的 mask 近邻恢复到完整网格后再仿真和计算损失。
-            optimized_mask = _resize_image(stage_mask, (height, width), "nearest")
+            optimized_mask = resize_image(stage_mask, (height, width), "nearest")
             mask = optimized_mask * full_movable + fixed_full_mask * (1.0 - full_movable)
             printed = model.forward_many(mask, all_conditions)
             # OpenILT CurvMulti 源码把 printedMax 误作 nominal；这里按具名条件计算，
@@ -172,7 +166,7 @@ def optimize_curvmulti(
                 pvband = nominal_l2.new_zeros(())
             # CurvMulti 的曲率作用于 nominal wafer，而不是输入 mask；这正是它与
             # SimpleILT/LevelSetILT 的主要算法差异，并复用同一零和离散曲率核。
-            curvature = (_curvature_loss(printed[nominal.name])
+            curvature = (curvature_loss(printed[nominal.name])
                          if config.curvature_weight > 0.0 else nominal_l2.new_zeros(()))
             loss = (nominal_l2 + config.weight_process_l2 * process_l2 +
                     config.weight_pvband * pvband +

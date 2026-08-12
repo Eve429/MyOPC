@@ -22,20 +22,10 @@ from geometry import (
     extract_contours,
     render_region_batch,
 )
-from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
-from main.configuration import ConfiguredArgumentParser, glp_layer_map, parse_glp_layer
-
-
-def parse_layer(value: str) -> LayerSpec:
-    """解析 `layer/datatype` 或 `layer:datatype` 命令行参数。"""
-    normalized = value.replace(":", "/")
-    parts = normalized.split("/")
-    if len(parts) not in (1, 2):
-        raise argparse.ArgumentTypeError("Layer 格式应为 layer 或 layer/datatype")
-    try:
-        return LayerSpec(int(parts[0]), int(parts[1]) if len(parts) == 2 else 0)
-    except (TypeError, ValueError) as exc:
-        raise argparse.ArgumentTypeError(f"非法 Layer：{value}") from exc
+from layout import DbuBox, LayoutDB, LayoutError
+from main.configuration import (
+    ConfiguredArgumentParser, glp_layer_map, parse_glp_layer, parse_layer_spec,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top", help="多顶层版图必须明确指定的 top Cell")
     parser.add_argument("--glp-layer", dest="glp_layers", action="append",
                         type=parse_glp_layer, help="GLP 符号层映射 NAME=LAYER/DATATYPE")
-    parser.add_argument("--layer", action="append", type=parse_layer, dest="layers",
+    parser.add_argument("--layer", action="append", type=parse_layer_spec, dest="layers",
                         help="查询 Layer，可重复传入，例如 --layer 1/0")
     parser.add_argument("--box", nargs=4, type=int,
                         metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),

@@ -29,16 +29,17 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 | `opc/input/` | 物理 mask、规则 core 网格等共享输入 |
 | `opc/input/edge/` | 边段切分、唯一 owner、探针坐标、全局矢量重建 |
 | `opc/iteration/mbopc/` | simple MB-OPC 的流式同步迭代 |
-| `opc/iteration/ilt/` | SimpleILT 与 LevelSetILT；均不依赖边段输入 |
-| `lithography/` | 可独立替换的光刻模型；当前为 ICCAD13 Hopkins 模型 |
+| `opc/iteration/ilt/` | 四种 ILT 求解器及包内共享张量操作；均不依赖边段输入 |
+| `lithography/` | 最小模型 Protocol 与 ICCAD13 Hopkins 实现 |
 | `evaluation/` | 二值 L2、PVBand、EPE 和确定性矩形 shot 估计 |
 | `opc/diagnostics.py` | 显式请求才执行的 NPZ/GDS/PNG 与几何图集 |
-| `main/offline_inputs.py` | 可复用像素/边段离线输入和原子结果写入 |
+| `main/artifacts.py` | 原子 JSON/NPZ/PNG 与完整/流式最终光刻产物 |
+| `main/offline_inputs.py` | 可复用像素/边段物化、归档校验和准备 CLI |
 | `main/run_mbopc_frontend.py` | 不运行光刻的输入、分段、归属、重建验证器 |
 | `main/run_mbopc.py` | 完整 MB-OPC 主程序 |
 | `main/run_lithography.py` | 独立光刻模型验证入口 |
 | `main/run_mbopc_iteration.py` | 独立 MB-OPC 迭代验证入口 |
-| `main/run_simpleilt.py` | 独立 SimpleILT 入口 |
+| `main/run_simpleilt.py` | 保留历史参数/返回值的 SimpleILT 适配入口 |
 | `main/run_ilt.py` | 统一 ILT 入口；LevelSet、CurvMulti、Multilevel 均已验收 |
 | `main/run_diffopc.py` | DiffOPC 入口；直接读取 GDS/OASIS 或 segment NPZ，保存最佳几何与流式最终光刻结果 |
 
@@ -68,6 +69,8 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 ### 3.4 `MBOPCProblem`
 
 聚合 `PhysicalMask`、`FragmentationConfig`、`SegmentBatch`、紧凑 `RectilinearCoreGrid` 以及 owner/membership CSR。`owner_indices[i]` 是 segment `i` 的唯一写入 core；`core_offsets/member_segment_indices` 表达 owner 与只读 halo context。展开的 `CoreSpec` 只在 solver 或诊断明确需要时生成一次，不再常驻 problem。
+
+`segments_for_core(i)` 返回该 core 的 owner+halo 只读 membership 视图；`owner_segments_for_core(i)` 只返回唯一可写 segment。两个边段求解器都复用该查询，不再各自复制全局 owner 过滤。真实版图入口把预检推导出的 `max_memberships` 传给 `prepare_problem`，归属构造会在 `np.repeat` 等大数组分配前拒绝超限；省略上限仍仅适用于调用方已确认可放入内存的小问题。
 
 ## 4. 输入构造和重建
 
@@ -117,7 +120,7 @@ CPU batch 中始终保持 `uint8`，只在一次性送到模型设备时转为 `
 
 ## 6. 光刻与评价替换
 
-`ICCAD13Lithography` 独立位于 `lithography/`。`ProcessCondition(name, kernel, dose)` 表示一次独立工艺条件；`forward(mask, condition)` 返回一张连续 wafer，`forward_many(mask, conditions)` 返回按名称索引的结果。后者只共享本次调用的 mask FFT，并对相同 kernel bank 复用单位剂量强度；条件之间没有固定三元组绑定。全部传播由普通 PyTorch 复数 FFT、乘法、绝对值平方和 sigmoid 构成，原生 autograd 可处理任意上游梯度，可同时服务 MB-OPC 的 `no_grad`、梯度 OPC 和 ILT。
+`LithographyModel` 是零运行期开销的结构化 Protocol，只要求 `device`、`config.canvas/print_threshold`、`condition()` 和 `forward_many()`；求解器依赖该能力契约，runner 仍明确构造 `ICCAD13Lithography`，没有注册器或工厂。`ProcessCondition(name, kernel, dose)` 表示一次独立工艺条件；`forward(mask, condition)` 返回一张连续 wafer，`forward_many(mask, conditions)` 返回按名称索引的结果。后者只共享本次调用的 mask FFT，并对相同 kernel bank 复用单位剂量强度；条件之间没有固定三元组绑定。全部传播由普通 PyTorch 复数 FFT、乘法、绝对值平方和 sigmoid 构成，原生 autograd 可处理任意上游梯度，可同时服务 MB-OPC 的 `no_grad`、梯度 OPC 和 ILT。
 
 `evaluate_binary_l2` 与 `evaluate_pvband` 采用 OpenILT 的二值语义，只在 ownership 像素累计不一致像素数；函数不会原位阈值化输入。`evaluate_edge_probes` 根据 target 的内外语义产生 `-1/0/+1` 法向移动方向；同一 probe 同时触发相反要求时记为 ambiguous 且不移动。simple MB-OPC 只用 EPE 决定更新和最佳轮次，L2/PVBand 仅记录诊断。`estimate_rectangular_shots` 在显式固定分辨率上逐行合并相同水平 run，提供确定、无随机和无 OpenCV/adabox 依赖的矩形 shot 估计；它不是最小 shot 数证明。
 
@@ -125,7 +128,7 @@ CPU batch 中始终保持 `uint8`，只在一次性送到模型设备时转为 `
 
 `opc.iteration.ilt.optimize` 直接消费 `[H,W]` 或 `[B,H,W]` target，不构造 `MBOPCProblem` 或边段。默认参数由 target 映射到 `-1/+1`，每轮通过 sigmoid 得到软 mask；`optimization_mask` 可把窗口外区域固定为初始软值。损失由标称连续 L2、调用方传入的任意 process conditions 对 target 的连续 L2、这些条件逐像素范围的连续 PVBand，以及可选曲率项组成。
 
-求解结果只保留历史总损失最优轮的参数、软 mask、二值 mask 和逐轮标量记录。默认条件是 nominal、dose_max、defocus_min，但调用方可传入完全不同的独立条件，也可传空元组只优化标称条件。配置、记录、结果和算法集中在 `simple.py`；各 ILT 方法复用同一结果契约，没有建立基类、注册器或额外 contracts 文件。
+求解结果只保留历史总损失最优轮的参数、软 mask、二值 mask 和逐轮标量记录。默认条件是 nominal、dose_max、defocus_min，但调用方可传入完全不同的独立条件，也可传空元组只优化标称条件。配置、记录、结果和 Simple 算法集中在 `simple.py`；图像 batch、曲率、缩放和平滑 sigmoid 位于包内 `_common.py`，由现有四种算法复用。各 ILT 方法复用同一结果契约，没有建立基类或注册器。
 
 LevelSetILT 以 `phi < 0` 作为硬开窗条件，并用 `-|∇phi|` 代理梯度把光刻损失传回边界。默认初值是一次性在 CPU 计算、再送到模型设备的精确像素中心欧氏 SDF，前景为负、背景为正；它不在迭代热路径重复计算。最终 `soft_mask=sigmoid(-phi)` 仅用于诊断，权威硬结果仍严格按 `phi < 0` 生成。算法常驻模型设备的主要新增状态为参数、固定初值、优化窗口和 Adam 两份状态，均为 `O(BHW)`；不会物化边段或整张 reticle 的矢量结构。
 
@@ -133,7 +136,7 @@ LevelSetILT 以 `phi < 0` 作为硬开窗条件，并用 `-|∇phi|` 代理梯�
 
 - `main/run_mbopc.py`：保存 `summary.json`、结果 GDS 和可选 PNG；最终最佳几何额外做一次固定 512² shot 估计，不保存整轮 tensor，也不生成 NPZ。
 - `main/run_mbopc_frontend.py`：用于人工检查输入契约，保存 key-free、按全局 segment 下标对齐的格式 v3 NPZ，并可保存 GDS/PNG/JSON。
-- `main/run_simpleilt.py`：保存最佳参数、软/二值 mask 的 NPZ、逐轮损失与 L2/PVBand/shot JSON，并可保存 PNG。
+- `main/run_simpleilt.py`：只适配历史默认值并委托 `run_ilt(method="simple")`；统一保存 `ilt_result.npz`、summary、最终光刻 NPZ 和可选 PNG，同时保留 Python 返回 `(SimpleILTResult, summary)`。
 - `opc.diagnostics`：只有调用者明确要求时才物化诊断长度、图片、GDS 或测试图集。
 
 NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久身份协议。显式 remesh 必须重新分段、重新建立 owner，并由调用者重建优化状态。
@@ -160,7 +163,7 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 像素归档只对应一个可直接送入模型的 canvas，超限 ROI 必须缩小，不隐式切 tile。当前 raster/segment 协议分别为 v2/v3并保存显式 polarity；loader 继续兼容缺少 polarity 的历史 v1/v2，按 clear 解释。它与 `opc.diagnostics.save_problem_npz` 的不可恢复 v3 诊断快照完全分离。
 
-准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检复用已打开的 `LayoutDB` 原生层级迭代器，源 GDS/OASIS/GLP 只解析一次；只有扫描通过才物化 Region。布尔合并可能产生的新交点无法在物化前完全预测，因此离线边段准备完成后还会按真实 segment/membership 数量复核内存估计。
+准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检通过 `LayoutDB.recursive_polygon_shapes()` 获取受数据库生命周期约束的只读迭代器，不再跨包读取 `_native_*`；源 GDS/OASIS/GLP 只解析一次，扫描通过才物化 Region。预检和真实切分共享纯 NumPy 边段计数公式，布尔合并仍可能产生无法预知的新交点，因此准备后还会按真实 segment/membership 数量复核内存估计。
 
 `main/run_lithography.py` 和 `main/run_simpleilt.py` 都接受 GDS/OASIS 或 raster NPZ。直接版图模式用 `--layer/--top-cell/--box/--pixel-nm/--canvas` 选择目标并只在内存中生成 mask，不隐式保存 NPZ；归档模式保持原契约。`main/run_mbopc_iteration.py` 只消费边段归档，避免和完整 `run_mbopc.py` 重复版图前端。入口均可从任意工作目录直接运行，不需要安装本项目。
 

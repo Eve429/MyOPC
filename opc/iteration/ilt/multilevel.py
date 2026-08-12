@@ -11,14 +11,8 @@ import torch
 
 from lithography import LithographyModel, ProcessCondition
 
-from .simple import (
-    ILTIterationRecord,
-    SimpleILTResult,
-    _curvature_loss,
-    _image_batch,
-    _resize_image,
-    _smooth_sigmoid_mask,
-)
+from ._common import curvature_loss, image_batch, resize_image, smooth_sigmoid_mask
+from .simple import ILTIterationRecord, SimpleILTResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +69,7 @@ def optimize_multilevel(
         process_conditions: Sequence[ProcessCondition] | None = None
         ) -> SimpleILTResult:
     """逐级运行独立 Adam，并以完整物理网格光刻结果监督当前级别。"""
-    target_batch, squeeze = _image_batch(target, "target", model.device)
+    target_batch, squeeze = image_batch(target, "target", model.device)
     target_batch = target_batch.detach()
     height, width = target_batch.shape[-2:]
     if height <= 0 or width <= 0:
@@ -99,7 +93,7 @@ def optimize_multilevel(
         # 保留该可复现实义，同时让调用方可以显式传入别的连续初值。
         initial = target_batch
     else:
-        initial, initial_squeeze = _image_batch(
+        initial, initial_squeeze = image_batch(
             initial_parameters, "initial_parameters", model.device)
         if initial_squeeze != squeeze or initial.shape != target_batch.shape:
             raise ValueError("initial_parameters 必须与 target 形状一致")
@@ -109,7 +103,7 @@ def optimize_multilevel(
     if optimization_mask is None:
         full_movable = torch.ones_like(target_batch)
     else:
-        full_movable, movable_squeeze = _image_batch(
+        full_movable, movable_squeeze = image_batch(
             optimization_mask, "optimization_mask", model.device)
         if movable_squeeze != squeeze or full_movable.shape != target_batch.shape:
             raise ValueError("optimization_mask 必须与 target 形状一致")
@@ -128,7 +122,7 @@ def optimize_multilevel(
     if len({condition.name for condition in all_conditions}) != len(all_conditions):
         raise ValueError("MultilevelILT 工艺条件名称不能重复")
 
-    fixed_full_mask = _smooth_sigmoid_mask(
+    fixed_full_mask = smooth_sigmoid_mask(
         initial, config.smoothing_kernel,
         config.sigmoid_steepness, config.sigmoid_offset).detach()
     previous_parameters: torch.Tensor | None = None
@@ -140,11 +134,11 @@ def optimize_multilevel(
     for scale, iteration_count, step_size in zip(
             config.scales, config.stage_iterations, config.stage_step_sizes):
         shape = (height // scale, width // scale)
-        stage_target = _resize_image(target_batch, shape, "area")
-        stage_reference = _resize_image(initial, shape, "area")
+        stage_target = resize_image(target_batch, shape, "area")
+        stage_reference = resize_image(initial, shape, "area")
         stage_initial = (stage_reference if previous_parameters is None else
-                         _resize_image(previous_parameters, shape, "nearest"))
-        movable = _resize_image(full_movable, shape, "nearest")
+                         resize_image(previous_parameters, shape, "nearest"))
+        movable = resize_image(full_movable, shape, "nearest")
         parameters = stage_initial.detach().clone().requires_grad_(True)
         # OpenILT 在每级重建 Adam，因此低级动量不会污染细级参数；step_size 已保存
         # 实际 Adam 学习率，不再隐藏乘 0.2 的二次换算。
@@ -159,16 +153,16 @@ def optimize_multilevel(
             # 参数平滑前固定不可动区，避免邻域卷积从窗口外引入可训练自由度；恢复到
             # 完整网格后再次混合，确保最终输出的固定像素逐点保持初始软 mask。
             effective = parameters * movable + stage_reference * (1.0 - movable)
-            stage_mask = _smooth_sigmoid_mask(
+            stage_mask = smooth_sigmoid_mask(
                 effective, config.smoothing_kernel,
                 config.sigmoid_steepness, config.sigmoid_offset)
-            optimized_full = _resize_image(stage_mask, (height, width), "nearest")
+            optimized_full = resize_image(stage_mask, (height, width), "nearest")
             full_mask = (optimized_full * full_movable +
                          fixed_full_mask * (1.0 - full_movable))
             # 所有级别都在已标定的完整物理像素网格调用 Hopkins；仿真结果再用 area
             # 汇聚到本级监督网格。这样粗级确实减少损失/参数自由度，却不改变 PSF 尺度。
             printed_full = model.forward_many(full_mask, all_conditions)
-            printed = {name: _resize_image(image, shape, "area")
+            printed = {name: resize_image(image, shape, "area")
                        for name, image in printed_full.items()}
             # 级别损失只再引用降采样结果；立即释放完整 wafer 字典，避免本轮 backward
             # 之外还由 Python 局部变量延长一套完整图引用的生命周期。
@@ -183,7 +177,7 @@ def optimize_multilevel(
             else:
                 process_l2 = nominal_l2.new_zeros(())
                 pvband = nominal_l2.new_zeros(())
-            curvature = (_curvature_loss(printed[nominal.name])
+            curvature = (curvature_loss(printed[nominal.name])
                          if config.curvature_weight > 0.0 else nominal_l2.new_zeros(()))
             loss = (nominal_l2 + config.weight_process_l2 * process_l2 +
                     config.weight_pvband * pvband +

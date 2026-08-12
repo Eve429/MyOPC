@@ -293,3 +293,10 @@
 - 已锁定不实施 P3，避免把命名/归档迁移和用户产物清理混入本轮结构收敛。
 - 阶段 90 完成：修正 `psutil` 运行依赖；LayoutDB 增加受控递归 Polygon 扫描且 preflight 私有访问归零；增加最小 `LithographyModel` Protocol；真实入口将预检容量传给 in-memory problem builder，并在 membership 大数组分配前拒绝。
 - P1 专项 Ruff/compileall 和 56 项测试通过（10.09 秒）。
+- 阶段 91 完成：新增正式 `main.artifacts`，统一 DBU/Layer 解析、ILT 包内张量 helper、Problem owner 查询和边段计数公式；`offline_inputs.py` 删除约 240 行产物职责。
+- `run_simpleilt.py` 已缩为历史参数适配器，所有输入、优化、评价、性能统计和产物委托 `run_ilt(method="simple")`；Python 返回 `(result, summary)` 保留，产物统一为 `ilt_result.npz`。
+- 首轮专项暴露并修复共享函数命名遮蔽和两处静态导入问题；未保留错误兼容分支。修正后 96 项关键路径测试通过（53.77 秒），新增公式/产物回归 21 项通过（24.87 秒），Ruff/compileall/diff whitespace 通过。
+- 阶段 92 完成：230 项全量测试（74.60 秒）通过；GTX 1650 的 ICCAD13 CUDA 运行时和四种 ILT 41 项定向回归通过；110,000 segment 严格基准无失败，紧凑常驻数组节省 67.46%。
+- 最终 AST 审计扫描 104 个第一方 Python 文件：中文模块/函数 docstring 缺失 0、完全重复函数体 0；正式代码旧私有跨模块 API 和重复 helper 调用点归零，`geometry/` 零修改，`layout/` 仅有授权的 14 行只读扫描入口。
+- 生产模块运行期依赖图 61 个节点、循环 0；Markdown 本地链接缺失 0。pytest-cov 在 Windows 收集期复现既有 NumPy/PyTorch 重复加载问题，未执行测试体且不计作覆盖率结果。
+- 阶段 93 完成：开发/测试手册、接口参考、调用关系、架构评审状态、专项开发/测试报告和三份规划记录全部同步；P1/P2 已完成，P3 保持未实施，准备最终本地关键提交。

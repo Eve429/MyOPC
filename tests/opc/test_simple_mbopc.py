@@ -18,7 +18,6 @@ from opc.iteration._cache import ArrayTileCache
 from opc.iteration.mbopc.contracts import SimpleMBOPCConfig
 from opc.iteration.mbopc.solver import (
     _current_tile,
-    _owner_indices,
     _polygon_ids_for_core,
     _subset_contours,
     _target_tile,
@@ -77,10 +76,11 @@ def test_target_cache_hit_keeps_compact_uint8_until_batch_transfer() -> None:
     assert (int(second.min()), int(second.max())) == (0, 255)
 
 
-def test_owner_indices_match_global_reference_scan() -> None:
+def test_owner_segment_query_matches_global_reference_scan() -> None:
     """membership CSR 过滤必须与旧的全局 owner 扫描逐 core 完全一致。"""
     problem, _ = _rectangle_problem()
-    actual = _owner_indices(problem)
+    actual = tuple(problem.owner_segments_for_core(index)
+                   for index in range(problem.core_count))
     expected = tuple(np.flatnonzero(problem.owner_indices == core).astype(np.int32)
                      for core in range(problem.core_count))
     assert len(actual) == len(expected)

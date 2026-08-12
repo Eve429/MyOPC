@@ -18,14 +18,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from lithography import ICCAD13Lithography
-from main.offline_inputs import (
-    _atomic_json,
-    _atomic_npz,
-    _exact_dbu,
-    load_segment_input,
-    save_final_lithography_tiles,
-)
-from main.configuration import ConfiguredArgumentParser
+from main.artifacts import atomic_json, atomic_npz, save_final_lithography_tiles
+from main.offline_inputs import load_segment_input
+from main.configuration import ConfiguredArgumentParser, exact_dbu
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input.edge import edge_probe_points, reconstruct_region
 from opc.iteration.mbopc import SimpleMBOPCConfig, SimpleMBOPCResult, optimize
@@ -48,9 +43,9 @@ def run_mbopc_iteration_test(
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("边段输入缺少有效 dbu_um") from exc
     dbu_nm = dbu_um * 1000.0
-    pixel_dbu = _exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
-    step_dbu = float(_exact_dbu(step_nm, dbu_nm, "step_nm"))
-    epe_dbu = float(_exact_dbu(epe_distance_nm, dbu_nm, "epe_distance_nm"))
+    pixel_dbu = exact_dbu(pixel_nm, dbu_nm, "pixel_nm")
+    step_dbu = float(exact_dbu(step_nm, dbu_nm, "step_nm"))
+    epe_dbu = float(exact_dbu(epe_distance_nm, dbu_nm, "epe_distance_nm"))
     if not isinstance(target_cache_mb, int) or target_cache_mb < 0:
         raise ValueError("target_cache_mb 必须是非负整数")
     model = ICCAD13Lithography(device=device)
@@ -78,7 +73,7 @@ def run_mbopc_iteration_test(
     gds_path = write_debug_gds(
         problem.physical_mask.region, reconstructed, output / "mbopc_result.gds",
         dbu_um, layer.layer, layer.datatype)
-    result_path = _atomic_npz(output / "mbopc_result.npz", {
+    result_path = atomic_npz(output / "mbopc_result.npz", {
         "format_name": np.array("myopc.mbopc-result"),
         "format_version": np.array(1, dtype=np.int32),
         "best_displacements": optimized.best_displacements,
@@ -123,7 +118,7 @@ def run_mbopc_iteration_test(
                       "preview": None if preview_path is None else str(preview_path),
                       "final_lithography": final_lithography},
     }
-    _atomic_json(output / "summary.json", summary)
+    atomic_json(output / "summary.json", summary)
     return optimized
 
 

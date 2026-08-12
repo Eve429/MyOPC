@@ -9,6 +9,7 @@ import psutil
 
 from layout import DbuBox, LayerSpec, LayoutDB
 
+from ._fragmentation import count_edge_fragments
 from .grid import RectilinearCoreGrid
 
 _GIB = 1024 ** 3
@@ -61,16 +62,6 @@ def _shape_polygon(shape: kdb.Shape) -> kdb.Polygon:
     if shape.is_polygon():
         return shape.polygon
     raise TypeError("预检迭代器返回了非 Polygon 类图形")
-
-
-def _fragment_counts(lengths: np.ndarray, corner_dbu: float,
-                     maximum_dbu: float) -> np.ndarray:
-    """按生产切分公式估算每条数学边产生的 segment 数。"""
-    counts = np.ceil(lengths / maximum_dbu).astype(np.int64)
-    long_edges = lengths > 2.0 * maximum_dbu
-    counts[long_edges] = 2 + np.ceil(
-        (lengths[long_edges] - 2.0 * corner_dbu) / maximum_dbu).astype(np.int64)
-    return counts
 
 
 def _membership_upper_bound(starts: np.ndarray, ends: np.ndarray,
@@ -156,7 +147,7 @@ def preflight_layout(
             ends = np.roll(points, -1, axis=0)
             lengths = np.hypot(*(ends - points).T)
             valid = lengths > 0.0
-            counts = _fragment_counts(
+            counts = count_edge_fragments(
                 lengths[valid], float(corner_dbu), float(maximum_segment_dbu))
             segments += int(counts.sum(dtype=np.int64))
             if grid is not None and len(counts):

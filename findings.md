@@ -319,3 +319,5 @@
 - 本轮没有修改任何生产 Python、`layout/`、`geometry/` 或用户版图；只新增接口文档并更新手册导航、计划记录和一次已解决的模块计数审计学习。
 
 - 最终光刻输出采用共享原子 I/O；MB-OPC 只按 batch 保留当前 core context，manifest 记录 ownership-only 裁剪，避免整张 reticle tensor 常驻。
+
+- OpenILT 的 LevelSet、CurvMulti、Multilevel 依赖旧 LithoSim/配置体系；本项目仅迁移参数化和调度思想，统一复用当前 ICCAD13 模型。DiffOPC 采用独立解析软边段 rasterizer，不能把不可微 KLayout rasterizer 改造成 autograd 路径。

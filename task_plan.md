@@ -269,3 +269,5 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 首次全量验证把 shell 超时误设为 1 秒 | 1 | 命令被外层终止且未写文件；改用 180 秒时限完整重跑 |
 | 调用点搜索包含不存在的 `tests/main` 路径 | 1 | 搜索仍返回目标文件证据但退出 1；后续只使用实际 `tests/` 根目录 |
 | 接口审查过程记录人工误算生产模块总数 | 1 | 改用 `rg --files` 的真实路径集合按顶层目录分组，确认当前为 45 个，并用缺失路径检查验证正文覆盖 |
+
+| 64. OpenILT ILT and DiffOPC migration | complete | LevelSet, multiscale ILT, independent soft edge rasterizer, DiffOPC solver, runners, tests and reports |

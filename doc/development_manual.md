@@ -179,3 +179,7 @@ python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
 ## 12. 最终光刻结果
 
 完整 MB-OPC 完成后会在 `final_lithography/` 写出 `manifest.json` 和按 core 的 ownership-only tile。每个 tile NPZ 含 `mask`、`nominal`、`dose_max`、`defocus_min` 四个二维 `float32` 数组；使用 `--no-final-lithography-png` 可关闭 PNG。SimpleILT 在输出目录直接保存同样字段的 `final_lithography.npz` 与 `final_*.png`。
+
+## 13. 新增 ILT 与 DiffOPC
+
+main/run_ilt.py --method levelset|curvmulti|multilevel 统一运行新增 ILT；main/run_diffopc.py 读取 segment NPZ，使用独立软边段栅格器优化位移。当前 DiffOPC 首版只承诺 L2/PVBand 梯度路径，EPE 连续损失、MRC 和 SRAF 仍在后续计划中。

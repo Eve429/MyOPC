@@ -239,3 +239,5 @@
 - 阶段 61 完成：机器核对 45 个生产模块与全部公共导出无遗漏；28 份 Markdown 无断链/围栏错误，新文档 Python 示例可编译，`git diff --check` 通过，保护目录零差异。
 
 - 阶段 62：已实现在线/离线 MB-OPC ownership-only 最终光刻 tile，以及 SimpleILT 最终 mask/三工艺角 NPZ/PNG 保存；19 项定向回归通过。
+
+- 阶段 63：新增 LevelSetILT、粗到细多尺度 ILT、独立 DiffOPC 软边段栅格器/solver 和两个直接运行入口；新增 3 项定向回归，现有光刻/工作台 26 项继续通过。

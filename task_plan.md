@@ -57,7 +57,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 36. Edge-input and ownership consolidation | complete | SegmentBatch owns edge caches and MBOPCProblem owns grid/CSR membership |
 | 37. Offline archive v2 migration | complete | Saves/loads only the new minimal problem contract and rejects v1 clearly |
 | 38. Regression, performance and reports | completed | 130 tests, bounded real-layout benchmark, static/simplification audit, synchronized reports and two local milestones |
-| 62. Final lithography artifacts | in progress | Save SimpleILT full result and streaming MB-OPC ownership-only tiles with manifests, tests and reports |
+| 62. Final lithography artifacts | complete | Save SimpleILT full result and streaming MB-OPC ownership-only tiles with manifests, tests and reports |
 
 ## Acceptance Gates
 - Existing GDS regression counts and hierarchy transforms are correct.

@@ -272,6 +272,17 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 默认 `python` 指向无 pytest/Ruff 的 Miniforge base | 1 | 未执行任何测试；后续显式使用 `D:\app\miniforge\envs\myopc\python.exe` |
 | coverage 插件在 Windows 重复加载 NumPy 失败 | 2 | 不再重复同一失败路径；以专项分支回归、全量测试和静态审计验收，并在测试报告如实记录无新增覆盖率数值 |
 | EDT 暴力对照脚本把标量当数组写入 | 1 | 仅辅助脚本失败、生产测试已通过；改为 `np.empty` 后 1×1 至 8×8 随机逐像素对照通过 |
+| CurvMulti Python summary 测试把 tuple 预期写成 JSON list | 1 | 生产输出正确；Python API 保留 dataclass tuple，只有 JSON 文件/CLI 序列化为 list，修正测试契约 |
+| 根目录 Ruff 扫描命中用户 `Test/klayout.ipynb` 的两处既有 SIM113 | 1 | 不修改本阶段范围外的用户 notebook；改为完整检查正式源码与 `tests/`，并单独核对本阶段差异 |
 
 | 64. OpenILT ILT and DiffOPC migration | in progress | Phase 1 LevelSet quality complete; later CurvMulti, Multilevel and DiffOPC acceptance remain |
 | 65. LevelSetILT quality closure | complete | Exact SDF, strict contracts, correct curvature, complete runner artifacts and dedicated tests |
+
+## 阶段 66–69：第二阶段 CurvMultiILT
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 66 | 已完成 | 对照 OpenILT CurvMulti、当前光刻缩放语义和现有原型，锁定独立算法/接口/性能验收矩阵 |
+| 67 | 已完成 | 实现连续平滑参数化、粗到细 warm-start、严格配置/窗口/工艺条件及统一入口参数 |
+| 68 | 已完成 | 增加算法、形状、缩放、固定区、真实 backward、GDS 直跑、产物和资源统计专项测试 |
+| 69 | 已完成 | 全量回归、性能/内存/冗余/调用点/保护目录审计，更新手册和专项报告并本地提交 |

@@ -1,4 +1,4 @@
-"""统一运行 Simple、LevelSet、CurvMulti 和 Multilevel ILT。"""
+"""统一运行 Simple、LevelSet 和 CurvMulti ILT。"""
 
 from __future__ import annotations
 
@@ -28,21 +28,26 @@ from main.offline_inputs import (
     resolve_raster_input,
     save_final_lithography_result,
 )
+from opc.input import process_memory_snapshot
 from opc.iteration.ilt import (
+    CurvMultiConfig,
     LevelSetConfig,
-    MultiScaleILTConfig,
     SimpleILTConfig,
     optimize,
+    optimize_curvmulti,
     optimize_levelset,
-    optimize_multiscale,
 )
 
 
 def run_ilt(
         input_path: str | Path, output_dir: str | Path, *, method: str = "simple",
-        iterations: int = 10, step_size: float = 0.2,
-        weight_pvband: float = 0.0, weight_process_l2: float = 1.0,
-        curvature_weight: float = 0.0, device: str = "auto",
+        iterations: int = 10, step_size: float | None = None,
+        weight_pvband: float | None = None,
+        weight_process_l2: float | None = None,
+        curvature_weight: float | None = None,
+        scales: tuple[int, ...] = (4, 2, 1), smoothing_kernel: int = 7,
+        sigmoid_steepness: float = 4.0, sigmoid_offset: float = 0.5,
+        mask_threshold: float = 0.5, device: str = "auto",
         save_png: bool = True, layer: LayerSpec | None = None,
         top_cell: str | None = None,
         box: DbuBox | tuple[int, int, int, int] | None = None,
@@ -53,6 +58,7 @@ def run_ilt(
         max_estimated_gib: float = 8.0) -> dict[str, Any]:
     """读取版图或 raster NPZ，运行指定 ILT 并保存评价、光刻图和资源统计。"""
     loaded_started = perf_counter()
+    memory_checkpoints = {"start": process_memory_snapshot()}
     # GDS/OASIS 分支在 Region 物化前执行文件、层级图形、顶点、预计内存和
     # canvas 上限检查；NPZ 分支验证版本及解压上限。两条路径只在内存中汇合。
     target_array, metadata = resolve_raster_input(
@@ -62,7 +68,9 @@ def run_ilt(
         max_source_vertices=max_source_vertices,
         max_estimated_gib=max_estimated_gib)
     loaded = perf_counter()
+    memory_checkpoints["input"] = process_memory_snapshot()
     model = ICCAD13Lithography(device=device)
+    memory_checkpoints["model"] = process_memory_snapshot()
     if target_array.shape[0] > model.config.canvas or target_array.shape[1] > model.config.canvas:
         raise ValueError("ILT target 超过当前光刻模型 canvas")
     target = torch.as_tensor(target_array, device=model.device)
@@ -70,29 +78,41 @@ def run_ilt(
         torch.cuda.reset_peak_memory_stats(model.device)
         torch.cuda.synchronize(model.device)
     optimized_started = perf_counter()
-    # 方法分派只构造各求解器已有配置，不建立注册器或包装基类。第一阶段只对
-    # levelset 做完整质量承诺，另外两个选项保留原有后续阶段实验入口。
+    # 方法分派只构造各求解器已有配置，不建立注册器或包装基类。第一阶段对
+    # levelset、第二阶段对 curvmulti 做完整质量承诺。None 表示使用各方法本身的
+    # 默认值，避免 CurvMulti 被 SimpleILT 的损失权重静默改成另一种算法。
     if method == "simple":
         config: object = SimpleILTConfig(
-            iterations, step_size, weight_pvband=weight_pvband,
-            weight_process_l2=weight_process_l2,
-            curvature_weight=curvature_weight)
+            iterations, 0.2 if step_size is None else step_size,
+            weight_pvband=0.0 if weight_pvband is None else weight_pvband,
+            weight_process_l2=(1.0 if weight_process_l2 is None else
+                               weight_process_l2),
+            curvature_weight=(0.0 if curvature_weight is None else
+                              curvature_weight))
         result = optimize(target, model, config)
     elif method == "levelset":
         config = LevelSetConfig(
-            iterations, step_size, weight_process_l2,
-            weight_pvband, curvature_weight)
+            iterations, 0.2 if step_size is None else step_size,
+            1.0 if weight_process_l2 is None else weight_process_l2,
+            0.0 if weight_pvband is None else weight_pvband,
+            0.0 if curvature_weight is None else curvature_weight)
         result = optimize_levelset(target, model, config)
-    elif method in ("curvmulti", "multilevel"):
-        config = MultiScaleILTConfig(
-            (2, 1), iterations, step_size, weight_process_l2,
-            weight_pvband, curvature_weight)
-        result = optimize_multiscale(target, model, config)
+    elif method == "curvmulti":
+        config = CurvMultiConfig(
+            scales, iterations, 0.5 if step_size is None else step_size,
+            smoothing_kernel,
+            sigmoid_steepness, sigmoid_offset,
+            0.0 if weight_process_l2 is None else weight_process_l2,
+            1.0 if weight_pvband is None else weight_pvband,
+            200.0 if curvature_weight is None else curvature_weight,
+            mask_threshold)
+        result = optimize_curvmulti(target, model, config)
     else:
         raise ValueError(f"未知 ILT 方法：{method}")
     if model.device.type == "cuda":
         torch.cuda.synchronize(model.device)
     optimized = perf_counter()
+    memory_checkpoints["optimization"] = process_memory_snapshot()
     conditions = tuple(model.condition(name) for name in (
         "nominal", "dose_max", "defocus_min"))
     # 最佳硬 mask 只在优化结束后追加一次统一评价；no_grad 避免为纯报告保存
@@ -104,6 +124,7 @@ def run_ilt(
             printed["dose_max"], printed["defocus_min"], model.config.print_threshold)
         shots = estimate_rectangular_shots(result.binary_mask)
     evaluated = perf_counter()
+    memory_checkpoints["evaluation"] = process_memory_snapshot()
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     # GPU Tensor 只在这里各拷回一次；后续 NPZ/PNG 全部复用 CPU 数组，防止
@@ -126,13 +147,25 @@ def run_ilt(
                              ("binary_mask", binary_mask)):
             images[name] = str(_atomic_png(output / f"{name}.png", values))
     finished = perf_counter()
+    memory_checkpoints["output"] = process_memory_snapshot()
+    record_values: list[dict[str, Any]] = []
+    for index, record in enumerate(result.records):
+        value = asdict(record)
+        if method == "curvmulti":
+            # 复用公共 ILTIterationRecord，不为 scale 重复建立第二套记录类型；
+            # 仅在报告边界补充可由固定每阶段轮数精确推导的阶段位置。
+            stage_index = index // config.iterations_per_stage
+            value.update({"stage_index": stage_index,
+                          "stage_scale": config.scales[stage_index],
+                          "stage_iteration": index % config.iterations_per_stage})
+        record_values.append(value)
     summary: dict[str, Any] = {
         "status": "completed", "method": method,
         "input": str(Path(input_path).expanduser().resolve()),
         "source_layout": metadata.get("source"), "device": str(model.device),
         "shape": list(target_array.shape), "config": asdict(config),
         "best_iteration": result.best_iteration,
-        "records": [asdict(record) for record in result.records],
+        "records": record_values,
         "evaluation": {"binary_l2": l2, "pvband": pvband,
                        "rectangular_shot_estimate": shots},
         "timing_seconds": {"input": loaded - loaded_started,
@@ -143,6 +176,7 @@ def run_ilt(
         "gpu_peak_allocated_bytes": (
             int(torch.cuda.max_memory_allocated(model.device))
             if model.device.type == "cuda" else 0),
+        "memory_checkpoints": memory_checkpoints,
         "artifacts": {"result_npz": str(result_path), "images": images,
                       "final_lithography": final_lithography,
                       "summary": str(output / "summary.json")},
@@ -155,12 +189,22 @@ def main(argv: list[str] | None = None) -> int:
     """解析统一 ILT 命令行并返回标准退出码。"""
     parser = argparse.ArgumentParser(description="运行统一 ILT 方法")
     parser.add_argument("input", type=Path); parser.add_argument("--output-dir", type=Path, default=Path("output/ilt"))
-    parser.add_argument("--method", choices=("simple", "levelset", "curvmulti", "multilevel"), default="simple")
+    parser.add_argument("--method", choices=("simple", "levelset", "curvmulti"), default="simple")
     parser.add_argument("--iterations", type=int, default=10)
-    parser.add_argument("--step-size", type=float, default=0.2)
-    parser.add_argument("--weight-pvband", type=float, default=0.0)
-    parser.add_argument("--weight-process-l2", type=float, default=1.0)
-    parser.add_argument("--curvature-weight", type=float, default=0.0)
+    parser.add_argument("--step-size", type=float,
+                        help="不指定时使用所选方法自己的默认步长")
+    parser.add_argument("--weight-pvband", type=float,
+                        help="不指定时使用所选方法自己的默认权重")
+    parser.add_argument("--weight-process-l2", type=float,
+                        help="不指定时使用所选方法自己的默认权重")
+    parser.add_argument("--curvature-weight", type=float,
+                        help="不指定时使用所选方法自己的默认权重")
+    parser.add_argument("--scales", type=int, nargs="+", default=(4, 2, 1),
+                        help="CurvMulti 严格递减控制网格尺度，必须以 1 结束")
+    parser.add_argument("--smoothing-kernel", type=int, default=7)
+    parser.add_argument("--sigmoid-steepness", type=float, default=4.0)
+    parser.add_argument("--sigmoid-offset", type=float, default=0.5)
+    parser.add_argument("--mask-threshold", type=float, default=0.5)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--no-png", action="store_true")
     parser.add_argument("--json", action="store_true", help="终端输出完整 JSON 汇总")
@@ -174,7 +218,11 @@ def main(argv: list[str] | None = None) -> int:
             iterations=args.iterations, step_size=args.step_size,
             weight_pvband=args.weight_pvband,
             weight_process_l2=args.weight_process_l2,
-            curvature_weight=args.curvature_weight, device=args.device,
+            curvature_weight=args.curvature_weight,
+            scales=tuple(args.scales), smoothing_kernel=args.smoothing_kernel,
+            sigmoid_steepness=args.sigmoid_steepness,
+            sigmoid_offset=args.sigmoid_offset,
+            mask_threshold=args.mask_threshold, device=args.device,
             save_png=not args.no_png, layer=args.layer,
             top_cell=args.top_cell,
             box=None if args.box is None else tuple(args.box),

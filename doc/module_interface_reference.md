@@ -532,9 +532,19 @@ ownership mask 必须与提升后的 batch shape/device 一致；它只选择计
 
 输出复用 `SimpleILTResult`：`best_parameters` 是最优 phi，`soft_mask=sigmoid(-phi)` 只作连续诊断，`binary_mask` 严格按 `phi < 0` 生成。显式空 `process_conditions` 只计算 nominal，不回退默认工艺窗；二维输入会去掉 batch 维。
 
-### 8.4 [`opc/iteration/ilt/multiscale.py`](../opc/iteration/ilt/multiscale.py)
+### 8.4 [`opc/iteration/ilt/curvmulti.py`](../opc/iteration/ilt/curvmulti.py)
 
-当前文件包含粗到细原型调度，尚未完成 CurvMulti/Multilevel 的独立质量验收；不能把存在 `MultiScaleILTConfig/optimize_multiscale` 解读为完整迁移能力。调用方若进行后续阶段开发，应重新核对缩放语义、跨阶段记录、最终尺寸和专项性能门槛。
+#### `CurvMultiConfig`
+
+字段：严格递减且以 1 结束的正整数 `scales`；正 `iterations_per_stage/step_size`；正奇数 `smoothing_kernel`；正有限 `sigmoid_steepness`；`[0,1]` 有限 `sigmoid_offset`；非负 process/PVBand/curvature 权重；`(0,1)` 的 `mask_threshold`。target 高宽必须能被全部尺度整除，最粗控制网格边长不得小于平滑核。
+
+#### `optimize_curvmulti(...) -> SimpleILTResult`
+
+输入 target、可选完整尺度 initial parameters/optimization mask、独立 nominal/process conditions。target 与窗口均为 `[H,W]` 或 `[B,H,W]`；target/窗口范围 `[0,1]`，所有值有限。显式空 process conditions 只计算 nominal。
+
+每个尺度把完整参考用 area 缩为控制参数；跨阶段最优参数用 nearest warm-start。控制参数经均值池化和 offset sigmoid 生成 soft mask，再 nearest 恢复到完整 target shape，最后才进入固定像素网格 Hopkins 模型。损失为 nominal L2、process L2、process range 平方和，以及施加于 nominal wafer 的曲率。每阶段独立使用 SGD 并丢弃上一阶段优化器/计算图。
+
+结果字段复用 `SimpleILTResult`；`records` 的 iteration 是跨尺度全局递增下标，长度为 `len(scales)*iterations_per_stage`。`best_parameters` 是最终尺度的最优控制参数，最终尺度固定为 1，故 shape 与 target 一致；`soft_mask/binary_mask` 是完整网格结果。统一 runner 的 JSON 记录额外附加 `stage_index/stage_scale/stage_iteration`，这些字段不是求解器内的第二套记录结构。
 
 ### 8.5 [`opc/iteration/mbopc/contracts.py`](../opc/iteration/mbopc/contracts.py)
 
@@ -699,9 +709,9 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 ### 11.6 [`main/run_ilt.py`](../main/run_ilt.py)
 
-`run_ilt(input_path, output_dir, method=..., ...) -> summary` 接受 GDS/OASIS 或 raster NPZ。第一阶段已验收 `method=levelset`：输入参数包括迭代/损失、device、Layer/top/DBU ROI、pixel/canvas 和容量上限；保存 `ilt_result.npz`、最终三工艺角光刻结果、可选 target/soft/binary PNG 及 summary JSON。summary 包含配置、逐轮损失、二值 L2/PVBand/shot、输入/优化/评价/输出时间和 GPU 峰值。CLI 支持 `--json`，可从仓库外直接执行。
+`run_ilt(input_path, output_dir, method=..., ...) -> summary` 接受 GDS/OASIS 或 raster NPZ。已验收 `method=levelset/curvmulti`：输入参数包括迭代/损失、device、Layer/top/DBU ROI、pixel/canvas 和容量上限；CurvMulti 另接受 scales、平滑核、sigmoid steepness/offset 和 mask threshold。保存 `ilt_result.npz`、最终三工艺角光刻结果、可选 target/soft/binary PNG 及 summary JSON。summary 包含配置、逐轮/阶段损失、二值 L2/PVBand/shot、输入/优化/评价/输出时间、进程内存检查点和 GPU 峰值。CLI 支持 `--json`，可从仓库外直接执行。
 
-同一入口中的 `curvmulti/multilevel` 仍属于后续待验收阶段。
+Multilevel 不再伪装为 CurvMulti 的别名；后续阶段完成独立算法与验收后才能重新加入入口。
 
 ### 11.7 [`main/run_diffopc.py`](../main/run_diffopc.py)
 
@@ -777,7 +787,7 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 - `opc`：`__init__`、`errors`、`diagnostics`；
 - `opc.input`：`__init__`、`_arrays`、`grid`、`mask`、`raster`、`preflight`；
 - `opc.input.edge`：`__init__`、`builder`、`fragmentation`、`ownership`、`sampling`、`reconstruction`；
-- `opc.iteration`：顶层 `__init__`、ILT 的 `__init__/simple/levelset/multiscale`、MB-OPC 的 `__init__/contracts/solver`，以及待验收 DiffOPC 原型的四个模块；
+- `opc.iteration`：顶层 `__init__`、ILT 的 `__init__/simple/levelset/curvmulti`、MB-OPC 的 `__init__/contracts/solver`，以及待验收 DiffOPC 原型的四个模块；
 - `lithography`：`__init__`、`iccad13`；
 - `evaluation`：`__init__`、`metrics`；
 - `main`：`__init__`、`offline_inputs` 和八个 `run_*.py`。
@@ -793,7 +803,7 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 | `opc` | `OPCError`、`OwnershipError`、`PhysicalMaskError`、`ReconstructionError` |
 | `opc.input` | `CoreSpec`、`PhysicalMask`、`RectilinearCoreGrid`、`default_memory_budget_bytes`、`normalize_physical_mask`、`preflight_layout`、`process_memory_snapshot`、`resolve_memory_budget_bytes` |
 | `opc.input.edge` | `FragmentationConfig`、`MBOPCProblem`、`SegmentBatch`、`SegmentGeometry`、`edge_probe_points`、`fragment_edges`、`prepare_problem`、`reconstruct_contours`、`reconstruct_region` |
-| `opc.iteration.ilt` | `ILTIterationRecord`、`LevelSetConfig`、`MultiScaleILTConfig`、`SimpleILTConfig`、`SimpleILTResult`、`optimize`、`optimize_levelset`、`optimize_multiscale`、`signed_distance_initialization` |
+| `opc.iteration.ilt` | `CurvMultiConfig`、`ILTIterationRecord`、`LevelSetConfig`、`SimpleILTConfig`、`SimpleILTResult`、`optimize`、`optimize_curvmulti`、`optimize_levelset`、`signed_distance_initialization` |
 | `opc.iteration.mbopc` | `IterationRecord`、`SimpleMBOPCConfig`、`SimpleMBOPCResult`、`optimize` |
 | `opc.iteration.diffopc` | `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult`、`optimize`（后续阶段待验收） |
 | `lithography` | `ICCAD13Config`、`ICCAD13Lithography`、`ProcessCondition` |

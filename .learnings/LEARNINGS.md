@@ -31,6 +31,37 @@
 
 ---
 
+## [LRN-20260812-003] best_practice
+
+**Logged**: 2026-08-12T18:30:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+多尺度光刻优化只能降低参数控制网格的分辨率，不能把低分辨率张量直接送入固定像素尺度的已标定光刻模型。
+
+### Details
+当前 Hopkins 模型按输入张量像素解释核尺度。若粗尺度阶段直接缩小 mask 再执行光刻，等价于改变每像素代表的物理长度，导致 PSF、EPE 和工艺窗口都失去原有物理语义。正确路径是让连续参数在粗网格上优化，经平滑和 sigmoid 得到软掩膜后，先恢复到完整目标网格，再执行每个工艺条件的 forward/backward；这样既减少自由度，又保持光学模型标定不变。
+
+### Suggested Action
+以后增加金字塔、分块或降采样优化时，必须明确区分“优化参数分辨率”和“物理仿真分辨率”，并用记录输入形状的测试验证每次光刻调用仍采用完整物理网格。
+
+### Metadata
+- Source: architecture_review
+- Related Files: opc/iteration/ilt/curvmulti.py, tests/opc/test_curvmulti_ilt.py
+- Tags: lithography, multiscale, calibration, physical-scale
+- Pattern-Key: myopc.fixed_lithography_pixel_scale
+- Recurrence-Count: 1
+- First-Seen: 2026-08-12
+- Last-Seen: 2026-08-12
+
+### Resolution
+- **Resolved**: 2026-08-12T18:30:00+08:00
+- **Notes**: CurvMulti 已实现为粗尺度控制参数、完整目标网格光刻 forward，并由输入形状回归测试固定该契约。
+
+---
+
 ## [LRN-20260812-002] correction
 
 **Logged**: 2026-08-12T15:10:00+08:00

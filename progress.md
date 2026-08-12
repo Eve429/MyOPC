@@ -242,3 +242,11 @@
 
 - 阶段 63：新增 LevelSetILT、粗到细多尺度 ILT、独立 DiffOPC 软边段栅格器/solver 和两个直接运行入口；新增 3 项定向回归，现有光刻/工作台 26 项继续通过。
 - 阶段 65：根据质量审查修正 LevelSetILT 的 SDF、曲率、配置、空工艺窗口和 hard/soft mask 语义；统一入口补齐 GDS/ROI、安全参数、最终光刻输出和性能摘要。8 项 LevelSet 专项、16 项 ILT 定向、167 项全量回归通过，EDT 与暴力解逐像素一致；`layout/`、`geometry/` 零修改。
+- 阶段 66 开始：第二阶段限定为 CurvMultiILT，不混入 Multilevel/DiffOPC；工作树从提交 `0495bed` 开始为干净状态，并继续禁止修改 `layout/`、`geometry/`。
+- 阶段 66 完成：确认旧 multiscale 原型算法身份和光学缩放均不正确；锁定“粗控制网格、完整物理光刻网格”的 CurvMulti 契约及 OpenILT 三项历史修正。
+- 阶段 67 完成：删除多尺度 LevelSet 原型，新增单文件 CurvMulti 连续平滑参数化、SGD、wafer 曲率、粗到细 warm-start，并接入统一入口的专属默认值/参数/阶段记录/内存检查点。
+- 阶段 68 完成：13 项 CurvMulti 专项与 29 项 ILT 定向通过；真实 `simple.gds` CPU 三尺度一轮完成，损失逐阶段下降并保存完整 NPZ/JSON 产物。
+- 阶段 69 进行中：全仓 180 项通过；Ruff、compileall、中文 docstring、文档链接、旧符号、保护目录和 diff whitespace 审计通过，进入最终冗余/差异复核与本地提交。
+- CurvMulti 真实 CUDA 冒烟在 4 GiB GTX 1650 上通过：256² 三尺度各一轮峰值显存 69,222,400 bytes，CPU/CUDA 最终二值评价一致。
+- 阶段 69 完成：未调用函数、重复函数体、旧符号、异常入口、中文注释、文档链接、保护目录和完整差异审计通过；旧错误原型物理删除且无兼容包装，准备本地关键提交。
+- 最终全仓功能复跑为 180 项通过（54.39 s）；正式源码与 `tests/` Ruff 通过。根目录扫描另报告用户 `Test/klayout.ipynb` 两处既有 SIM113，遵守范围约束未修改。

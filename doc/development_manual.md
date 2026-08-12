@@ -185,6 +185,8 @@ python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
 
 ## 13. 新增 ILT 与 DiffOPC
 
-`main/run_ilt.py --method levelset|curvmulti|multilevel` 统一运行新增 ILT；`main/run_diffopc.py` 读取 segment NPZ，使用独立软边段栅格器优化位移。当前只把 LevelSetILT 视为完成专项验收的第一阶段；CurvMulti、Multilevel 和 DiffOPC 仍是后续待验收阶段，不能按完整迁移能力使用。
+`main/run_ilt.py --method levelset|curvmulti` 统一运行新增 ILT；`main/run_diffopc.py` 读取 segment NPZ，使用独立软边段栅格器优化位移。LevelSetILT 和 CurvMultiILT 已分别完成第一、第二阶段专项验收；Multilevel 与 DiffOPC 仍是后续待验收阶段，不能按完整迁移能力使用。
 
 LevelSetILT 使用前景为负的精确欧氏 SDF 初始化和硬二值代理梯度；SDF 只在优化前计算一次。`run_ilt.py --method levelset` 支持 `--layer`、`--box`、`--top-cell`、像素/画布和容量上限，并保存 `ilt_result.npz`、`summary.json`、最终三工艺角 NPZ 及可选 PNG。
+
+CurvMultiILT 使用 `[0,1]` 连续参数、奇数均值平滑核、带 offset 的 sigmoid 和 SGD。`scales` 严格递减且必须以 1 结束；粗尺度只减少控制参数自由度，每轮 soft mask 近邻恢复到完整物理网格后再执行统一 Hopkins 光刻，避免改变核的像素物理含义。曲率作用于 nominal wafer，不作用于 mask；窗口外在平滑前后均固定为初始参考值。入口按方法选择默认值：CurvMulti 的 step/PVBand/curvature 默认为 `0.5/1/200`，显式 CLI 参数才覆盖。

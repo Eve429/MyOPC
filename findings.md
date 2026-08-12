@@ -324,3 +324,7 @@
 - LevelSet 的硬前向必须以 `phi < 0` 为唯一权威；`sigmoid(-phi)` 只是连续诊断图，不能再用 `>=0.5` 生成硬结果，否则 `phi==0` 会从关闭错误翻转为开启。
 - 精确欧氏 SDF 可用两遍一维下包络在 `O(HW)` 时间和内存内完成；本项目只在初始化执行一次并通过 1×1 至 8×8 随机图暴力对照，不在光刻迭代热路径重复计算。
 - 第一阶段只验收 LevelSetILT。CurvMulti、Multilevel 与 DiffOPC 虽有原型代码，但在各自专项数值、入口、产物和性能门槛完成前仍保持未验收状态。
+- OpenILT CurvMulti 不是 LevelSet 的多尺度包装：它对连续像素参数先做 7×7 平均池化，再以带 offset 的 sigmoid 生成软 mask，使用 SGD，并把曲率正则施加到标称曝光图。当前 `multiscale.py` 调用 LevelSetILT，算法身份错误，第二阶段必须替换而不是继续包装。
+- OpenILT CurvMulti 源码把 nominal L2 实际写成 `printedMax`，与 process L2 重复，且把 mask 直接乘中央 filter 令窗口外归零；这两处属于历史实现问题，不应照搬。项目版应使用具名 nominal condition，并让优化窗口外保持固定初值语义。
+- 当前 ICCAD13 `forward_many` 对小于 canvas 的 mask 只做居中补零，不会按尺度放大；因此 CurvMulti 的 coarse mask 必须先恢复到完整 target 网格再做光刻。粗尺度只能减少控制变量自由度，不能改变 Hopkins 核对应的像素物理尺度。
+- CurvMulti 不需要新的阶段记录数据类：固定 `iterations_per_stage` 和 `scales` 可由全局 record 下标推导 stage，runner 只在 JSON 边界附加三个 stage 字段，求解热路径继续复用 `ILTIterationRecord/SimpleILTResult`。

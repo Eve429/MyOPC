@@ -12,10 +12,10 @@ from opc.iteration.diffopc import DiffOPCConfig
 from opc.iteration.diffopc import optimize as optimize_diffopc
 from opc.iteration.diffopc.rasterizer import rasterize_soft_edges
 from opc.iteration.ilt import (
+    CurvMultiConfig,
     LevelSetConfig,
-    MultiScaleILTConfig,
+    optimize_curvmulti,
     optimize_levelset,
-    optimize_multiscale,
 )
 
 
@@ -30,15 +30,17 @@ def test_soft_edge_rasterizer_has_finite_gradient() -> None:
     assert torch.isfinite(displacement.grad)
 
 
-def test_levelset_and_multiscale_return_common_result() -> None:
-    """LevelSet 与多尺度 ILT 应返回统一结果字段。"""
+def test_levelset_and_curvmulti_return_common_result() -> None:
+    """LevelSet 与 CurvMultiILT 应返回统一结果字段。"""
     model = ICCAD13Lithography(device="cpu")
     target = torch.zeros((16, 16), dtype=torch.float32)
     levelset = optimize_levelset(target, model, LevelSetConfig(iterations=1, step_size=0.1))
-    multiscale = optimize_multiscale(target, model, MultiScaleILTConfig((2, 1), 1, 0.1))
-    for result in (levelset, multiscale):
+    curvmulti = optimize_curvmulti(
+        target, model, CurvMultiConfig((2, 1), 1, 0.1, curvature_weight=0.0))
+    for result in (levelset, curvmulti):
         assert result.binary_mask.shape == target.shape
-        assert len(result.records) == 1
+    assert len(levelset.records) == 1
+    assert len(curvmulti.records) == 2
 
 
 def test_diffopc_runs_on_saved_problem(tmp_path: Path) -> None:

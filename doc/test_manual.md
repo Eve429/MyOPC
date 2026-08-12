@@ -82,7 +82,20 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
   --output-dir output\levelset --json
 ```
 
-当前最终结果：全仓库 167 项通过（48.34 s），其中 8 项 LevelSet 专项覆盖精确 SDF、代理梯度、严格配置/输入、空工艺窗口、固定区域、曲率、零等值线、真实 Hopkins backward、GDS 入口及仓库外直接运行。入口保存 `ilt_result.npz`、`summary.json`、最终三工艺角 NPZ 和可选 PNG；时间分开记录输入、优化、评价和输出。
+第一阶段完成时全仓库 167 项通过（48.34 s），其中 8 项 LevelSet 专项覆盖精确 SDF、代理梯度、严格配置/输入、空工艺窗口、固定区域、曲率、零等值线、真实 Hopkins backward、GDS 入口及仓库外直接运行。入口保存 `ilt_result.npz`、`summary.json`、最终三工艺角 NPZ 和可选 PNG；时间分开记录输入、优化、评价和输出。
+
+第二阶段 CurvMultiILT：
+
+```powershell
+& $python -m pytest tests\opc\test_curvmulti_ilt.py -q
+& $python main\run_ilt.py TestReticle\simple.gds --method curvmulti `
+  --box -2000 -1100 -200 948 --pixel-nm 8 --scales 4 2 1 `
+  --iterations 20 --device cuda --output-dir output\curvmulti --json
+```
+
+`--iterations` 表示每个尺度的轮数，总记录数为 `len(scales) * iterations`。`--scales` 必须严格递减、以 1 结束且能整除 target 高宽；不指定 step/loss 权重时使用 CurvMulti 自身默认值。测试还必须核对 summary 的 stage 标记、完整物理光刻 shape、进程内存检查点和最终三工艺角产物。
+
+第二阶段最终全仓回归为 180 项通过（55.06 s）；CurvMulti 专项 13 项、全部 ILT 定向 29 项通过。
 
 ## 5. 严格性能基准
 

@@ -173,6 +173,24 @@ flowchart LR
 参数和优化窗口同形；调用方显式传入 nominal 与任意 process conditions。最终返回参数、
 软 mask、二值 mask 和逐轮标量，`main/run_simpleilt.py` 再负责持久化和最终评价。
 
+### 5.2 CurvMultiILT 调用顺序
+
+```mermaid
+flowchart LR
+    A[完整 raster target] --> B[按 scale 建控制参数网格]
+    B --> C[7×7 平均池化]
+    C --> D[offset sigmoid 软 mask]
+    D --> E[恢复到完整物理像素网格]
+    E --> F[forward_many]
+    F --> G[nominal/process/PVBand/wafer curvature]
+    G --> H[SGD 更新当前尺度参数]
+    H --> C
+    G --> I[保存本尺度最优参数]
+    I --> J[nearest warm-start 下一尺度]
+```
+
+`optimize_curvmulti` 的粗尺度是控制网格，不是另一套光刻物理分辨率。当前 ICCAD13 Hopkins 核固定在 256 像素模型网格上，因此每一尺度的软 mask 都先恢复为完整 target shape 再仿真；直接把粗图交给模型会被居中补零并改变图形物理尺寸。target、完整优化窗口和评价网格始终不变，只有当前参数和 SGD 状态随尺度重建；每阶段结束后只保留最优参数，历史 autograd 图不会跨阶段常驻。
+
 ## 6. 探针和移动方向
 
 ```mermaid

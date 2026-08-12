@@ -1,5 +1,7 @@
 # MyOPC 开发手册
 
+当前全项目的结构、冗余与模块边界评审见[当前架构与精简性评审](current_architecture_review.md)。该文档区分确定问题、合理复杂度和需要用户授权的受保护目录改动；历史阶段报告不替代此当前结论。
+
 逐模块输入输出、数组 shape/dtype、坐标单位、异常和文件协议见[模块输入输出接口参考](module_interface_reference.md)；函数级入口、调用顺序和数据生命周期见[函数调用关系与数据流](function_call_architecture.md)。
 
 ## 1. 设计目标

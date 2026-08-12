@@ -340,6 +340,12 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 86 | 已完成 | 补齐 GLP、极性、配置、旧 NPZ 兼容和真实流程回归，226 项全量测试通过 |
 | 87 | 已完成 | 编写动态 SRAF 设计、开发/测试报告并完成简化、调用点、保护目录和差异审计；创建本地提交 |
 
+## 阶段 88：全项目结构与精简性评审
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 88 | 已完成 | 只读审查当前生产模块的数据所有权、依赖方向、调用关系、重复实现、入口组织、内存/性能路径与异常边界；输出分级问题和最小改进建议，不修改生产代码 |
+
 ## 阶段 82–87 实施约束
 
 - 本轮经用户明确授权，只允许为 GLP 输入最小修改 `layout/`；`geometry/` 保持零修改。
@@ -361,3 +367,6 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | `mbopc.toml` 把 frontend 不支持的 device 放入 common | 1 | 严格未知键检查按设计拒绝；将 device 下沉到两个真实消费 entry |
 | 专项复合命令用 `rg` 搜索以 `--` 开头的模式时未加参数终止符 | 1 | 测试和 Ruff 已通过；后续此类搜索使用 `rg -- '--pattern'`，不重复错误命令 |
 | GLP/归档/离线 help 联动首轮出现 3 项契约失败 | 1 | 允许真实文件未使用辅助 LEVEL；仅在有来源时写配置 metadata；根 help 跳过未选择的 entry 合并 |
+| 阶段 88 静态函数清单临时使用了 `Set-Content` | 1 | 立即用 `apply_patch` 删除临时文件；后续审查结果直接读取或写入正式评审文档，不再用 shell 写文件 |
+| 阶段 88 分段读取命令中的 `$f:$start` 被 PowerShell 当作作用域变量 | 1 | 命令在解析期失败且未改文件；改用 `-f` 格式化字符串，避免变量后紧接冒号 |
+| 阶段 88 一次 `rg` 再次把 `main/run_*.py` 当作 Windows 路径 | 1 | 前置只读结果有效，末项未执行；后续只传 `main` 目录并用 `--glob 'run_*.py'` 过滤 |

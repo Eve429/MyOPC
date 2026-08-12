@@ -379,3 +379,43 @@
 - TOML 配置采用“默认 common→默认 entry→自定义 common→自定义 entry→显式 CLI”优先级；配置路径只在进程启动时读取一次，配置内相对路径相对于配置文件目录解析。
 - OpenILT ICCAD2013 GLP 的 `EQUIV` 实际包含第五个方向字段 `+X,+Y`，且可能声明未承载图形的 `E1TARGET`；严格解析器接受唯一已定义方向和未使用辅助 LEVEL，只在某符号层真正承载图形时要求可确定映射。
 - 当前生产 raster 的直接调用已经全部收口到 `rasterize_mask_canvas`；`rasterize_region_canvas` 只作为其 coverage 底层保留。这样普通几何覆盖与光学极性没有两份裁剪实现。
+# 2026-08-12：阶段 88 全项目结构与精简性评审（进行中）
+
+- 当前工作树在评审开始前干净，生产代码共 57 个 Python 文件：`layout` 7、`geometry` 6、`opc` 29、`lithography` 2、`evaluation` 2、`main` 11。
+- 文件数量本身暂未显示失控：基础层均较小，算法按 ILT/MBOPC/DiffOPC 隔离；需要重点审查的高复杂度文件是 `main/offline_inputs.py`（858 行）、`main/run_mbopc_frontend.py`（444 行）以及三个约 275–312 行 runner/solver。
+- 规划表存在一处状态漂移：总表中的阶段 64 仍写 `in progress`，但后续阶段 66–77 和结论明确四阶段均已完成；这是项目状态文档错误，不是生产架构错误。
+- `pyproject.toml` 的运行依赖没有列出生产预检代码使用的 `psutil`，却把它放在 dev 可选依赖；`requirements.txt` 虽可能补足，标准项目安装契约仍不一致，需要进一步核实实际导入与直接运行路径。
+- 本轮不因一个文件行数大就预判拆分；后续以职责数量、数据所有权、重复调用链和变更原因是否一致为判断依据。
+- 依赖静态扫描未发现基础层反向依赖迭代算法：`layout` 独立，`geometry -> layout`，`opc.input -> geometry/layout`，各 `opc.iteration` 才依赖 `lithography/evaluation`；`main` 负责组合。现有核心依赖方向符合 AGENTS.md。
+- `ContourBatch -> SegmentBatch -> MBOPCProblem` 是逐层增加信息，不是字段复制：Contour 保存拓扑，Segment 保存边缓存/分段参数，Problem 保存 mask/config/grid/owner/membership。`SegmentBatch.contours` 是对象引用，不是数组副本；当前没有重复保存 layer/ring_id/is_hole。
+- 生产函数 AST 规范化后没有完全相同的函数体；粗略未调用扫描只命中 `__enter__/__exit__/__len__/__iter__` 协议方法，没有确定的死函数证据。
+- `main/offline_inputs.py` 同时承担四类职责：原子产物 I/O、最终光刻结果保存、版图→raster/segment 物化、NPZ 归档校验/版本迁移，以及自己的 CLI。虽然都围绕文件级边界，但 858 行已明显增加导航和变更耦合；是否拆分需结合跨 runner 重复代码判断。
+- `psutil` 已确认在 `opc/input/preflight.py` 顶层生产导入，且多个生产 runner 调用；`pyproject.toml` 却只把它列入 `[project.optional-dependencies].dev`，`requirements.txt` 也把它放在“开发、测试与性能基准”注释下。这是确定的依赖契约错误：按 `pip install .`（尽管用户日常不要求安装）或只按“运行依赖”理解 requirements 都会缺生产依赖。
+- 多个 runner 各自重复完成“输入解析/物化→模型→优化→重建/评价→原子产物→summary→资源统计”。这不是函数体复制，但存在流程骨架重复；不宜立刻建立通用 runner 框架，因为 ILT 与边段 OPC 数据流差异大，应只抽取稳定且已重复的 I/O/summary 小块。
+- 入口层存在确定的私有接口泄漏：6 个 runner 从 `main.offline_inputs` 导入 `_atomic_json/_atomic_npz/_atomic_png/_exact_dbu` 等私有函数。下划线表明内部实现，但它们实际上是跨模块共享 API；这使 858 行的 offline 模块兼任工具箱，也让拆分困难。建议把“原子产物 I/O”提为一个小型公开模块，而不是建立 runner 基类。
+- Layer CLI 解析存在三份真正重复实现：`main.configuration.parse_layer_spec`、`run_layout_geometry.parse_layer`、`run_mbopc_frontend.parse_layer`；`offline_inputs.parse_layer` 只是薄包装，`run_mbopc` 又引用这个包装。应统一直接使用 `parse_layer_spec`，删除三份重复/转发函数。
+- `run_simpleilt.py` 与 `run_ilt.py --method simple` 是确定的功能重复：两者都完成相同输入、SimpleILT 优化、三工艺评价、NPZ/PNG/final lithography/summary；但输出格式名、默认值、时间/内存字段不同。保留两个独立实现会产生行为漂移，最佳方向是让兼容入口只委托统一 `run_ilt(method="simple")`，或明确废弃一个入口。
+- `main/offline_inputs.py` 作为“归档契约 + 输入物化 + 最终产物 I/O + CLI”已违反单一变更原因；可按现有调用方最小拆为公开 `main/artifacts.py`（原子 JSON/NPZ/PNG 与最终光刻保存）和仍保留归档/物化的 `offline_inputs.py`。不建议继续细拆 raster/segment 两个文件，因为校验、预检和版本 metadata 有大量共用不变量。
+- `PhysicalMask.region`（KLayout Region）与 `SegmentBatch.contours`（NumPy CSR）同时常驻是有意的速度/内存权衡：target/current tile 原生栅格化需要 Region，边段重建和可微 raster 需要 CSR；两者没有字段复制但几何信息重复。对当前完整内存 problem 合理，对十亿级边段不成立；真正解决方案是既定 macro shard/按块物化，不是删除其中一个表示后让热路径反复转换。
+- `layout/source.py` 的 `read_layout` 用宽泛 `except Exception` 统一包装第三方 KLayout 读取错误。这里位于文件 I/O 边界且保留 cause，不属于明显错误；不应为了静态洁癖缩窄到不完整的异常列表。
+- Git 跟踪了 `.gitignore` 已排除的 `output/mbopc` 四个生成产物，另有根目录 `gcd_45nm.png`、`result.gds`。这会污染仓库和让示例结果陈旧；由于它们可能是用户有意保留的基线，本轮只报告，后续清理必须逐项确认，不能直接删除。
+- 两个边段求解器重复 `_owner_indices/_owner_segments` 和 `_target_tile` 的语义及实现，名称不同但代码骨架相同。前者属于稳定的 Problem 查询，适合成为 `MBOPCProblem.owner_segments_for_core()` 或一次性公共函数；后者还绑定各自 config，不必为消除几行重复强行抽象，可仅复用“参考 tile uint8 缓存”的小函数。
+- ILT 三种扩展算法从 `ilt.simple` 导入 `_image_batch/_resize_image/_curvature_loss/_smooth_sigmoid_mask` 私有符号。与 offline I/O 一样，这是模块边界表达错误：这些已经是当前多算法共享的公共实现，却留在“simple 算法”的私有命名空间。建议将四个 helper 迁到一个紧凑的 `ilt/common.py` 或 `ilt/_common.py`；若用 `_common`，只能包内导入并明确它是包内稳定接口。
+- ILT 各配置的数据字段有合理重复（每个算法可独立替换且默认/约束不同），不建议建立继承基类。将 config 合并会把算法参数耦合，并不能减少运行期内存；当前 dataclass `slots/frozen` 已足够紧凑。
+- `MBOPCProblem` 的 owner/membership 直接数组字段虽然较多，但所有字段都有热路径、归档或诊断调用；将 ownership 再包成独立类只会恢复此前已经删除的结构层，不建议。
+- 所有求解器的类型标注直接绑定 `ICCAD13Lithography`，但测试中已有至少三类结构兼容的替身模型，证明当前真实边界其实是 `device + config.canvas/print_threshold + condition() + forward_many()`。项目目标又明确会替换光刻模型，因此应在顶层 `lithography` 定义一个最小 `Protocol`（以及最小 config view），让迭代层依赖能力契约而非 ICCAD13 具体类。现在已有多个生产/测试调用方，这不是空抽象；但 runner 仍可明确实例化 ICCAD13，不需要模型注册器或工厂。
+- 当前 `ProcessCondition` 仍是 ICCAD13 的具体 dataclass，并被算法用于类型检查；若替换模型仍采用同一 condition 结构可保留。若新模型条件不同，Protocol 应把 condition token 作为泛型/不透明值，而不应让 OPC 求解器解析 kernel/dose 字段。
+- 测试覆盖很强（226 项，收集成功），尤其核心几何、跨 core、孔洞、斜边、极性、流式屏障和真实模型；但缺少“依赖方向/公共接口不私有导入”的架构测试，因此私有 helper 泄漏和模型具体耦合不会被现有行为测试捕获。
+- 文档数量达到 39 份，其中许多阶段性开发/测试报告具有审计价值，不建议机械合并；但主手册同时存在 `development_manual.md` 与超长 `项目开发手册.md`，再叠加接口参考与调用图，导航成本偏高。可保留历史报告，只明确一份主开发手册、一份测试手册、一份接口参考、一份架构图作为当前事实源，其余标注为阶段归档。
+- `MBOPCProblem` 已同时服务 Simple MB-OPC 与 DiffOPC，名称和归档格式 `myopc.mbopc-input` 已落后于实际职责。建议直接重命名为 `EdgeOPCProblem` / `myopc.edge-opc-input`，并为旧 v2/v3 归档保留读取迁移；不要新增包裹类或双份字段。该项是清晰性改进但影响公共 API/文档/归档，优先级低于无行为变化的精简项。
+- `pyproject.toml` 项目名和描述仍是早期 `myopc-layout-geometry`，`task_plan.md` 顶部也仍以 Layout/Geometry 为总目标；当前项目已经包含完整 lithography/evaluation/ILT/MBOPC/DiffOPC。这是项目身份与现状漂移，会误导依赖管理和新人导航，应更新为整个 MyOPC 的描述。
+- 9 个可直接运行脚本各自保留同一段 `PROJECT_ROOT/sys.path` 注入。它是用户“直接 python 文件、不安装”的明确要求所致，虽然文本重复但不宜抽函数：在导入项目模块之前必须执行，抽到项目模块反而无法导入。可接受为入口样板。
+- `preflight.py` 的 `_fragment_counts` 与生产 `fragment_edges` 保留两份切分公式；这是一个潜在正确性漂移点，但预检必须在完整边段物化前执行，直接调用生产函数会违背内存保护。最佳最小改法是把纯向量“每边计数公式”放到输入层共享 helper，而不是让 preflight 依赖/分配完整 SegmentBatch。
+- `opc.input.preflight` 跨包访问 `LayoutDB._native_layout/_native_cell/_native_layer_index`，是确定的封装泄漏。预检需要低层递归迭代器以避免 Region 物化，这个需求合理；错误在于 layout 没有公开“只读原生层级扫描”能力。修复必须最小修改受保护 `layout/`（例如公开受控 iterator/context 方法），需用户逐次授权，不能在 OPC 侧复制更多 KLayout 细节。
+- 包内 `builder -> ownership._build_ownership` 的私有导入是同一 `opc.input.edge` 包内部实现协作，可接受；全项目模块依赖图没有循环。
+- `prepare_problem()` 是公共 API，也可绕过 runner/preflight 直接构造完整 membership；`_build_ownership` 在 `np.repeat` 前没有显式 memory/count 上限。因此安全保证目前是“真实版图入口必须先 preflight”，而不是 Problem builder 自身有界。对已经物化的小 ROI 公共 API 这可接受，但文档/类型名应明确它是 in-memory builder；未来 shard builder 不能复用该函数偷偷分配全局 CSR。
+- 当前接口参考 `module_interface_reference.md` 仍把 DiffOPC 描述为“原型、尚未完成连续 EPE/完整产物验收”，与阶段 74–77、测试和 runner 现实冲突；`task_plan.md` 总表阶段 64 也仍为 in progress。两者属于确定的事实源漂移，会误导架构理解，应立即只改文档。
+- 静态 fan-in 显示 `main.offline_inputs` 被 6 个 runner 依赖，是入口层最明显的耦合中心；`main.run_mbopc` fan-out 12 个模块，但作为组合根可接受。没有循环依赖。
+- `OwnershipError` 只有定义和包级导出，没有任何抛出点、捕获点或测试；当前 ownership 不变量实际抛 `ValueError`。这是确定的无实现公共抽象，应删除，或将真实 ownership 错误统一改抛它；从精简角度更建议删除，除非用户明确要稳定领域异常 API。
+- `GeometryError`/`OPCError` 基类本身不直接抛出但由 runner 统一捕获子类，属于有效抽象；其他具体异常均有真实抛出点，不应删除。
+- 阶段 88 最终验证：Ruff、compileall、226 项全量测试（60.08 秒）、文档链接/围栏、diff whitespace 和保护目录差异全部通过；评审结论记录于 `doc/current_architecture_review.md`，验证记录位于 `doc/current_architecture_review_test_report.md`。

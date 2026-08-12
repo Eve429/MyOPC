@@ -9,6 +9,7 @@ import sys
 import zipfile
 from itertools import pairwise
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -27,7 +28,12 @@ from geometry import (  # noqa: E402
     contours_to_region,
 )
 from layout import DbuBox, LayerSpec, LayoutDB  # noqa: E402
-from opc.input import PhysicalMask, RectilinearCoreGrid, preflight_layout  # noqa: E402
+from opc.input import (  # noqa: E402
+    MaskPolarity,
+    PhysicalMask,
+    RectilinearCoreGrid,
+    preflight_layout,
+)
 from opc.input.edge import (  # noqa: E402
     FragmentationConfig,
     MBOPCProblem,
@@ -36,13 +42,22 @@ from opc.input.edge import (  # noqa: E402
 )
 from opc.input.grid import axis_cuts_by_size  # noqa: E402
 from opc.input.preflight import estimate_prepare_peak_bytes  # noqa: E402
-from opc.input.raster import ownership_canvas, rasterize_region_canvas  # noqa: E402
+from main.configuration import (  # noqa: E402
+    ConfiguredArgumentParser,
+    glp_layer_map,
+    parse_glp_layer,
+    parse_layer_spec,
+)
+from opc.input.raster import (  # noqa: E402
+    ownership_canvas,
+    rasterize_mask_canvas,
+)
 
 _GIB = 1024 ** 3
 _RASTER_FORMAT = "myopc.raster-input"
 _SEGMENT_FORMAT = "myopc.mbopc-input"
-_RASTER_VERSION = 1
-_SEGMENT_VERSION = 2
+_RASTER_VERSION = 2
+_SEGMENT_VERSION = 3
 _FINAL_LITHOGRAPHY_FORMAT = "myopc.final-lithography"
 _FINAL_LITHOGRAPHY_VERSION = 1
 
@@ -98,7 +113,8 @@ def _normalize_box(box: DbuBox | tuple[int, int, int, int] | None,
 def _select_database_input(
         source: Path, top_cell: str | None, layer: LayerSpec | None,
         box: DbuBox | tuple[int, int, int, int] | None,
-        max_file_gib: float) -> tuple[LayoutDB, LayerSpec, DbuBox]:
+        max_file_gib: float,
+        glp_layers: Mapping[str, LayerSpec] | None = None) -> tuple[LayoutDB, LayerSpec, DbuBox]:
     """打开公共 LayoutDB，并在不物化图形时解析离线输入范围。"""
     if not source.is_file():
         raise FileNotFoundError(f"版图文件不存在：{source}")
@@ -106,7 +122,7 @@ def _select_database_input(
     if source.stat().st_size > file_limit:
         raise ValueError(
             f"版图文件 {source.stat().st_size / _GIB:.3f} GiB 超过 {max_file_gib} GiB 上限")
-    database = LayoutDB.open(source, top_cell=top_cell)
+    database = LayoutDB.open(source, top_cell=top_cell, glp_layer_map=glp_layers)
     layers = database.layers()
     if layer is None:
         if len(layers) != 1:
@@ -234,7 +250,8 @@ def _ownership_slice(core: object, context: object, pixel_dbu: int,
 def save_final_lithography_tiles(
         output_dir: str | Path, region: object, grid: object, model: object,
         *, pixel_dbu: int, canvas: int, batch_size: int = 1,
-        save_png: bool = True) -> dict[str, object]:
+        save_png: bool = True, polarity: MaskPolarity | str = MaskPolarity.CLEAR,
+        field_box: DbuBox | None = None) -> dict[str, object]:
     """按 core 批量仿真并保存 ownership-only 最终光刻 tile。"""
     if not isinstance(pixel_dbu, int) or pixel_dbu <= 0:
         raise ValueError("pixel_dbu 必须是正整数")
@@ -254,8 +271,9 @@ def save_final_lithography_tiles(
         for core in group:
             slices.append(_ownership_slice(core.ownership_box, core.context_box,
                                            pixel_dbu, canvas))
-            masks.append(rasterize_region_canvas(
-                region, core.context_box, pixel_dbu, canvas))
+            masks.append(rasterize_mask_canvas(
+                region, core.context_box, pixel_dbu, canvas,
+                polarity=polarity, field_box=field_box))
         tensor = torch.as_tensor(np.stack(masks), device=model.device)
         with torch.no_grad():
             printed = model.forward_many(tensor, conditions)
@@ -290,6 +308,7 @@ def save_final_lithography_tiles(
     manifest = {
         "format": _FINAL_LITHOGRAPHY_FORMAT, "version": _FINAL_LITHOGRAPHY_VERSION,
         "orientation": "bottom_left", "pixel_dbu": pixel_dbu, "canvas": canvas,
+        "polarity": MaskPolarity(polarity).value,
         "conditions": [condition.name for condition in conditions],
         "tile_count": len(manifest_tiles), "tiles": manifest_tiles,
     }
@@ -320,7 +339,7 @@ def _archive_members(path: str | Path, max_archive_gib: float) -> tuple[Path, se
 
 
 def _metadata(data: np.lib.npyio.NpzFile, expected_format: str,
-              expected_version: int) -> dict[str, Any]:
+              expected_version: int | tuple[int, ...]) -> dict[str, Any]:
     """读取并验证无 pickle 的格式标识、版本和 JSON 元数据。"""
     try:
         format_name = str(data["format_name"].item())
@@ -328,7 +347,9 @@ def _metadata(data: np.lib.npyio.NpzFile, expected_format: str,
         value = json.loads(str(data["metadata_json"].item()))
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("离线输入缺少有效格式标识或元数据") from exc
-    if format_name != expected_format or version != expected_version:
+    versions = ((expected_version,) if isinstance(expected_version, int)
+                else expected_version)
+    if format_name != expected_format or version not in versions:
         suffix = "；请重新生成离线边段输入" if expected_format == _SEGMENT_FORMAT else ""
         raise ValueError(
             f"不支持的离线输入格式：{format_name} version {version}{suffix}")
@@ -352,12 +373,17 @@ def materialize_raster_input(
         pixel_nm: float = 8.0, canvas: int = 256, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0
+        max_estimated_gib: float = 8.0,
+        polarity: MaskPolarity | str = MaskPolarity.CLEAR,
+        glp_layers: Mapping[str, LayerSpec] | None = None
         ) -> tuple[np.ndarray, dict[str, object]]:
     """预检并把版图 ROI 栅格化为模型方向的内存画布。"""
     source = Path(layout_path).expanduser().resolve()
+    normalized_polarity = MaskPolarity(polarity)
+    if normalized_polarity is MaskPolarity.OPAQUE and box is None:
+        raise ValueError("opaque 极性必须显式提供处理 box")
     database, selected_layer, selected_box = _select_database_input(
-        source, top_cell, layer, box, max_file_gib)
+        source, top_cell, layer, box, max_file_gib, glp_layers)
     with database:
         dbu_um = database.dbu_um
         dbu_nm = dbu_um * 1000.0
@@ -374,7 +400,7 @@ def materialize_raster_input(
                 "请缩小 box 或增大 pixel_nm")
         selected_top = database.top_cell.name
         preflight = preflight_layout(
-            source, top_cell=selected_top, layer=selected_layer, box=selected_box,
+            database, layer=selected_layer, box=selected_box,
             memory_budget_bytes=int(_positive_limit(
                 max_estimated_gib, "max_estimated_gib") * _GIB),
             max_file_bytes=int(_positive_limit(max_file_gib, "max_file_gib") * _GIB),
@@ -385,8 +411,9 @@ def materialize_raster_input(
         if not preflight["accepted"]:
             raise ValueError(f"ROI 物化前预检拒绝：{preflight['reason']}")
         batch = database.query([selected_layer], selected_box).materialize()
-        mask = rasterize_region_canvas(
-            batch.region(selected_layer), selected_box, pixel_dbu, canvas)
+        mask = rasterize_mask_canvas(
+            batch.region(selected_layer), selected_box, pixel_dbu, canvas,
+            polarity=normalized_polarity, field_box=selected_box)
         polygon_count = batch.region(selected_layer).count()
     metadata = {
         "source": str(source), "top_cell": selected_top,
@@ -395,7 +422,8 @@ def materialize_raster_input(
                     selected_box.right, selected_box.top],
         "dbu_um": dbu_um, "pixel_nm": float(pixel_nm), "pixel_dbu": pixel_dbu,
         "canvas": canvas, "active_width": width, "active_height": height,
-        "orientation": "bottom_left", "polygon_count": polygon_count,
+        "orientation": "bottom_left", "polarity": normalized_polarity.value,
+        "pixel_semantics": "transmission", "polygon_count": polygon_count,
         "preflight": preflight,
     }
     return np.ascontiguousarray(mask, dtype=np.float32), metadata
@@ -408,7 +436,10 @@ def prepare_raster_input(
         pixel_nm: float = 8.0, canvas: int = 256, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> Path:
+        max_estimated_gib: float = 8.0,
+        polarity: MaskPolarity | str = MaskPolarity.CLEAR,
+        glp_layers: Mapping[str, LayerSpec] | None = None,
+        run_configuration: dict[str, object] | None = None) -> Path:
     """预检并栅格化一个版图 ROI，然后保存可重复使用的像素输入。"""
     # 归档路径与直接运行路径共享完全相同的版图读取和栅格化实现；此处只增加
     # 原子写盘，使专项调试可以缓存输入，而正常 GDS 入口不会生成隐式中间文件。
@@ -417,7 +448,10 @@ def prepare_raster_input(
         pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
         max_source_vertices=max_source_vertices,
-        max_estimated_gib=max_estimated_gib)
+        max_estimated_gib=max_estimated_gib, polarity=polarity,
+        glp_layers=glp_layers)
+    if run_configuration is not None:
+        metadata["run_configuration"] = run_configuration
     return _atomic_npz(output_path, {
         "format_name": np.array(_RASTER_FORMAT),
         "format_version": np.array(_RASTER_VERSION, dtype=np.int32),
@@ -435,7 +469,7 @@ def load_raster_input(
     if not required <= members:
         raise ValueError(f"像素输入缺少字段：{', '.join(sorted(required - members))}")
     with np.load(source, allow_pickle=False) as data:
-        metadata = _metadata(data, _RASTER_FORMAT, _RASTER_VERSION)
+        metadata = _metadata(data, _RASTER_FORMAT, (1, _RASTER_VERSION))
         mask = np.ascontiguousarray(data["mask"], dtype=np.float32)
     try:
         canvas = int(metadata["canvas"])
@@ -445,6 +479,7 @@ def load_raster_input(
         LayerSpec(int(layer_values[0]), int(layer_values[1]))
         DbuBox(*(int(value) for value in box_values))
         dbu_um, pixel_dbu = float(metadata["dbu_um"]), int(metadata["pixel_dbu"])
+        MaskPolarity(metadata.get("polarity", MaskPolarity.CLEAR.value))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("像素输入元数据缺少有效 Layer、ROI、DBU、canvas 或方向") from exc
     if (mask.ndim != 2 or mask.shape != (canvas, canvas) or
@@ -467,7 +502,9 @@ def resolve_raster_input(
         max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0
+        max_estimated_gib: float = 8.0,
+        polarity: MaskPolarity | str = MaskPolarity.CLEAR,
+        glp_layers: Mapping[str, LayerSpec] | None = None
         ) -> tuple[np.ndarray, dict[str, object]]:
     """自动读取 raster NPZ，或直接把 GDS/OASIS ROI 物化为内存 mask。"""
     source = Path(input_path).expanduser().resolve()
@@ -480,7 +517,8 @@ def resolve_raster_input(
         pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
         max_source_vertices=max_source_vertices,
-        max_estimated_gib=max_estimated_gib)
+        max_estimated_gib=max_estimated_gib, polarity=polarity,
+        glp_layers=glp_layers)
 
 
 def materialize_segment_input(
@@ -492,11 +530,17 @@ def materialize_segment_input(
         max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> tuple[MBOPCProblem, dict[str, object]]:
+        max_estimated_gib: float = 8.0,
+        polarity: MaskPolarity | str = MaskPolarity.CLEAR,
+        glp_layers: Mapping[str, LayerSpec] | None = None
+        ) -> tuple[MBOPCProblem, dict[str, object]]:
     """预检并在内存中返回完整 MBOPCProblem 及其输入元数据。"""
     source = Path(layout_path).expanduser().resolve()
+    normalized_polarity = MaskPolarity(polarity)
+    if normalized_polarity is MaskPolarity.OPAQUE and box is None:
+        raise ValueError("opaque 极性必须显式提供处理 box")
     database, selected_layer, selected_box = _select_database_input(
-        source, top_cell, layer, box, max_file_gib)
+        source, top_cell, layer, box, max_file_gib, glp_layers)
     with database:
         dbu_um, source_bytes = database.dbu_um, source.stat().st_size
         dbu_nm = dbu_um * 1000.0
@@ -512,7 +556,7 @@ def materialize_segment_input(
             axis_cuts_by_size(selected_box.bottom, selected_box.top, tile_dbu), halo_dbu)
         selected_top = database.top_cell.name
         preflight = preflight_layout(
-            source, top_cell=selected_top, layer=selected_layer, box=selected_box,
+            database, layer=selected_layer, box=selected_box,
             corner_dbu=config.corner_length_dbu,
             maximum_segment_dbu=config.max_segment_length_dbu, grid=grid,
             memory_budget_bytes=int(_positive_limit(
@@ -527,7 +571,8 @@ def materialize_segment_input(
         batch = database.query([selected_layer], selected_box).materialize()
         if batch.region(selected_layer).is_empty():
             raise ValueError("选定 ROI 和 Layer 中没有可提取的物理图形")
-        problem = prepare_problem(batch, selected_layer, config, grid)
+        problem = prepare_problem(
+            batch, selected_layer, config, grid, normalized_polarity)
     actual_peak = _post_prepare_bytes(problem, source_bytes)
     if actual_peak > max_estimated_gib * _GIB:
         raise ValueError(
@@ -539,7 +584,7 @@ def materialize_segment_input(
         "layer": [selected_layer.layer, selected_layer.datatype],
         "box_dbu": [selected_box.left, selected_box.bottom,
                     selected_box.right, selected_box.top],
-        "dbu_um": dbu_um,
+        "dbu_um": dbu_um, "polarity": normalized_polarity.value,
         "fragmentation": {
             "corner_length_dbu": config.corner_length_dbu,
             "max_segment_length_dbu": config.max_segment_length_dbu,
@@ -567,7 +612,10 @@ def prepare_segment_input(
         max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> Path:
+        max_estimated_gib: float = 8.0,
+        polarity: MaskPolarity | str = MaskPolarity.CLEAR,
+        glp_layers: Mapping[str, LayerSpec] | None = None,
+        run_configuration: dict[str, object] | None = None) -> Path:
     """物化边段问题并保存可严格恢复的版本化离线归档。"""
     problem, metadata = materialize_segment_input(
         layout_path, layer=layer, top_cell=top_cell, box=box,
@@ -576,7 +624,10 @@ def prepare_segment_input(
         max_displacement_nm=max_displacement_nm, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
         max_source_vertices=max_source_vertices,
-        max_estimated_gib=max_estimated_gib)
+        max_estimated_gib=max_estimated_gib, polarity=polarity,
+        glp_layers=glp_layers)
+    if run_configuration is not None:
+        metadata["run_configuration"] = run_configuration
     contours, segments = problem.segments.contours, problem.segments
     arrays: dict[str, object] = {
         "format_name": np.array(_SEGMENT_FORMAT),
@@ -662,7 +713,7 @@ def load_segment_input(
         "grid_halo_dbu",
     }
     with np.load(source, allow_pickle=False) as data:
-        metadata = _metadata(data, _SEGMENT_FORMAT, _SEGMENT_VERSION)
+        metadata = _metadata(data, _SEGMENT_FORMAT, (2, _SEGMENT_VERSION))
         # 先判格式版本，再检查 v2 数组字段。真实 v1 本来就没有新缓存和 grid 字段，
         # 若反过来检查只能得到误导性的“缺字段”，用户无法知道应重新生成输入。
         missing = required - set(data.files)
@@ -681,6 +732,7 @@ def load_segment_input(
             float(config_values["max_segment_length_dbu"]),
             float(config_values["max_displacement_dbu"]),
             float(config_values["miter_limit"]))
+        polarity = MaskPolarity(metadata.get("polarity", MaskPolarity.CLEAR.value))
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise ValueError("边段输入的 Layer、ROI 或分段配置无效") from exc
     contours = ContourBatch(
@@ -696,7 +748,7 @@ def load_segment_input(
     if grid.bounds != query_box:
         raise ValueError("core grid 范围与离线 ROI 不一致")
     region = contours_to_region(contours)
-    physical = PhysicalMask(layer, region, query_box)
+    physical = PhysicalMask(layer, region, query_box, polarity)
     problem = MBOPCProblem(
         physical, config, segments, grid, arrays["owner_indices"],
         arrays["core_offsets"], arrays["member_segment_indices"])
@@ -722,13 +774,7 @@ def load_segment_input(
 
 def parse_layer(value: str) -> LayerSpec:
     """解析命令行中的 `layer` 或 `layer/datatype`。"""
-    parts = value.replace(":", "/").split("/")
-    if len(parts) not in (1, 2):
-        raise argparse.ArgumentTypeError("Layer 格式应为 layer 或 layer/datatype")
-    try:
-        return LayerSpec(int(parts[0]), int(parts[1]) if len(parts) == 2 else 0)
-    except (TypeError, ValueError) as exc:
-        raise argparse.ArgumentTypeError(f"非法 Layer：{value}") from exc
+    return parse_layer_spec(value)
 
 
 def add_layout_source_arguments(parser: argparse.ArgumentParser) -> None:
@@ -737,10 +783,13 @@ def add_layout_source_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--layer", type=parse_layer, help="目标 layer/datatype")
     parser.add_argument("--box", nargs=4, type=int,
                         metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"), help="可选 DBU ROI")
-    parser.add_argument("--max-file-gib", type=float, default=4.0)
-    parser.add_argument("--max-shapes", type=int, default=5_000_000)
-    parser.add_argument("--max-vertices", type=int, default=20_000_000)
-    parser.add_argument("--max-estimated-gib", type=float, default=8.0)
+    parser.add_argument("--polarity", choices=[item.value for item in MaskPolarity])
+    parser.add_argument("--glp-layer", dest="glp_layers", action="append",
+                        type=parse_glp_layer, help="GLP 符号层映射 NAME=LAYER/DATATYPE")
+    parser.add_argument("--max-file-gib", type=float)
+    parser.add_argument("--max-shapes", type=int)
+    parser.add_argument("--max-vertices", type=int)
+    parser.add_argument("--max-estimated-gib", type=float)
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -752,19 +801,24 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     """构造像素和边段离线输入准备命令行。"""
-    parser = argparse.ArgumentParser(description="准备可重复使用的光刻/MB-OPC 离线输入。")
-    commands = parser.add_subparsers(dest="command", required=True)
+    parser = ConfiguredArgumentParser(
+        description="准备可重复使用的光刻/MB-OPC 离线输入。", workflow="offline",
+        entry="raster", valid_entries=("raster", "segments"))
+    # 子命令本身不重复读取配置；根解析器先确定 command，再把对应 entry 默认值
+    # 注入选中的标准 argparse 子解析器。
+    commands = parser.add_subparsers(
+        dest="command", required=True, parser_class=argparse.ArgumentParser)
     raster = commands.add_parser("raster", help="保存模型方向固定画布")
     _add_common_arguments(raster)
-    raster.add_argument("--pixel-nm", type=float, default=8.0)
-    raster.add_argument("--canvas", type=int, default=256)
+    raster.add_argument("--pixel-nm", type=float)
+    raster.add_argument("--canvas", type=int)
     segments = commands.add_parser("segments", help="保存完整可恢复 MBOPCProblem")
     _add_common_arguments(segments)
-    segments.add_argument("--tile-size-nm", type=float, default=1024.0)
-    segments.add_argument("--halo-nm", type=float, default=512.0)
-    segments.add_argument("--corner-nm", type=float, default=16.0)
-    segments.add_argument("--segment-nm", type=float, default=32.0)
-    segments.add_argument("--max-displacement-nm", type=float, default=24.0)
+    segments.add_argument("--tile-size-nm", type=float)
+    segments.add_argument("--halo-nm", type=float)
+    segments.add_argument("--corner-nm", type=float)
+    segments.add_argument("--segment-nm", type=float)
+    segments.add_argument("--max-displacement-nm", type=float)
     return parser
 
 
@@ -778,6 +832,9 @@ def main(argv: list[str] | None = None) -> int:
         "max_shape_occurrences": args.max_shapes,
         "max_source_vertices": args.max_vertices,
         "max_estimated_gib": args.max_estimated_gib,
+        "polarity": args.polarity,
+        "glp_layers": glp_layer_map(args.glp_layers),
+        "run_configuration": args._configuration,
     }
     try:
         if args.command == "raster":

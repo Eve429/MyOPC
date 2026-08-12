@@ -1,0 +1,15 @@
+# 光刻模型直接运行默认配置。
+
+[common]
+output_dir = "../output/workbench/lithography"
+device = "auto"
+save_png = false
+polarity = "clear"
+max_file_gib = 4.0
+max_shapes = 5000000
+max_vertices = 20000000
+max_estimated_gib = 8.0
+pixel_nm = 8.0
+canvas = 256
+
+[entry.lithography]

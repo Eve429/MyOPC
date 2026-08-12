@@ -26,9 +26,11 @@ from main.offline_inputs import (
     parse_layer,
     save_final_lithography_tiles,
 )
+from main.configuration import ConfiguredArgumentParser, glp_layer_map, parse_glp_layer
 from opc import OPCError
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input import (
+    MaskPolarity,
     RectilinearCoreGrid,
     preflight_layout,
     process_memory_snapshot,
@@ -41,47 +43,52 @@ from opc.input.edge import (
     reconstruct_region,
 )
 from opc.input.grid import axis_cuts_by_size
-from opc.input.raster import rasterize_region_canvas
+from opc.input.raster import rasterize_mask_canvas
 from opc.iteration.mbopc import SimpleMBOPCConfig, optimize
 
 
 def build_parser() -> argparse.ArgumentParser:
     """构造可直接运行整张版图或指定 ROI 的 simple MB-OPC 参数。"""
     default_layout = PROJECT_ROOT / "TestReticle" / "simple.gds"
-    parser = argparse.ArgumentParser(description="流式运行 simple MB-OPC。")
+    parser = ConfiguredArgumentParser(
+        description="流式运行 simple MB-OPC。", workflow="mbopc", entry="mbopc",
+        valid_entries=("mbopc", "mbopc_frontend", "mbopc_iteration"))
     parser.add_argument("layout", nargs="?", type=Path, default=default_layout,
                         help="输入 GDS/OASIS，默认 TestReticle/simple.gds")
     parser.add_argument("--top-cell", help="可选顶层 Cell；多顶层版图必须指定")
+    parser.add_argument("--glp-layer", dest="glp_layers", action="append", type=parse_glp_layer)
     parser.add_argument("--layer", type=parse_layer, help="目标 layer/datatype；单层时可省略")
     parser.add_argument("--box", nargs=4, type=int, metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),
                         help="可选 DBU 处理范围；默认使用顶层完整 bbox")
-    parser.add_argument("--tile-size-nm", type=float, default=1024.0,
+    parser.add_argument("--polarity", choices=[item.value for item in MaskPolarity],
+                        help="源多边形为透光 clear 或不透光 opaque")
+    parser.add_argument("--tile-size-nm", type=float,
                         help="core 正方形边长，默认 1024 nm")
-    parser.add_argument("--halo-nm", type=float, default=512.0,
+    parser.add_argument("--halo-nm", type=float,
                         help="只读光学上下文宽度，默认 512 nm")
-    parser.add_argument("--pixel-nm", type=float, default=8.0,
+    parser.add_argument("--pixel-nm", type=float,
                         help="一个光刻像素的物理尺寸，默认 8 nm")
-    parser.add_argument("--corner-nm", type=float, default=16.0,
+    parser.add_argument("--corner-nm", type=float,
                         help="控制边角部段长度，默认 16 nm")
-    parser.add_argument("--segment-nm", type=float, default=32.0,
+    parser.add_argument("--segment-nm", type=float,
                         help="控制边最大长度，默认 32 nm")
-    parser.add_argument("--max-displacement-nm", type=float, default=24.0,
+    parser.add_argument("--max-displacement-nm", type=float,
                         help="绝对法向位移上限，默认 24 nm")
-    parser.add_argument("--iterations", type=int, default=8, help="最大评价轮数，默认 8")
-    parser.add_argument("--step-nm", type=float, default=8.0, help="初始步长，默认 8 nm")
-    parser.add_argument("--decay-every", type=int, default=4,
+    parser.add_argument("--iterations", type=int, help="最大评价轮数，默认 8")
+    parser.add_argument("--step-nm", type=float, help="初始步长，默认 8 nm")
+    parser.add_argument("--decay-every", type=int,
                         help="每多少轮把步长减半，默认 4")
-    parser.add_argument("--epe-distance-nm", type=float, default=16.0,
+    parser.add_argument("--epe-distance-nm", type=float,
                         help="inner/outer 探针距离，默认 16 nm")
-    parser.add_argument("--batch-size", type=int, default=8,
+    parser.add_argument("--batch-size", type=int,
                         help="单次 GPU tile 数，默认 8；显存不足时调小")
-    parser.add_argument("--target-cache-mb", type=int, default=512,
+    parser.add_argument("--target-cache-mb", type=int,
                         help="CPU target LRU 上限，0 表示关闭，默认 512 MiB")
-    parser.add_argument("--device", default="auto", help="auto、cpu 或 cuda[:序号]")
-    parser.add_argument("--output-dir", type=Path, default=Path("output/mbopc"),
+    parser.add_argument("--device", help="auto、cpu 或 cuda[:序号]")
+    parser.add_argument("--output-dir", type=Path,
                         help="结果目录，默认 output/mbopc")
-    parser.add_argument("--preview", action="store_true",
-                        help="额外保存带分段、法向、探针和 core 的诊断 PNG",default=True)
+    parser.add_argument("--preview", action=argparse.BooleanOptionalAction,
+                        help="是否保存带分段、法向、探针和 core 的诊断 PNG")
     parser.add_argument("--no-final-lithography-png", action="store_true",
                         help="只保存最终光刻 NPZ 和 manifest，不保存 tile PNG")
     parser.add_argument("--json", action="store_true", help="终端输出完整 JSON")
@@ -110,7 +117,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     started = perf_counter()
     memory_checkpoints = {"start": process_memory_snapshot()}
     source = args.layout.expanduser().resolve()
-    with LayoutDB.open(source, top_cell=args.top_cell) as database:
+    if args.polarity == MaskPolarity.OPAQUE.value and not args.box:
+        raise ValueError("opaque 极性必须通过 --box 显式提供处理范围")
+    with LayoutDB.open(source, top_cell=args.top_cell,
+                       glp_layer_map=glp_layer_map(args.glp_layers)) as database:
         layer = _select_layer(database, args.layer)
         bbox = database.bbox()
         if bbox is None:
@@ -133,7 +143,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             args.max_displacement_nm / dbu_nm)
         preflight_started = perf_counter()
         preflight = preflight_layout(
-            source, top_cell=database.top_cell.name, layer=layer, box=box,
+            database, layer=layer, box=box,
             corner_dbu=fragmentation.corner_length_dbu,
             maximum_segment_dbu=fragmentation.max_segment_length_dbu, grid=grid,
             memory_budget_bytes=resolve_memory_budget_bytes(args.memory_budget_gib))
@@ -154,6 +164,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "total": perf_counter() - started,
                 },
                 "artifacts": {"summary": str(output_dir / "summary.json")},
+                "run_configuration": args._configuration,
             }
             _atomic_json(output_dir / "summary.json", result)
             return result
@@ -163,7 +174,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         memory_checkpoints["roi_materialize"] = process_memory_snapshot()
         # 层级遍历只在 materialize 时发生一次；prepare_problem 批量生成全局参考边、
         # 参数化 segment 和 owner/context CSR，之后每轮不会重新读取源版图。
-        problem = prepare_problem(batch, layer, fragmentation, grid)
+        problem = prepare_problem(batch, layer, fragmentation, grid, args.polarity)
     prepared = perf_counter()
     memory_checkpoints["problem_prepare"] = process_memory_snapshot()
 
@@ -190,14 +201,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     final_lithography = save_final_lithography_tiles(
         output_dir / "final_lithography", reconstructed, problem.grid, model,
         pixel_dbu=pixel_dbu, canvas=model.config.canvas,
-        batch_size=args.batch_size, save_png=not args.no_final_lithography_png)
+        batch_size=args.batch_size, save_png=not args.no_final_lithography_png,
+        polarity=problem.physical_mask.polarity, field_box=box)
     reference = problem.physical_mask.region
     # Shot 只在最终最佳几何上计算一次。固定 512×512 诊断画布使内存有严格上界；
     # 像素 DBU 向上取整以完整覆盖 ROI，避免为整张 reticle 常驻高分辨率 mask。
     shot_canvas = 512
     shot_pixel_dbu = max(1, (max(box.width, box.height) + shot_canvas - 1) // shot_canvas)
-    shot_mask = rasterize_region_canvas(
-        reconstructed, box, shot_pixel_dbu, shot_canvas)
+    shot_mask = rasterize_mask_canvas(
+        reconstructed, box, shot_pixel_dbu, shot_canvas,
+        polarity=problem.physical_mask.polarity, field_box=box)
     shot_estimate = estimate_rectangular_shots(
         torch.as_tensor(shot_mask), shape=(shot_canvas, shot_canvas))
     del shot_mask
@@ -222,8 +235,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "status": "completed", "source": str(source),
         "layer": f"{layer.layer}/{layer.datatype}",
         "top_cell": args.top_cell, "dbu_um": dbu_um,
+        "polarity": problem.physical_mask.polarity.value,
         "box_dbu": [box.left, box.bottom, box.right, box.top],
         "device": str(model.device),
+        "run_configuration": args._configuration,
         "tiling": {"columns": grid.column_count, "rows": grid.row_count,
                    "tile_size_nm": args.tile_size_nm, "halo_nm": args.halo_nm,
                    "pixel_nm": args.pixel_nm},

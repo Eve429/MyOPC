@@ -1,0 +1,19 @@
+# 光刻像素和 MB-OPC 边段离线准备默认配置。
+
+[common]
+polarity = "clear"
+max_file_gib = 4.0
+max_shapes = 5000000
+max_vertices = 20000000
+max_estimated_gib = 8.0
+
+[entry.raster]
+pixel_nm = 8.0
+canvas = 256
+
+[entry.segments]
+tile_size_nm = 1024.0
+halo_nm = 512.0
+corner_nm = 16.0
+segment_nm = 32.0
+max_displacement_nm = 24.0

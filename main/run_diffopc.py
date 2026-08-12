@@ -28,10 +28,14 @@ from main.offline_inputs import (  # noqa: E402
     materialize_segment_input,
     save_final_lithography_tiles,
 )
+from main.configuration import (  # noqa: E402
+    ConfiguredArgumentParser,
+    glp_layer_map,
+)
 from opc.diagnostics import render_boundary_overlay, write_debug_gds  # noqa: E402
 from opc.input import process_memory_snapshot  # noqa: E402
 from opc.input.edge import edge_probe_points, reconstruct_region  # noqa: E402
-from opc.input.raster import rasterize_region_canvas  # noqa: E402
+from opc.input.raster import rasterize_mask_canvas  # noqa: E402
 from opc.iteration.diffopc import DiffOPCConfig, optimize  # noqa: E402
 
 
@@ -42,7 +46,8 @@ def _load_problem(
         corner_nm: float = 16.0, segment_nm: float = 32.0,
         max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
         max_shapes: int = 5_000_000, max_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> tuple[object, dict[str, object]]:
+        max_estimated_gib: float = 8.0, polarity: str = "clear",
+        glp_layers: dict[str, object] | None = None) -> tuple[object, dict[str, object]]:
     """自动分派边段归档或经安全预检的直接版图输入。"""
     source = Path(input_path).expanduser().resolve()
     if source.suffix.lower() == ".npz":
@@ -55,7 +60,8 @@ def _load_problem(
         halo_nm=halo_nm, corner_nm=corner_nm, segment_nm=segment_nm,
         max_displacement_nm=max_displacement_nm, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shapes, max_source_vertices=max_vertices,
-        max_estimated_gib=max_estimated_gib)
+        max_estimated_gib=max_estimated_gib, polarity=polarity,
+        glp_layers=glp_layers)
 
 
 def run_diffopc(
@@ -72,7 +78,9 @@ def run_diffopc(
         corner_nm: float = 16.0, segment_nm: float = 32.0,
         max_displacement_nm: float | None = None, max_file_gib: float = 4.0,
         max_shapes: int = 5_000_000, max_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> dict[str, object]:
+        max_estimated_gib: float = 8.0, polarity: str = "clear",
+        glp_layers: dict[str, object] | None = None,
+        run_configuration: dict[str, object] | None = None) -> dict[str, object]:
     """执行输入准备、梯度迭代、精确重建和全部最终产物保存。"""
     started = perf_counter()
     memory = {"start": process_memory_snapshot()}
@@ -83,7 +91,8 @@ def run_diffopc(
         tile_size_nm=tile_size_nm, halo_nm=halo_nm, corner_nm=corner_nm,
         segment_nm=segment_nm, max_displacement_nm=direct_limit_nm,
         max_file_gib=max_file_gib, max_shapes=max_shapes,
-        max_vertices=max_vertices, max_estimated_gib=max_estimated_gib)
+        max_vertices=max_vertices, max_estimated_gib=max_estimated_gib,
+        polarity=polarity, glp_layers=glp_layers)
     input_ready = perf_counter()
     memory["input"] = process_memory_snapshot()
     try:
@@ -132,7 +141,9 @@ def run_diffopc(
     final_lithography = save_final_lithography_tiles(
         output / "final_lithography", reconstructed, problem.grid, model,
         pixel_dbu=pixel_dbu, canvas=model.config.canvas,
-        batch_size=batch_size, save_png=save_final_lithography_png)
+        batch_size=batch_size, save_png=save_final_lithography_png,
+        polarity=problem.physical_mask.polarity,
+        field_box=problem.physical_mask.query_box)
     preview_path: Path | None = None
     if save_preview:
         reference = problem.segments.materialize()
@@ -151,13 +162,15 @@ def run_diffopc(
     query_box = problem.physical_mask.query_box
     shot_pixel_dbu = max(
         1, (max(query_box.width, query_box.height) + shot_canvas - 1) // shot_canvas)
-    shot_mask = rasterize_region_canvas(
-        reconstructed, query_box, shot_pixel_dbu, shot_canvas)
+    shot_mask = rasterize_mask_canvas(
+        reconstructed, query_box, shot_pixel_dbu, shot_canvas,
+        polarity=problem.physical_mask.polarity, field_box=query_box)
     shot_estimate = estimate_rectangular_shots(
         torch.as_tensor(shot_mask), shape=(shot_canvas, shot_canvas))
     finished = perf_counter()
     memory["output"] = process_memory_snapshot()
     summary: dict[str, Any] = {
+        "run_configuration": run_configuration,
         "status": "completed", "input": str(source),
         "source_layout": metadata.get("source"), "device": str(model.device),
         "dbu_um": dbu_um, "box_dbu": metadata.get("box_dbu"),
@@ -199,27 +212,28 @@ def run_diffopc(
 
 def build_parser() -> argparse.ArgumentParser:
     """构造支持直接版图和离线边段归档的 DiffOPC 参数。"""
-    parser = argparse.ArgumentParser(description="运行可微边段 DiffOPC")
+    parser = ConfiguredArgumentParser(
+        description="运行可微边段 DiffOPC", workflow="diffopc", entry="diffopc")
     parser.add_argument("input", type=Path, help="输入 GDS/OASIS 或 segment NPZ")
-    parser.add_argument("--output-dir", type=Path, default=Path("output/diffopc"))
-    parser.add_argument("--iterations", type=int, default=8)
-    parser.add_argument("--learning-rate-nm", type=float, default=1.0)
-    parser.add_argument("--soft-temperature-nm", type=float, default=4.0)
-    parser.add_argument("--weight-l2", type=float, default=1.0)
-    parser.add_argument("--weight-pvband", type=float, default=0.0)
-    parser.add_argument("--weight-epe", type=float, default=1.0)
-    parser.add_argument("--epe-distance-nm", type=float, default=16.0)
-    parser.add_argument("--pixel-nm", type=float, default=8.0)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--raster-chunk-size", type=int, default=32)
-    parser.add_argument("--target-cache-mb", type=int, default=512)
-    parser.add_argument("--device", default="auto", help="auto、cpu 或 cuda[:序号]")
-    parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--iterations", type=int)
+    parser.add_argument("--learning-rate-nm", type=float)
+    parser.add_argument("--soft-temperature-nm", type=float)
+    parser.add_argument("--weight-l2", type=float)
+    parser.add_argument("--weight-pvband", type=float)
+    parser.add_argument("--weight-epe", type=float)
+    parser.add_argument("--epe-distance-nm", type=float)
+    parser.add_argument("--pixel-nm", type=float)
+    parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--raster-chunk-size", type=int)
+    parser.add_argument("--target-cache-mb", type=int)
+    parser.add_argument("--device", help="auto、cpu 或 cuda[:序号]")
+    parser.add_argument("--preview", action=argparse.BooleanOptionalAction)
     parser.add_argument("--no-final-lithography-png", action="store_true")
-    parser.add_argument("--tile-size-nm", type=float, default=1024.0)
-    parser.add_argument("--halo-nm", type=float, default=512.0)
-    parser.add_argument("--corner-nm", type=float, default=16.0)
-    parser.add_argument("--segment-nm", type=float, default=32.0)
+    parser.add_argument("--tile-size-nm", type=float)
+    parser.add_argument("--halo-nm", type=float)
+    parser.add_argument("--corner-nm", type=float)
+    parser.add_argument("--segment-nm", type=float)
     parser.add_argument("--max-displacement-nm", type=float)
     add_layout_source_arguments(parser)
     return parser
@@ -247,7 +261,9 @@ def main(argv: list[str] | None = None) -> int:
             max_displacement_nm=args.max_displacement_nm,
             max_file_gib=args.max_file_gib, max_shapes=args.max_shapes,
             max_vertices=args.max_vertices,
-            max_estimated_gib=args.max_estimated_gib)
+            max_estimated_gib=args.max_estimated_gib,
+            polarity=args.polarity, glp_layers=glp_layer_map(args.glp_layers),
+            run_configuration=args._configuration)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2

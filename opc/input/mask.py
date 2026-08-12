@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 import klayout.db as kdb
 
@@ -10,16 +11,34 @@ from layout import DbuBox, LayerSpec, RegionBatch
 from opc.errors import PhysicalMaskError
 
 
+class MaskPolarity(str, Enum):
+    """定义源多边形在光学上的明确含义，禁止根据版图内容猜测。"""
+
+    CLEAR = "clear"
+    OPAQUE = "opaque"
+
+
 @dataclass(frozen=True, slots=True)
 class PhysicalMask:
-    """各 OPC 方法共享的单层合并物理区域及其处理范围。"""
+    """各 OPC 方法共享的源多边形、处理范围及显式极性。"""
 
     layer: LayerSpec
     region: kdb.Region
     query_box: DbuBox
+    polarity: MaskPolarity = MaskPolarity.CLEAR
+
+    def __post_init__(self) -> None:
+        """规范化极性，并要求 opaque 拥有有限显式处理框。"""
+        try:
+            value = (self.polarity if isinstance(self.polarity, MaskPolarity)
+                     else MaskPolarity(self.polarity))
+        except ValueError as exc:
+            raise PhysicalMaskError(f"不支持的 mask 极性：{self.polarity!r}") from exc
+        object.__setattr__(self, "polarity", value)
 
 
-def normalize_physical_mask(batch: RegionBatch, layer: LayerSpec) -> PhysicalMask:
+def normalize_physical_mask(batch: RegionBatch, layer: LayerSpec,
+                            polarity: MaskPolarity | str = MaskPolarity.CLEAR) -> PhysicalMask:
     """消除内部切割线并恢复孔洞，不提前构造特定 OPC 方法的边段。"""
     region = batch.region(layer).dup()
     # OPC 处理的是当前 layer 的物理覆盖集合，Shape 属性不能阻止相接区域合并。
@@ -31,4 +50,4 @@ def normalize_physical_mask(batch: RegionBatch, layer: LayerSpec) -> PhysicalMas
     region = region.merged()
     if not region.has_valid_polygons():
         raise PhysicalMaskError("physical mask contains invalid polygons after merge")
-    return PhysicalMask(layer, region, batch.query_box)
+    return PhysicalMask(layer, region, batch.query_box, polarity)

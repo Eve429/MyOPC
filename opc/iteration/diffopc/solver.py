@@ -12,7 +12,7 @@ from evaluation import evaluate_binary_l2, evaluate_edge_probes, evaluate_pvband
 from lithography import ICCAD13Lithography
 from opc.errors import ReconstructionError
 from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_region
-from opc.input.raster import ownership_canvas, rasterize_region_canvas
+from opc.input.raster import ownership_canvas, rasterize_mask_canvas
 from opc.iteration._cache import ArrayTileCache
 
 from .contracts import DiffOPCConfig, DiffOPCIterationRecord, DiffOPCResult
@@ -52,8 +52,9 @@ def _target_tile(problem: MBOPCProblem, core_index: int, core: object,
     cached = cache.get(core_index)
     if cached is not None:
         return cached
-    target = rasterize_region_canvas(
-        problem.physical_mask.region, core.context_box, pixel_dbu, canvas)
+    target = rasterize_mask_canvas(
+        problem.physical_mask.region, core.context_box, pixel_dbu, canvas,
+        polarity=problem.physical_mask.polarity, field_box=problem.physical_mask.query_box)
     # 固定 target 缓存使用 uint8，把用户设置的字节上限真正用于像素数量而不是
     # float32 临时精度；进入连续损失前统一除以 255，量化误差小于 1/255。
     compact = np.rint(target * 255.0).astype(np.uint8)

@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from geometry import extract_contour
 from layout import LayerSpec, RegionBatch
-from opc.input import PhysicalMask, RectilinearCoreGrid, normalize_physical_mask
+from opc.input import MaskPolarity, PhysicalMask, RectilinearCoreGrid, normalize_physical_mask
 from opc.input._arrays import as_vector
 
 from .fragmentation import FragmentationConfig, SegmentBatch, fragment_edges
@@ -71,12 +71,13 @@ class MBOPCProblem:
 
 
 def prepare_problem(batch: RegionBatch, layer: LayerSpec, config: FragmentationConfig,
-                    grid: RectilinearCoreGrid | None = None) -> MBOPCProblem:
+                    grid: RectilinearCoreGrid | None = None,
+                    polarity: MaskPolarity | str = MaskPolarity.CLEAR) -> MBOPCProblem:
     """一次性准备可供多轮 MB-OPC 复用的完整前端问题。"""
-    physical = normalize_physical_mask(batch, layer)
+    physical = normalize_physical_mask(batch, layer, polarity)
     # PhysicalMask 仅保留所有 OPC 方法共享的原生 Region。边段型输入在这里执行
     # 唯一一次数值轮廓提取，之后由 SegmentBatch 成为该拓扑的唯一持有者。
-    segments = fragment_edges(extract_contour(physical.region), config)
+    segments = fragment_edges(extract_contour(physical.region), config, physical.polarity)
     if grid is None:
         box = batch.query_box
         # 单 core 仍走与整张 reticle 完全相同的规则网格代码，避免第二套显式 core

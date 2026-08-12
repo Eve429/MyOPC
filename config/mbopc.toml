@@ -1,0 +1,52 @@
+# Simple MB-OPC、前端和离线迭代默认配置。
+
+[common]
+
+[entry.mbopc]
+device = "auto"
+tile_size_nm = 1024.0
+halo_nm = 512.0
+pixel_nm = 8.0
+corner_nm = 16.0
+segment_nm = 32.0
+max_displacement_nm = 24.0
+iterations = 8
+step_nm = 8.0
+decay_every = 4
+epe_distance_nm = 16.0
+batch_size = 8
+target_cache_mb = 512
+output_dir = "../output/mbopc"
+preview = true
+no_final_lithography_png = false
+json = false
+preflight_only = false
+polarity = "clear"
+
+[entry.mbopc_frontend]
+grid = [2, 1]
+halo_nm = 200.0
+corner_nm = 16.0
+segment_nm = 32.0
+max_displacement_nm = 24.0
+demo_displacement_nm = 2.0
+probe_distance_nm = 16.0
+output_dir = "../.benchmarks/mbopc_frontend_demo"
+json = false
+skip_geometry_suite = false
+skip_artifacts = false
+preflight_only = false
+polarity = "clear"
+
+[entry.mbopc_iteration]
+device = "auto"
+output_dir = "../output/workbench/mbopc_iteration"
+iterations = 8
+step_nm = 8.0
+decay_every = 4
+epe_distance_nm = 16.0
+pixel_nm = 8.0
+batch_size = 8
+target_cache_mb = 512
+preview = true
+no_final_lithography_png = false

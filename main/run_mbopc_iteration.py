@@ -25,6 +25,7 @@ from main.offline_inputs import (
     load_segment_input,
     save_final_lithography_tiles,
 )
+from main.configuration import ConfiguredArgumentParser
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
 from opc.input.edge import edge_probe_points, reconstruct_region
 from opc.iteration.mbopc import SimpleMBOPCConfig, SimpleMBOPCResult, optimize
@@ -36,7 +37,8 @@ def run_mbopc_iteration_test(
         epe_distance_nm: float = 16.0, pixel_nm: float = 8.0,
         batch_size: int = 8, target_cache_mb: int = 512,
         device: str = "auto", save_preview: bool = True,
-        save_final_lithography_png: bool = True) -> SimpleMBOPCResult:
+        save_final_lithography_png: bool = True,
+        run_configuration: dict[str, object] | None = None) -> SimpleMBOPCResult:
     """仅从离线边段问题运行同步迭代并保存可继续分析的完整结果。"""
     loaded = perf_counter()
     problem, metadata = load_segment_input(input_path)
@@ -69,7 +71,9 @@ def run_mbopc_iteration_test(
     final_lithography = save_final_lithography_tiles(
         output / "final_lithography", reconstructed, problem.grid, model,
         pixel_dbu=pixel_dbu, canvas=model.config.canvas,
-        batch_size=batch_size, save_png=save_final_lithography_png)
+        batch_size=batch_size, save_png=save_final_lithography_png,
+        polarity=problem.physical_mask.polarity,
+        field_box=problem.physical_mask.query_box)
     layer, box = problem.physical_mask.layer, problem.physical_mask.query_box
     gds_path = write_debug_gds(
         problem.physical_mask.region, reconstructed, output / "mbopc_result.gds",
@@ -93,6 +97,7 @@ def run_mbopc_iteration_test(
             problem.owner_indices, inner, outer, problem.grid.cores())
     finished = perf_counter()
     summary: dict[str, Any] = {
+        "run_configuration": run_configuration,
         "input": str(Path(input_path).expanduser().resolve()),
         "source_layout": metadata.get("source"), "device": str(model.device),
         "dbu_um": dbu_um, "box_dbu": metadata.get("box_dbu"),
@@ -124,19 +129,21 @@ def run_mbopc_iteration_test(
 
 def build_parser() -> argparse.ArgumentParser:
     """构造离线 simple MB-OPC 迭代测试参数。"""
-    parser = argparse.ArgumentParser(description="从离线边段问题独立运行 simple MB-OPC。")
+    parser = ConfiguredArgumentParser(
+        description="从离线边段问题独立运行 simple MB-OPC。", workflow="mbopc",
+        entry="mbopc_iteration",
+        valid_entries=("mbopc", "mbopc_frontend", "mbopc_iteration"))
     parser.add_argument("input", type=Path, help="prepare_segment_input 生成的 NPZ")
-    parser.add_argument("--output-dir", type=Path,
-                        default=Path("output/workbench/mbopc_iteration"))
-    parser.add_argument("--iterations", type=int, default=8)
-    parser.add_argument("--step-nm", type=float, default=8.0)
-    parser.add_argument("--decay-every", type=int, default=4)
-    parser.add_argument("--epe-distance-nm", type=float, default=16.0)
-    parser.add_argument("--pixel-nm", type=float, default=8.0)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--target-cache-mb", type=int, default=512)
-    parser.add_argument("--device", default="auto", help="auto、cpu 或 cuda[:序号]")
-    parser.add_argument("--preview", action=argparse.BooleanOptionalAction, default=True,
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--iterations", type=int)
+    parser.add_argument("--step-nm", type=float)
+    parser.add_argument("--decay-every", type=int)
+    parser.add_argument("--epe-distance-nm", type=float)
+    parser.add_argument("--pixel-nm", type=float)
+    parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--target-cache-mb", type=int)
+    parser.add_argument("--device", help="auto、cpu 或 cuda[:序号]")
+    parser.add_argument("--preview", action=argparse.BooleanOptionalAction,
                         help="保存边段、owner、core 和探针标注图")
     parser.add_argument("--no-final-lithography-png", action="store_true",
                         help="只保存最终光刻 NPZ 和 manifest，不保存 tile PNG")
@@ -153,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
             epe_distance_nm=args.epe_distance_nm, pixel_nm=args.pixel_nm,
             batch_size=args.batch_size, target_cache_mb=args.target_cache_mb,
             device=args.device, save_preview=args.preview,
-            save_final_lithography_png=not args.no_final_lithography_png)
+            save_final_lithography_png=not args.no_final_lithography_png,
+            run_configuration=args._configuration)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2

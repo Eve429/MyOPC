@@ -23,6 +23,7 @@ from geometry import (
     render_region_batch,
 )
 from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
+from main.configuration import ConfiguredArgumentParser, glp_layer_map, parse_glp_layer
 
 
 def parse_layer(value: str) -> LayerSpec:
@@ -39,10 +40,13 @@ def parse_layer(value: str) -> LayerSpec:
 
 def build_parser() -> argparse.ArgumentParser:
     """构造紧凑的中文命令行参数解析器。"""
-    parser = argparse.ArgumentParser(
+    parser = ConfiguredArgumentParser(
+        workflow="layout", entry="layout_geometry",
         description="直接读取 GDS/OASIS，按 Layer/ROI 查询，并可导出 ownership Patch。")
     parser.add_argument("layout", type=Path, help="输入 GDS/OASIS 文件")
     parser.add_argument("--top", help="多顶层版图必须明确指定的 top Cell")
+    parser.add_argument("--glp-layer", dest="glp_layers", action="append",
+                        type=parse_glp_layer, help="GLP 符号层映射 NAME=LAYER/DATATYPE")
     parser.add_argument("--layer", action="append", type=parse_layer, dest="layers",
                         help="查询 Layer，可重复传入，例如 --layer 1/0")
     parser.add_argument("--box", nargs=4, type=int,
@@ -57,9 +61,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--png", type=Path, help="把单个 Layer 的 ROI 保存为灰度覆盖率 PNG")
     parser.add_argument("--show-image", action="store_true",
                         help="使用系统图片查看器显示单个 Layer 的 ROI")
-    parser.add_argument("--pixel-size-nm", type=float, default=5.0,
+    parser.add_argument("--pixel-size-nm", type=float,
                         help="PNG 物理像素尺寸，默认 5 nm/pixel")
-    parser.add_argument("--max-image-pixels", type=int, default=64_000_000,
+    parser.add_argument("--max-image-pixels", type=int,
                         help="PNG 最大像素数，默认 64000000")
     parser.add_argument("--json", action="store_true", help="使用 JSON 输出，便于脚本集成")
     return parser
@@ -69,7 +73,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     """执行一次单文件、单 ROI 的完整 Layout 到 Geometry 数据流。"""
     # LayoutDB 在 with 生命周期内唯一持有原生版图；后续所有 Region、轮廓和输出
     # 都在关闭前生成，避免惰性查询访问已经释放的 KLayout 对象。
-    with LayoutDB.open(args.layout, top_cell=args.top) as database:
+    with LayoutDB.open(args.layout, top_cell=args.top,
+                       glp_layer_map=glp_layer_map(args.glp_layers)) as database:
+        if (args.layout.suffix.lower() == ".glp" and args.output is not None and
+                args.output.suffix.lower() != ".gds"):
+            raise ValueError("GLP 输入当前只允许输出 GDS，不支持其他版图格式")
         # 未显式传参时使用现有全部 Layer 和 top bbox；空 top 没有可推导 ROI，
         # 必须在进入几何物化前拒绝，避免生成边界不明确的空 Patch。
         layers = tuple(args.layers) if args.layers else database.layers()
@@ -87,6 +95,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "dbu_um": database.dbu_um,
             "box_dbu": [query_box.left, query_box.bottom, query_box.right, query_box.top],
             "layers": {},
+            "run_configuration": args._configuration,
         }
         contour_batches = extract_contours(batch) if args.arrays else {}
         for layer in batch.layers:

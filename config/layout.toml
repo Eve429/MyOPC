@@ -1,0 +1,11 @@
+# Layout/Geometry 直接运行默认配置。
+
+[common]
+diagnostics = false
+arrays = false
+show_image = false
+pixel_size_nm = 5.0
+max_image_pixels = 64000000
+json = false
+
+[entry.layout_geometry]

@@ -19,6 +19,7 @@ import klayout.db as kdb
 import numpy as np
 
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, LayoutError, RegionBatch
+from main.configuration import ConfiguredArgumentParser, glp_layer_map, parse_glp_layer
 from opc import OPCError
 from opc.diagnostics import (
     render_boundary_overlay,
@@ -27,6 +28,7 @@ from opc.diagnostics import (
     write_debug_gds,
 )
 from opc.input import (
+    MaskPolarity,
     RectilinearCoreGrid,
     preflight_layout,
     process_memory_snapshot,
@@ -55,28 +57,32 @@ def parse_layer(value: str) -> LayerSpec:
 
 def build_parser() -> argparse.ArgumentParser:
     """构造支持无参数合成验证和真实 GDS 验证的中文命令行。"""
-    parser = argparse.ArgumentParser(description="直接验证 OPC 公共层与 MB-OPC 几何前端。")
+    parser = ConfiguredArgumentParser(
+        description="直接验证 OPC 公共层与 MB-OPC 几何前端。", workflow="mbopc",
+        entry="mbopc_frontend",
+        valid_entries=("mbopc", "mbopc_frontend", "mbopc_iteration"))
     parser.add_argument("layout", nargs="?", type=Path, help="可选输入 GDS/OASIS；省略时运行合成测试")
     parser.add_argument("--top-cell", help="可选顶层 Cell；多顶层版图必须指定")
+    parser.add_argument("--glp-layer", dest="glp_layers", action="append", type=parse_glp_layer)
+    parser.add_argument("--polarity", choices=[item.value for item in MaskPolarity])
     parser.add_argument("--layer", type=parse_layer, help="真实版图目标 layer/datatype")
     parser.add_argument("--box", nargs=4, type=int, metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),
                         help="可选全局 DBU 处理范围；默认使用 top bbox")
     tiling = parser.add_mutually_exclusive_group()
-    tiling.add_argument("--grid", nargs=2, type=int, default=(2, 1),
+    tiling.add_argument("--grid", nargs=2, type=int,
                         metavar=("COLUMNS", "ROWS"), help="core 网格列数和行数，默认 2 1")
     tiling.add_argument("--tile-size-nm", type=float, metavar="SIZE",
                         help="按固定正方形边长切分 core，末列和末行自动裁到处理边界")
-    parser.add_argument("--halo-nm", type=float, default=200.0, help="每个 core 的 halo，默认 200 nm")
-    parser.add_argument("--corner-nm", type=float, default=16.0, help="角部段长，默认 16 nm")
-    parser.add_argument("--segment-nm", type=float, default=32.0, help="最大段长，默认 32 nm")
-    parser.add_argument("--max-displacement-nm", type=float, default=24.0,
+    parser.add_argument("--halo-nm", type=float, help="每个 core 的 halo，默认 200 nm")
+    parser.add_argument("--corner-nm", type=float, help="角部段长，默认 16 nm")
+    parser.add_argument("--segment-nm", type=float, help="最大段长，默认 32 nm")
+    parser.add_argument("--max-displacement-nm", type=float,
                         help="允许的最大法向位移，默认 24 nm")
-    parser.add_argument("--demo-displacement-nm", type=float, default=2.0,
+    parser.add_argument("--demo-displacement-nm", type=float,
                         help="每个 core 示范移动一段的绝对位移，默认 2 nm")
-    parser.add_argument("--probe-distance-nm", type=float, default=16.0,
+    parser.add_argument("--probe-distance-nm", type=float,
                         help="诊断图 inner/outer 探针距离，默认 16 nm")
-    parser.add_argument("--output-dir", type=Path,
-                        default=Path(".benchmarks/mbopc_frontend_demo"), help="验证产物目录")
+    parser.add_argument("--output-dir", type=Path, help="验证产物目录")
     parser.add_argument("--json", action="store_true", help="只在终端输出 JSON 汇总")
     parser.add_argument("--skip-geometry-suite", action="store_true",
                         help="跳过多图形标注图集，仅用于快速性能复测")
@@ -224,6 +230,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         checkpoints["layout_open"] = checkpoints["preflight"] = process_memory_snapshot()
         if args.preflight_only:
             result = {
+                "run_configuration": args._configuration,
                 "status": "preflight_only", "source": source,
                 "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
                 "box_dbu": [batch.query_box.left, batch.query_box.bottom,
@@ -236,21 +243,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             _atomic_summary(output_dir, result)
             return result
         stage = perf_counter()
-        problem = prepare_problem(batch, layer, config, grid)
+        problem = prepare_problem(batch, layer, config, grid, args.polarity)
         _finish_stage(timings, checkpoints, "problem_prepare", stage)
     else:
         source_path = args.layout.expanduser().resolve()
         source = str(source_path)
         stage = perf_counter()
-        # 第一次版图读取只解析层级元数据并保持数据库打开。严格预检会独立只读扫描
-        # 同一文件；只有预检通过，才使用这里的数据库物化 ROI，避免超限后产生 Region。
-        with LayoutDB.open(source_path, top_cell=args.top_cell) as database:
+        # 版图只解析一次并保持数据库打开；严格预检复用原生层级迭代器。只有预检
+        # 通过才物化 ROI，避免超限后产生完整 Region 或边段数组。
+        if args.polarity == MaskPolarity.OPAQUE.value and not args.box:
+            raise ValueError("opaque 极性必须通过 --box 显式提供处理范围")
+        with LayoutDB.open(source_path, top_cell=args.top_cell,
+                           glp_layer_map=glp_layer_map(args.glp_layers)) as database:
             layer, box, dbu_um = _select_layout_scope(args, database)
             _finish_stage(timings, checkpoints, "layout_open", stage)
             config, grid = _problem_configuration(args, box, dbu_um)
             stage = perf_counter()
             preflight = preflight_layout(
-                source_path, top_cell=database.top_cell.name, layer=layer, box=box,
+                database, layer=layer, box=box,
                 corner_dbu=config.corner_length_dbu,
                 maximum_segment_dbu=config.max_segment_length_dbu, grid=grid,
                 memory_budget_bytes=budget)
@@ -258,6 +268,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             if not preflight["accepted"] or args.preflight_only:
                 status = "preflight_only" if preflight["accepted"] else "rejected"
                 result = {
+                    "run_configuration": args._configuration,
                     "status": status, "source": source,
                     "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
                     "box_dbu": [box.left, box.bottom, box.right, box.top],
@@ -273,7 +284,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             batch = database.query([layer], box).materialize()
             _finish_stage(timings, checkpoints, "roi_materialize", stage)
             stage = perf_counter()
-            problem = prepare_problem(batch, layer, config, grid)
+            problem = prepare_problem(batch, layer, config, grid, args.polarity)
             _finish_stage(timings, checkpoints, "problem_prepare", stage)
 
     dbu_nm = dbu_um * 1000.0
@@ -344,6 +355,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     timings["total"] = perf_counter() - total_started
     checkpoints["total"] = process_memory_snapshot()
     result: dict[str, Any] = {
+        "run_configuration": args._configuration,
         "status": "completed", "source": source,
         "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
         "box_dbu": [batch.query_box.left, batch.query_box.bottom,

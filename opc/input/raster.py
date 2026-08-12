@@ -11,6 +11,8 @@ from numpy.typing import NDArray
 from geometry import iter_region_coverage_tiles
 from layout import DbuBox
 
+from .mask import MaskPolarity
+
 
 def rasterize_region_canvas(region: kdb.Region, box: DbuBox, pixel_dbu: int,
                             canvas: int) -> NDArray[np.float32]:
@@ -32,6 +34,28 @@ def rasterize_region_canvas(region: kdb.Region, box: DbuBox, pixel_dbu: int,
         rows, columns = areas.shape
         result[y0:y0 + rows, x0:x0 + columns] = areas
     return result
+
+
+def rasterize_mask_canvas(
+        region: kdb.Region, box: DbuBox, pixel_dbu: int, canvas: int, *,
+        polarity: MaskPolarity | str = MaskPolarity.CLEAR,
+        field_box: DbuBox | None = None) -> NDArray[np.float32]:
+    """把源多边形转换为统一的透光率画布，其中 1 始终表示透光。"""
+    try:
+        normalized = polarity if isinstance(polarity, MaskPolarity) else MaskPolarity(polarity)
+    except ValueError as exc:
+        raise ValueError(f"不支持的 mask 极性：{polarity!r}") from exc
+    coverage = rasterize_region_canvas(region, box, pixel_dbu, canvas)
+    if normalized is MaskPolarity.CLEAR:
+        return coverage
+    if field_box is None:
+        raise ValueError("opaque 极性必须提供显式 field_box")
+    # 只在光学数组边界构造处理框 coverage。处理框绝不进入 ContourBatch，因此其
+    # 四条边不会成为虚假 OPC 边；box 跨越处理框时，框外 padding 保持不透光 0。
+    field = rasterize_region_canvas(kdb.Region(field_box.to_native()), box, pixel_dbu, canvas)
+    np.subtract(field, coverage, out=field)
+    np.clip(field, 0.0, 1.0, out=field)
+    return field
 
 
 def ownership_canvas(core: DbuBox, context: DbuBox, pixel_dbu: int,

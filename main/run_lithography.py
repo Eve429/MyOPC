@@ -24,6 +24,7 @@ from main.offline_inputs import (
     add_layout_source_arguments,
     resolve_raster_input,
 )
+from main.configuration import ConfiguredArgumentParser, glp_layer_map
 
 
 def _cpu_array(tensor: torch.Tensor) -> np.ndarray:
@@ -40,7 +41,9 @@ def run_lithography_test(
         max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> dict[str, torch.Tensor]:
+        max_estimated_gib: float = 8.0, polarity: str = "clear",
+        glp_layers: dict[str, LayerSpec] | None = None,
+        run_configuration: dict[str, object] | None = None) -> dict[str, torch.Tensor]:
     """从版图或像素归档运行光刻模型，并按需保存数值与 PNG。"""
     # 版图分支只在 CPU 内存生成当前 ROI 的固定画布，不落临时 NPZ；NPZ 分支
     # 则复用已准备数据。两者在这里汇合，后续 GPU 传输和模型计算没有双实现。
@@ -49,7 +52,8 @@ def run_lithography_test(
         pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
         max_source_vertices=max_source_vertices,
-        max_estimated_gib=max_estimated_gib)
+        max_estimated_gib=max_estimated_gib, polarity=polarity,
+        glp_layers=glp_layers)
     model = ICCAD13Lithography(device=device)
     if mask.shape[0] > model.config.canvas or mask.shape[1] > model.config.canvas:
         raise ValueError("离线像素输入超过当前光刻模型 canvas")
@@ -97,6 +101,7 @@ def run_lithography_test(
             },
             "artifacts": {"result_npz": str(result_path), "images": images,
                           "summary": str(output / "summary.json")},
+            "run_configuration": run_configuration,
         }
         _atomic_json(output / "summary.json", summary)
     return result
@@ -104,18 +109,18 @@ def run_lithography_test(
 
 def build_parser() -> argparse.ArgumentParser:
     """构造支持版图和离线像素输入的光刻模型命令行。"""
-    parser = argparse.ArgumentParser(
+    parser = ConfiguredArgumentParser(
+        workflow="lithography", entry="lithography",
         description="从 GDS/OASIS ROI 或离线 mask 运行 ICCAD13 光刻模型。")
     parser.add_argument("input", type=Path, help="输入 GDS/OASIS 或 raster NPZ")
-    parser.add_argument("--output-dir", type=Path,
-                        default=Path("output/workbench/lithography"))
-    parser.add_argument("--device", default="auto", help="auto、cpu 或 cuda[:序号]")
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--device", help="auto、cpu 或 cuda[:序号]")
     parser.add_argument("--save-png", action="store_true",
                         help="保存 mask 和三个工艺角 PNG")
     add_layout_source_arguments(parser)
-    parser.add_argument("--pixel-nm", type=float, default=8.0,
+    parser.add_argument("--pixel-nm", type=float,
                         help="直接版图输入的像素尺寸")
-    parser.add_argument("--canvas", type=int, default=256,
+    parser.add_argument("--canvas", type=int,
                         help="直接版图输入的固定方形画布")
     return parser
 
@@ -132,7 +137,9 @@ def main(argv: list[str] | None = None) -> int:
             max_file_gib=args.max_file_gib,
             max_shape_occurrences=args.max_shapes,
             max_source_vertices=args.max_vertices,
-            max_estimated_gib=args.max_estimated_gib)
+            max_estimated_gib=args.max_estimated_gib,
+            polarity=args.polarity, glp_layers=glp_layer_map(args.glp_layers),
+            run_configuration=args._configuration)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2

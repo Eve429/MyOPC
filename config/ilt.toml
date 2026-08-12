@@ -1,0 +1,31 @@
+# ILT 与保留的 SimpleILT 入口默认配置。
+
+[common]
+device = "auto"
+polarity = "clear"
+max_file_gib = 4.0
+max_shapes = 5000000
+max_vertices = 20000000
+max_estimated_gib = 8.0
+pixel_nm = 8.0
+canvas = 256
+
+[entry.ilt]
+output_dir = "../output/ilt"
+method = "simple"
+smoothing_kernel = 7
+sigmoid_steepness = 4.0
+sigmoid_offset = 0.5
+mask_threshold = 0.5
+no_png = false
+json = false
+
+[entry.simpleilt]
+output_dir = "../output/simpleilt"
+iterations = 20
+step_size = 0.5
+sigmoid_steepness = 4.0
+weight_pvband = 0.0
+weight_process_l2 = 1.0
+curvature_weight = 0.0
+no_png = false

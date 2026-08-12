@@ -14,7 +14,7 @@ from lithography import ICCAD13Lithography
 from opc.errors import ReconstructionError
 from opc.input import CoreSpec
 from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_contours
-from opc.input.raster import ownership_canvas, rasterize_region_canvas
+from opc.input.raster import ownership_canvas, rasterize_mask_canvas
 from opc.iteration._cache import ArrayTileCache
 
 from .contracts import IterationRecord, SimpleMBOPCConfig, SimpleMBOPCResult
@@ -74,8 +74,9 @@ def _target_tile(problem: MBOPCProblem, core_index: int, core: CoreSpec,
     if cached is not None:
         return cached
     context = core.context_box
-    raster = rasterize_region_canvas(
-        problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
+    raster = rasterize_mask_canvas(
+        problem.physical_mask.region, context, config.pixel_dbu, config.canvas,
+        polarity=problem.physical_mask.polarity, field_box=problem.physical_mask.query_box)
     compact = np.rint(raster * 255.0).astype(np.uint8)
     cache.put(core_index, compact)
     return compact
@@ -95,13 +96,17 @@ def _current_tile(problem: MBOPCProblem, contours: ContourBatch,
         # 上就是参考 Region。直接栅格化参考 Region 可跳过两次轮廓子集物化和三次
         # KLayout Region 布尔运算。这里不能直接返回 target：target 为节省缓存内存已
         # 量化到 uint8，原路径的 current mask 则保持浮点覆盖率，混用会改变评价结果。
-        return rasterize_region_canvas(
-            problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
+        return rasterize_mask_canvas(
+            problem.physical_mask.region, context, config.pixel_dbu, config.canvas,
+            polarity=problem.physical_mask.polarity,
+            field_box=problem.physical_mask.query_box)
     reference = contours_to_region(_subset_contours(problem.segments.contours, polygon_ids))
     current = contours_to_region(_subset_contours(contours, polygon_ids))
     local_target = problem.physical_mask.region & kdb.Region(context.to_native())
     local_current = (local_target - reference) + current
-    return rasterize_region_canvas(local_current, context, config.pixel_dbu, config.canvas)
+    return rasterize_mask_canvas(
+        local_current, context, config.pixel_dbu, config.canvas,
+        polarity=problem.physical_mask.polarity, field_box=problem.physical_mask.query_box)
 
 
 def _owner_indices(problem: MBOPCProblem) -> tuple[np.ndarray, ...]:

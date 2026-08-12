@@ -1,0 +1,29 @@
+# DiffOPC 直接运行默认配置。
+
+[common]
+output_dir = "../output/diffopc"
+iterations = 8
+learning_rate_nm = 1.0
+soft_temperature_nm = 4.0
+weight_l2 = 1.0
+weight_pvband = 0.0
+weight_epe = 1.0
+epe_distance_nm = 16.0
+pixel_nm = 8.0
+batch_size = 8
+raster_chunk_size = 32
+target_cache_mb = 512
+device = "auto"
+preview = true
+no_final_lithography_png = false
+tile_size_nm = 1024.0
+halo_nm = 512.0
+corner_nm = 16.0
+segment_nm = 32.0
+polarity = "clear"
+max_file_gib = 4.0
+max_shapes = 5000000
+max_vertices = 20000000
+max_estimated_gib = 8.0
+
+[entry.diffopc]

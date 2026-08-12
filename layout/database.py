@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Self
 
 import klayout.db as kdb
@@ -16,6 +17,7 @@ from .errors import (
 )
 from .hierarchy import HierarchySummary, build_hierarchy_summary
 from .query import ShapeQuery
+from .source import read_layout
 from .types import CellRef, DbuBox, LayerSpec
 
 
@@ -33,16 +35,15 @@ class LayoutDB:
             self._layer_indexes[LayerSpec(info.layer, info.datatype)] = index
 
     @classmethod
-    def open(cls, path: str | Path, top_cell: str | None = None) -> Self:
-        """只解析一次 GDS/OASIS，并以确定规则选择顶层 Cell。"""
+    def open(cls, path: str | Path, top_cell: str | None = None,
+             glp_layer_map: Mapping[str, LayerSpec | tuple[int, int]] | None = None) -> Self:
+        """只解析一次 GDS/OASIS/GLP，并以确定规则选择顶层 Cell。"""
         source = Path(path).expanduser().resolve()
         if not source.is_file():
             raise LayoutOpenError(f"layout file does not exist: {source}")
-        layout = kdb.Layout()
-        try:
-            layout.read(str(source))
-        except Exception as exc:
-            raise LayoutOpenError(f"failed to read layout {source}: {exc}") from exc
+        normalized = {name: value if isinstance(value, LayerSpec) else LayerSpec(*value)
+                      for name, value in (glp_layer_map or {}).items()}
+        layout = read_layout(source, normalized)
         tops = list(layout.top_cells())
         if top_cell is None:
             if len(tops) != 1:

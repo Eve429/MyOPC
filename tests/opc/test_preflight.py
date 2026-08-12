@@ -7,7 +7,7 @@ from pathlib import Path
 import klayout.db as kdb
 import numpy as np
 
-from layout import DbuBox, LayerSpec
+from layout import DbuBox, LayerSpec, LayoutDB
 from opc.input import RectilinearCoreGrid, preflight_layout, process_memory_snapshot
 
 
@@ -27,10 +27,11 @@ def test_preflight_accepts_small_layout_and_reports_all_capacity_fields(tmp_path
     source = _write_rectangle(tmp_path / "small.gds")
     box = DbuBox(0, 0, 1000, 1000)
     grid = RectilinearCoreGrid(np.array([0, 500, 1000]), np.array([0, 1000]), 100)
-    result = preflight_layout(
-        source, top_cell="TOP", layer=LayerSpec(1, 0), box=box,
-        corner_dbu=8.0, maximum_segment_dbu=32.0, grid=grid,
-        memory_budget_bytes=1024 ** 3)
+    with LayoutDB.open(source) as database:
+        result = preflight_layout(
+            database, layer=LayerSpec(1, 0), box=box,
+            corner_dbu=8.0, maximum_segment_dbu=32.0, grid=grid,
+            memory_budget_bytes=1024 ** 3)
     assert result["accepted"] is True
     assert result["scan_complete"] is True
     assert result["counts_are_lower_bounds"] is False
@@ -48,10 +49,11 @@ def test_preflight_rejects_ten_billion_segments_without_segment_allocation(
     source = _write_rectangle(tmp_path / "huge-count.gds", extent, 1)
     box = DbuBox(0, 0, extent, 1)
     grid = RectilinearCoreGrid(np.array([0, extent]), np.array([0, 1]))
-    result = preflight_layout(
-        source, top_cell="TOP", layer=LayerSpec(1, 0), box=box,
-        corner_dbu=0.1, maximum_segment_dbu=0.2, grid=grid,
-        memory_budget_bytes=64 * 1024 ** 3)
+    with LayoutDB.open(source) as database:
+        result = preflight_layout(
+            database, layer=LayerSpec(1, 0), box=box,
+            corner_dbu=0.1, maximum_segment_dbu=0.2, grid=grid,
+            memory_budget_bytes=64 * 1024 ** 3)
     assert result["accepted"] is False
     assert result["int32_capacity_ok"] is False
     assert result["estimated_segments"] >= 10_000_000_000

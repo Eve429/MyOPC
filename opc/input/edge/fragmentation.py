@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 
 from geometry import ContourBatch
 from opc.input._arrays import as_matrix, as_vector
+from opc.input.mask import MaskPolarity
 
 IntArray = NDArray[np.int64]
 Int32Array = NDArray[np.int32]
@@ -167,7 +168,8 @@ def _outward_normals(contours: ContourBatch, edge_next_ids: np.ndarray,
     return np.ascontiguousarray(np.where(use_left[:, None], left, right))
 
 
-def fragment_edges(contours: ContourBatch, config: FragmentationConfig) -> SegmentBatch:
+def fragment_edges(contours: ContourBatch, config: FragmentationConfig,
+                   polarity: MaskPolarity | str = MaskPolarity.CLEAR) -> SegmentBatch:
     """按角部短段和均衡中段策略向量化切分全部物理数学边。"""
     edge_count = len(contours.vertices)
     edge_next_ids = np.arange(edge_count, dtype=np.int32) + 1
@@ -225,5 +227,10 @@ def fragment_edges(contours: ContourBatch, config: FragmentationConfig) -> Segme
     ring_offsets = edge_offsets[contours.ring_offsets]
     normals = _outward_normals(
         contours, edge_next_ids, edge_ring_ids, ring_is_hole, lengths)
+    normalized = polarity if isinstance(polarity, MaskPolarity) else MaskPolarity(polarity)
+    # `_outward_normals` 从源多边形内部指向外部。clear 时这正是透光→不透光；
+    # opaque 时透光位于外部，反向后仍保持公共法向不变量，迭代器无需极性分支。
+    if normalized is MaskPolarity.OPAQUE:
+        normals = np.ascontiguousarray(-normals)
     return SegmentBatch(contours, edge_next_ids, edge_polygon_ids, normals,
                         ring_offsets, edge_ids, t0, t1)

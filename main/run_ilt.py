@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from dataclasses import asdict
@@ -28,6 +27,7 @@ from main.offline_inputs import (
     resolve_raster_input,
     save_final_lithography_result,
 )
+from main.configuration import ConfiguredArgumentParser, glp_layer_map
 from opc.input import process_memory_snapshot
 from opc.iteration.ilt import (
     CurvMultiConfig,
@@ -60,7 +60,9 @@ def run_ilt(
         max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> dict[str, Any]:
+        max_estimated_gib: float = 8.0, polarity: str = "clear",
+        glp_layers: dict[str, LayerSpec] | None = None,
+        run_configuration: dict[str, object] | None = None) -> dict[str, Any]:
     """读取版图或 raster NPZ，运行指定 ILT 并保存评价、光刻图和资源统计。"""
     loaded_started = perf_counter()
     memory_checkpoints = {"start": process_memory_snapshot()}
@@ -71,7 +73,8 @@ def run_ilt(
         pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
         max_source_vertices=max_source_vertices,
-        max_estimated_gib=max_estimated_gib)
+        max_estimated_gib=max_estimated_gib, polarity=polarity,
+        glp_layers=glp_layers)
     loaded = perf_counter()
     memory_checkpoints["input"] = process_memory_snapshot()
     model = ICCAD13Lithography(device=device)
@@ -201,6 +204,7 @@ def run_ilt(
                 stage_start += stage_count
         record_values.append(value)
     summary: dict[str, Any] = {
+        "run_configuration": run_configuration,
         "status": "completed", "method": method,
         "input": str(Path(input_path).expanduser().resolve()),
         "source_layout": metadata.get("source"), "device": str(model.device),
@@ -228,9 +232,11 @@ def run_ilt(
 
 def main(argv: list[str] | None = None) -> int:
     """解析统一 ILT 命令行并返回标准退出码。"""
-    parser = argparse.ArgumentParser(description="运行统一 ILT 方法")
-    parser.add_argument("input", type=Path); parser.add_argument("--output-dir", type=Path, default=Path("output/ilt"))
-    parser.add_argument("--method", choices=("simple", "levelset", "curvmulti", "multilevel"), default="simple")
+    parser = ConfiguredArgumentParser(
+        description="运行统一 ILT 方法", workflow="ilt", entry="ilt",
+        valid_entries=("ilt", "simpleilt"))
+    parser.add_argument("input", type=Path); parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--method", choices=("simple", "levelset", "curvmulti", "multilevel"))
     parser.add_argument("--iterations", type=int,
                         help="不指定时使用方法默认；Multilevel 指定后各级相同")
     parser.add_argument("--step-size", type=float,
@@ -247,16 +253,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="Multilevel 各级迭代数，数量必须与 scales 相同")
     parser.add_argument("--stage-step-sizes", type=float, nargs="+",
                         help="Multilevel 各级 Adam 实际步长，数量必须与 scales 相同")
-    parser.add_argument("--smoothing-kernel", type=int, default=7)
-    parser.add_argument("--sigmoid-steepness", type=float, default=4.0)
-    parser.add_argument("--sigmoid-offset", type=float, default=0.5)
-    parser.add_argument("--mask-threshold", type=float, default=0.5)
-    parser.add_argument("--device", default="auto")
+    parser.add_argument("--smoothing-kernel", type=int)
+    parser.add_argument("--sigmoid-steepness", type=float)
+    parser.add_argument("--sigmoid-offset", type=float)
+    parser.add_argument("--mask-threshold", type=float)
+    parser.add_argument("--device")
     parser.add_argument("--no-png", action="store_true")
     parser.add_argument("--json", action="store_true", help="终端输出完整 JSON 汇总")
     add_layout_source_arguments(parser)
-    parser.add_argument("--pixel-nm", type=float, default=8.0)
-    parser.add_argument("--canvas", type=int, default=256)
+    parser.add_argument("--pixel-nm", type=float)
+    parser.add_argument("--canvas", type=int)
     args = parser.parse_args(argv)
     try:
         summary = run_ilt(
@@ -281,7 +287,9 @@ def main(argv: list[str] | None = None) -> int:
             max_file_gib=args.max_file_gib,
             max_shape_occurrences=args.max_shapes,
             max_source_vertices=args.max_vertices,
-            max_estimated_gib=args.max_estimated_gib)
+            max_estimated_gib=args.max_estimated_gib,
+            polarity=args.polarity, glp_layers=glp_layer_map(args.glp_layers),
+            run_configuration=args._configuration)
         if args.json:
             print(json.dumps(summary, ensure_ascii=False, indent=2))
         else:

@@ -27,6 +27,7 @@ from main.offline_inputs import (
     resolve_raster_input,
     save_final_lithography_result,
 )
+from main.configuration import ConfiguredArgumentParser, glp_layer_map
 from opc.iteration.ilt import SimpleILTConfig, SimpleILTResult, optimize
 
 
@@ -42,7 +43,9 @@ def run_simpleilt(
         max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0
+        max_estimated_gib: float = 8.0, polarity: str = "clear",
+        glp_layers: dict[str, LayerSpec] | None = None,
+        run_configuration: dict[str, object] | None = None
         ) -> tuple[SimpleILTResult, dict[str, Any]]:
     """加载一次版图或像素目标，运行 ILT，并保存结果、评价与性能统计。"""
     # GDS/OASIS 在此处按 ROI 直接生成 CPU mask，NPZ 则直接加载；优化器只看到
@@ -52,7 +55,8 @@ def run_simpleilt(
         pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
         max_source_vertices=max_source_vertices,
-        max_estimated_gib=max_estimated_gib)
+        max_estimated_gib=max_estimated_gib, polarity=polarity,
+        glp_layers=glp_layers)
     model = ICCAD13Lithography(device=device)
     if target_array.shape[0] > model.config.canvas or target_array.shape[1] > model.config.canvas:
         raise ValueError("离线像素目标超过当前光刻模型 canvas")
@@ -99,6 +103,7 @@ def run_simpleilt(
                              ("binary_mask", binary_mask)):
             images[name] = str(_atomic_png(output / f"{name}.png", values))
     summary: dict[str, Any] = {
+        "run_configuration": run_configuration,
         "status": "completed", "input": str(Path(input_path).expanduser().resolve()),
         "source_layout": metadata.get("source"), "device": str(model.device),
         "shape": list(target_array.shape), "config": asdict(config),
@@ -123,22 +128,23 @@ def run_simpleilt(
 
 def build_parser() -> argparse.ArgumentParser:
     """构造支持版图和离线像素输入的 SimpleILT 命令行参数。"""
-    parser = argparse.ArgumentParser(
+    parser = ConfiguredArgumentParser(
+        workflow="ilt", entry="simpleilt", valid_entries=("ilt", "simpleilt"),
         description="从 GDS/OASIS ROI 或离线像素目标运行 SimpleILT。")
     parser.add_argument("input", type=Path, help="输入 GDS/OASIS 或 raster NPZ")
-    parser.add_argument("--output-dir", type=Path, default=Path("output/simpleilt"))
-    parser.add_argument("--iterations", type=int, default=20)
-    parser.add_argument("--step-size", type=float, default=0.5)
-    parser.add_argument("--sigmoid-steepness", type=float, default=4.0)
-    parser.add_argument("--weight-pvband", type=float, default=0.0)
-    parser.add_argument("--weight-process-l2", type=float, default=1.0)
-    parser.add_argument("--curvature-weight", type=float, default=0.0)
-    parser.add_argument("--device", default="auto", help="auto、cpu 或 cuda[:序号]")
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--iterations", type=int)
+    parser.add_argument("--step-size", type=float)
+    parser.add_argument("--sigmoid-steepness", type=float)
+    parser.add_argument("--weight-pvband", type=float)
+    parser.add_argument("--weight-process-l2", type=float)
+    parser.add_argument("--curvature-weight", type=float)
+    parser.add_argument("--device", help="auto、cpu 或 cuda[:序号]")
     parser.add_argument("--no-png", action="store_true", help="不保存诊断 PNG")
     add_layout_source_arguments(parser)
-    parser.add_argument("--pixel-nm", type=float, default=8.0,
+    parser.add_argument("--pixel-nm", type=float,
                         help="直接版图输入的像素尺寸")
-    parser.add_argument("--canvas", type=int, default=256,
+    parser.add_argument("--canvas", type=int,
                         help="直接版图输入的固定方形画布")
     return parser
 
@@ -160,7 +166,9 @@ def main(argv: list[str] | None = None) -> int:
             max_file_gib=args.max_file_gib,
             max_shape_occurrences=args.max_shapes,
             max_source_vertices=args.max_vertices,
-            max_estimated_gib=args.max_estimated_gib)
+            max_estimated_gib=args.max_estimated_gib,
+            polarity=args.polarity, glp_layers=glp_layer_map(args.glp_layers),
+            run_configuration=args._configuration)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2

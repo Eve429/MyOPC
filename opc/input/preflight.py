@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from numbers import Integral
-from pathlib import Path
-
 import klayout.db as kdb
 import numpy as np
 import psutil
 
-from layout import DbuBox, LayerSpec
+from layout import DbuBox, LayerSpec, LayoutDB
 
 from .grid import RectilinearCoreGrid
 
@@ -119,15 +117,13 @@ def estimate_solver_peak_bytes(file_bytes: int, shapes: int, vertices: int,
 
 
 def preflight_layout(
-        layout_path: str | Path, *, top_cell: str, layer: LayerSpec, box: DbuBox,
+        database: LayoutDB, *, layer: LayerSpec, box: DbuBox,
         corner_dbu: float | None = None, maximum_segment_dbu: float | None = None,
         grid: RectilinearCoreGrid | None = None, memory_budget_bytes: int,
         max_file_bytes: int | None = None, max_shape_occurrences: int | None = None,
         max_source_vertices: int | None = None) -> dict[str, int | bool | str]:
     """扫描指定层级 ROI，并在任何完整 Region 或边段数组分配前返回容量判断。"""
-    source = Path(layout_path).expanduser().resolve()
-    if not source.is_file():
-        raise FileNotFoundError(f"版图文件不存在：{source}")
+    source = database.source_path
     file_bytes = source.stat().st_size
     if max_file_bytes is not None and file_bytes > max_file_bytes:
         raise ValueError(f"版图文件 {file_bytes / _GIB:.3f} GiB 超过读取上限")
@@ -137,19 +133,11 @@ def preflight_layout(
         raise ValueError("边段预检必须同时提供 corner_dbu 和 maximum_segment_dbu")
     if corner_dbu is not None and (corner_dbu <= 0.0 or maximum_segment_dbu <= 0.0):
         raise ValueError("边段预检长度必须为正")
-    layout = kdb.Layout()
-    layout.read(str(source))
-    top = layout.cell(top_cell)
-    if top is None:
-        raise ValueError(f"版图中不存在顶层 Cell：{top_cell}")
-    layer_index = None
-    for index in layout.layer_indexes():
-        info = layout.get_info(index)
-        if info.layer == layer.layer and info.datatype == layer.datatype:
-            layer_index = index
-            break
-    if layer_index is None:
-        raise ValueError(f"版图中不存在 Layer {layer.layer}/{layer.datatype}")
+    # 预检与后续 ROI 物化共享同一个只读 LayoutDB，避免大型 GDS/OASIS 重复解析；
+    # GLP 也因此只经过一次严格文本解析。这里仍只扫描层级迭代器，不构造完整 Region。
+    layout = database._native_layout
+    top = database._native_cell(database.top_cell)
+    layer_index = database._native_layer_index(layer)
     iterator = kdb.RecursiveShapeIterator(layout, top, layer_index, box.to_native(), True)
     iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
     shapes = vertices = segments = memberships = 0
@@ -188,7 +176,6 @@ def preflight_layout(
                 segments > _INT32_MAX or memberships > _INT32_MAX):
             scan_complete = False
             break
-    del layout
     prepare_bytes = estimate_prepare_peak_bytes(
         file_bytes, shapes, vertices, segments, memberships)
     solver_bytes = estimate_solver_peak_bytes(

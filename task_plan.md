@@ -274,6 +274,11 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | EDT 暴力对照脚本把标量当数组写入 | 1 | 仅辅助脚本失败、生产测试已通过；改为 `np.empty` 后 1×1 至 8×8 随机逐像素对照通过 |
 | CurvMulti Python summary 测试把 tuple 预期写成 JSON list | 1 | 生产输出正确；Python API 保留 dataclass tuple，只有 JSON 文件/CLI 序列化为 list，修正测试契约 |
 | 根目录 Ruff 扫描命中用户 `Test/klayout.ipynb` 的两处既有 SIM113 | 1 | 不修改本阶段范围外的用户 notebook；改为完整检查正式源码与 `tests/`，并单独核对本阶段差异 |
+| 第三阶段首个多文件补丁使用了不匹配的 ILT 包 docstring 上下文 | 1 | 原子失败且无文件变化；改为按公共辅助、算法文件、导出分别应用精确短补丁 |
+| 第三阶段调用点 `rg` 使用了未闭合的组合正则 | 1 | 只读搜索未执行；改用多个 `-F -e` 纯文本模式避免 PowerShell/正则双重转义 |
+| 第三阶段真实 `simple.gds` 冒烟沿用旧文档 Layer 11/0 | 1 | 当前用户版图已变化且预检在优化前拒绝；只读枚举实际层后重跑，不修改用户 GDS |
+| 测试 helper 收敛时误用 `Set-Content` 且机械替换保留了两个同名局部定义 | 1 | 立即停止该路径；用 `apply_patch` 删除局部重复、核对 UTF-8/BOM/换行并复跑全部测试 |
+| BOM 恢复后的 diff 检查发现 CurvMulti 测试文件尾多一空行 | 1 | 编码已恢复为 UTF-8 无 BOM；用 `apply_patch` 精确删除文件尾空行后重跑完整门禁 |
 
 | 64. OpenILT ILT and DiffOPC migration | in progress | Phase 1 LevelSet quality complete; later CurvMulti, Multilevel and DiffOPC acceptance remain |
 | 65. LevelSetILT quality closure | complete | Exact SDF, strict contracts, correct curvature, complete runner artifacts and dedicated tests |
@@ -286,3 +291,12 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 67 | 已完成 | 实现连续平滑参数化、粗到细 warm-start、严格配置/窗口/工艺条件及统一入口参数 |
 | 68 | 已完成 | 增加算法、形状、缩放、固定区、真实 backward、GDS 直跑、产物和资源统计专项测试 |
 | 69 | 已完成 | 全量回归、性能/内存/冗余/调用点/保护目录审计，更新手册和专项报告并本地提交 |
+
+## 阶段 70–73：第三阶段 MultilevelILT
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 70 | 已完成 | 对照 OpenILT Multilevel、当前 CurvMulti/光刻接口和既有原型，锁定层级语义、输入输出与性能边界 |
+| 71 | 已完成 | 实现独立 MultilevelILT 并接入统一 `run_ilt.py`，不建立无调用方抽象且不修改保护目录 |
+| 72 | 已完成 | 增加数值、层级、窗口、真实 backward、GDS 直跑、产物、CPU/GPU 与多图形专项测试 |
+| 73 | 已完成 | 全量回归、内存/速度/冗余/异常/调用点审计，更新手册和专项报告并创建本地提交 |

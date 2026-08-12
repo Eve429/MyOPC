@@ -268,6 +268,25 @@ flowchart TD
 
 当前结构刻意不提供空基类、插件注册器、外部 key 更新层或多种 owner policy。需要第二个真实实现时，再从两个真实调用方提取最小公共接口。
 
+### MultilevelILT 调用关系
+
+```mermaid
+flowchart TD
+    A[完整 target / 可选 initial 与窗口] --> B[按 scale area 生成级别 target/reference]
+    B --> C[当前级独立 Adam]
+    C --> D[均值平滑 + offset sigmoid]
+    D --> E[nearest 恢复完整物理 mask]
+    E --> F[ICCAD13Lithography.forward_many]
+    F --> G[wafer area 汇聚到级别网格]
+    G --> H[nominal/process/PVBand/curvature 损失]
+    H --> C
+    C --> I[保存该级最优参数]
+    I -->|nearest warm-start，不传 Adam 状态| B
+    I --> J[最终 scale=1 的统一 SimpleILTResult]
+```
+
+Multilevel 的“level”同时改变参数和监督网格，但不改变物理仿真网格；因此 Hopkins 核始终解释同一 nm/像素。级别记录仍复用 `ILTIterationRecord`，`run_ilt.py` 只在 JSON 边界按不同 `stage_iterations` 的累计区间附加 stage 字段。
+
 ## 11. 离线专项工作台调用关系
 
 ```mermaid

@@ -30,3 +30,15 @@ LevelSetILT 默认初值已从二值正负常数改为一次性精确欧氏 SDF�
 同一输入在当前 4 GiB GTX 1650 上完成真实 CUDA backward：三阶段损失与 CPU 仅有浮点尾差，最终二值指标完全一致；CUDA 峰值分配 69,222,400 bytes，优化 2.102 s、总计 2.580 s。首轮含 CUDA/NVRTC 初始化，因此此单轮时延不用于 CPU/GPU加速比结论；它只证明本阶段在显存远小于目标 24 GiB 的设备上可运行。
 
 最终简化审计确认：旧 `MultiScaleILTConfig/optimize_multiscale`、`multilevel` CLI 别名和 `multiscale.py` 均无残留；新配置、两个私有张量操作和求解入口全部有当前调用方。函数体重复扫描无命中，阶段元数据不形成第二套结构，未增加仅为修 bug 存在的分支或包装层；`layout/`、`geometry/` 零差异。
+
+## 第三阶段 MultilevelILT
+
+OpenILT Multilevel 的算法身份是两个独立 CurvILT 求解：Low 级 256²/20 轮完成后，把该级最优参数近邻放大两倍，Mid 级 512²/100 轮以新的 Adam 精修。项目版保留“每级独立迭代数、实际 Adam 步长、最优参数 warm-start、逐级重建优化器”，默认 `scales=(2,1)`、`stage_iterations=(20,100)`、`stage_step_sizes=(0.2,0.2)`；也允许调用方配置更多级别。
+
+为保持当前 ICCAD13 核的物理标定，每一级只降低参数和监督网格：级别 soft mask 先近邻恢复为完整 target shape，再执行 `forward_many`；完整 wafer 随后以 area 汇聚到本级监督网格计算损失。它与 CurvMulti 的差异是：Multilevel 使用每级独立 Adam/轮数并在级别网格监督，CurvMulti 使用统一 SGD/轮数且始终在完整网格监督。两者只共享 `simple.py` 中 `[B,H,W]` 缩放和“均值平滑+sigmoid”两个纯张量操作，不增加 utils、基类、注册器或阶段记录类。
+
+相对参考代码继续修正三处历史问题：nominal L2 使用具名 nominal wafer，不误用 maximum；优化窗口外保持初始软 mask，不清零；曲率核只在权重大于零时作用于本级 nominal wafer。每级结束只保存最优参数供下一级 warm-start，旧 Adam、wafer 和 autograd 图不累计，设备内存上界仍由完整光刻图、当前级参数和 Adam 状态决定。
+
+真实 `TestReticle/simple.gds` 当前 Layer 1/0、ROI `(-2000,-1100)-(-200,948)` 的 256² 两级各一轮验证通过。CPU 优化 1.984 s、总计 2.224 s、峰值 working set 638,906,368 bytes；4 GiB GTX 1650 CUDA 峰值分配 70,008,832 bytes。CPU/CUDA 最终二值 L2/PVBand/shot 均为 `1922/815/134`；首轮 CUDA 包含运行时初始化，不据此声明加速比。
+
+最终简化审计删除了 CurvMulti/Multilevel 各自的一行平滑包装，两个现实算法直接复用 `simple.py` 的缩放与平滑纯张量实现；专项测试中的伪光刻模型和确定性 GDS 也收敛到已有测试包。生产与测试函数体重复扫描均为 0，全部新增配置/函数有调用方；未引入新结果结构、基类、注册器或仅为错误修复存在的分支，`layout/`、`geometry/` 零差异。

@@ -25,3 +25,11 @@
 最终结果：CurvMulti 专项 13 项、全部 ILT 定向 29 项、全仓 180 项通过；正式源码与 `tests/` 的 Ruff、compileall、中文模块/函数 docstring、Markdown 链接、旧 multiscale 符号、`git diff --check` 和保护目录差异审计均通过。根目录 Ruff 另命中用户 `Test/klayout.ipynb` 两处既有 SIM113，本阶段未修改该 notebook，也未把它误报为本阶段通过项。
 
 CUDA 冒烟在 4 GiB GTX 1650 上完成 256²、scale 4/2/1 各一轮真实 backward；峰值分配 69,222,400 bytes，最终 L2/PVBand/shot 与 CPU 同为 `2146/800/118`。当前设备不是用户目标 24 GiB GPU，且首轮含 CUDA 初始化，因此只作为可运行和显存上界证据。
+
+## 第三阶段 MultilevelILT 测试
+
+专项覆盖：级别配置长度/顺序/有限值和输入拒绝；粗级损失与 area 监督公式对照；不同轮数的独立 Adam 级别和参数 warm-start；所有 Hopkins 调用保持完整物理 shape；空工艺窗口、窗口外固定值和 wafer 曲率对象；batch 与真实 Hopkins 两级 backward；孔洞、斜边、十字、多组件；默认 20/100 契约与自定义尺度拒绝；GDS 函数入口、资源/阶段记录、最终光刻产物及仓库外 CLI。
+
+当前 `simple.gds` 已变化为 Layer 1/0；旧报告中的 Layer 11/0 在预检阶段被明确拒绝，测试未修改用户文件。改用实际 Layer 后，CPU/CUDA 两级各一轮均完成并保存 `ilt_result.npz`、`summary.json` 和 `final_lithography.npz`，最终 L2/PVBand/shot 同为 `1922/815/134`；CUDA 峰值分配 70,008,832 bytes。
+
+最终 Multilevel 专项 14 项通过（11.73 s），全仓库最终复跑 194 项通过（61.26 s）；正式源码与测试 Ruff、compileall、`git diff --check` 均通过。

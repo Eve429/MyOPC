@@ -83,6 +83,19 @@ def _curvature_loss(mask: torch.Tensor) -> torch.Tensor:
     return torch.sum(curvature.square())
 
 
+def _resize_image(image: torch.Tensor, shape: tuple[int, int], mode: str) -> torch.Tensor:
+    """保持 `[B,H,W]` 契约缩放目标、参数、wafer 或优化窗口。"""
+    return functional.interpolate(image[:, None], size=shape, mode=mode)[:, 0]
+
+
+def _smooth_sigmoid_mask(parameters: torch.Tensor, kernel: int,
+                         steepness: float, offset: float) -> torch.Tensor:
+    """对连续参数执行固定均值平滑和带偏移 sigmoid，生成可微软掩膜。"""
+    pooled = functional.avg_pool2d(
+        parameters[:, None], kernel, stride=1, padding=kernel // 2)[:, 0]
+    return torch.sigmoid(steepness * (pooled - offset))
+
+
 def optimize(target: torch.Tensor, model: ICCAD13Lithography,
              config: SimpleILTConfig, initial_parameters: torch.Tensor | None = None,
              optimization_mask: torch.Tensor | None = None,

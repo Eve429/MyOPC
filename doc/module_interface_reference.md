@@ -546,7 +546,19 @@ ownership mask 必须与提升后的 batch shape/device 一致；它只选择计
 
 结果字段复用 `SimpleILTResult`；`records` 的 iteration 是跨尺度全局递增下标，长度为 `len(scales)*iterations_per_stage`。`best_parameters` 是最终尺度的最优控制参数，最终尺度固定为 1，故 shape 与 target 一致；`soft_mask/binary_mask` 是完整网格结果。统一 runner 的 JSON 记录额外附加 `stage_index/stage_scale/stage_iteration`，这些字段不是求解器内的第二套记录结构。
 
-### 8.5 [`opc/iteration/mbopc/contracts.py`](../opc/iteration/mbopc/contracts.py)
+### 8.5 [`opc/iteration/ilt/multilevel.py`](../opc/iteration/ilt/multilevel.py)
+
+#### `MultilevelConfig`
+
+`scales` 为严格递减、以 1 结束的正整数元组；`stage_iterations`、`stage_step_sizes` 必须与尺度等长，分别为每级正迭代数和 Adam 实际正步长。其余平滑、sigmoid、损失和阈值字段与 CurvMulti 范围一致。默认 `(2,1)/(20,100)/(0.2,0.2)` 对应 OpenILT Low/Mid 调度，但不保留其物理尺度错误。
+
+#### `optimize_multilevel(...) -> SimpleILTResult`
+
+target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMulti 一致。每级用 area 生成 target/reference 和 nearest 生成窗口/warm-start；级别 soft mask 必须先恢复完整 target shape，再调用 Hopkins，完整 wafer 随后 area 汇聚到级别 shape 计算 nominal/process/PVBand/wafer-curvature。每级新建 Adam，仅传递该级历史最优有效参数，不传 optimizer 状态或计算图。
+
+返回继续复用 `SimpleILTResult/ILTIterationRecord`；记录数为 `sum(stage_iterations)`，iteration 全局递增。最终 scale 固定为 1，所以参数、soft/binary mask 与 target 同形。runner JSON 按累计迭代边界附加 `stage_index/stage_scale/stage_iteration`。
+
+### 8.6 [`opc/iteration/mbopc/contracts.py`](../opc/iteration/mbopc/contracts.py)
 
 包导出定义见 [`opc/iteration/mbopc/__init__.py`](../opc/iteration/mbopc/__init__.py)。
 
@@ -561,7 +573,7 @@ ownership mask 必须与提升后的 batch shape/device 一致；它只选择计
 
 `stop_reason` 当前可能为 `iteration_limit`、`zero_epe` 或 `no_legal_update`。
 
-### 8.6 [`opc/iteration/mbopc/solver.py`](../opc/iteration/mbopc/solver.py)
+### 8.7 [`opc/iteration/mbopc/solver.py`](../opc/iteration/mbopc/solver.py)
 
 #### `optimize(problem, model, config) -> SimpleMBOPCResult`
 
@@ -579,7 +591,7 @@ ownership mask 必须与提升后的 batch shape/device 一致；它只选择计
 
 固定 target tile 使用字节上限 LRU 缓存；上限 0 可关闭。GPU 只常驻当前 batch，但 CPU 当前仍常驻完整 problem、全局位移和少量索引。输出的 `best_displacements` 不一定是最后一轮位移，调用方必须用它重建最终结果。
 
-### 8.7 [`opc/iteration/diffopc/`](../opc/iteration/diffopc)
+### 8.8 [`opc/iteration/diffopc/`](../opc/iteration/diffopc)
 
 包级原型导出为 `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult` 和 `optimize`。`contracts.py` 保存配置/记录/结果；`rasterizer.py` 的 `rasterize_soft_edges` 以参考 mask、`[S,2]` 起终点/法向和 `[S]` 位移生成可微软 mask；`solver.py` 在现有 `MBOPCProblem` 上优化全局位移。
 
@@ -709,9 +721,7 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 ### 11.6 [`main/run_ilt.py`](../main/run_ilt.py)
 
-`run_ilt(input_path, output_dir, method=..., ...) -> summary` 接受 GDS/OASIS 或 raster NPZ。已验收 `method=levelset/curvmulti`：输入参数包括迭代/损失、device、Layer/top/DBU ROI、pixel/canvas 和容量上限；CurvMulti 另接受 scales、平滑核、sigmoid steepness/offset 和 mask threshold。保存 `ilt_result.npz`、最终三工艺角光刻结果、可选 target/soft/binary PNG 及 summary JSON。summary 包含配置、逐轮/阶段损失、二值 L2/PVBand/shot、输入/优化/评价/输出时间、进程内存检查点和 GPU 峰值。CLI 支持 `--json`，可从仓库外直接执行。
-
-Multilevel 不再伪装为 CurvMulti 的别名；后续阶段完成独立算法与验收后才能重新加入入口。
+`run_ilt(input_path, output_dir, method=..., ...) -> summary` 接受 GDS/OASIS 或 raster NPZ。已验收 `method=levelset/curvmulti/multilevel`：输入参数包括迭代/损失、device、Layer/top/DBU ROI、pixel/canvas 和容量上限；CurvMulti/Multilevel 另接受 scales、平滑核、sigmoid steepness/offset 和 mask threshold，Multilevel 再接受逐级 iterations/step sizes。保存 `ilt_result.npz`、最终三工艺角光刻结果、可选 target/soft/binary PNG 及 summary JSON。summary 包含配置、逐轮/阶段损失、二值 L2/PVBand/shot、输入/优化/评价/输出时间、进程内存检查点和 GPU 峰值。CLI 支持 `--json`，可从仓库外直接执行。
 
 ### 11.7 [`main/run_diffopc.py`](../main/run_diffopc.py)
 

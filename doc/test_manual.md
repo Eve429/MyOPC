@@ -97,6 +97,20 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 第二阶段最终全仓回归为 180 项通过（55.06 s）；CurvMulti 专项 13 项、全部 ILT 定向 29 项通过。
 
+第三阶段 MultilevelILT：
+
+```powershell
+& $python -m pytest tests\opc\test_multilevel_ilt.py -q
+& $python main\run_ilt.py TestReticle\simple.gds --method multilevel --layer 1/0 `
+  --box -2000 -1100 -200 948 --pixel-nm 8 --scales 2 1 `
+  --stage-iterations 20 100 --stage-step-sizes 0.2 0.2 --device cuda `
+  --output-dir output\multilevel --json
+```
+
+默认不写 `--scales/--stage-iterations/--stage-step-sizes` 时采用 `2 1`、`20 100`、`0.2 0.2`。`--iterations N` 会把所有级别设为 N 轮；自定义尺度必须同时给统一 `--iterations` 或逐级 `--stage-iterations`。测试必须确认低级监督公式、完整物理光刻 shape、不同级别记录边界、固定窗口、真实 backward、最终光刻产物及 CPU/CUDA 二值评价一致性。
+
+第三阶段最终 Multilevel 专项 14 项、全仓回归 194 项通过。
+
 ## 5. 严格性能基准
 
 ```powershell

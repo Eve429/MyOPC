@@ -328,3 +328,9 @@
 - OpenILT CurvMulti 源码把 nominal L2 实际写成 `printedMax`，与 process L2 重复，且把 mask 直接乘中央 filter 令窗口外归零；这两处属于历史实现问题，不应照搬。项目版应使用具名 nominal condition，并让优化窗口外保持固定初值语义。
 - 当前 ICCAD13 `forward_many` 对小于 canvas 的 mask 只做居中补零，不会按尺度放大；因此 CurvMulti 的 coarse mask 必须先恢复到完整 target 网格再做光刻。粗尺度只能减少控制变量自由度，不能改变 Hopkins 核对应的像素物理尺度。
 - CurvMulti 不需要新的阶段记录数据类：固定 `iterations_per_stage` 和 `scales` 可由全局 record 下标推导 stage，runner 只在 JSON 边界附加三个 stage 字段，求解热路径继续复用 `ILTIterationRecord/SimpleILTResult`。
+- 第三阶段现有生产树没有 Multilevel 实现或导出；唯一 `main/run_ilt.py` 入口已具备 Simple/LevelSet/CurvMulti 的直接 GDS/NPZ 输入、统一产物和资源统计，可直接扩展方法分派，无需新 runner。
+- OpenILT 的 Multilevel 参考实现位于 `pyilt/multilevel.py`，配有 256/512 两套配置；应先区分它与 CurvMulti 的“同一完整物理网格上的粗控制参数”语义，避免再次把张量尺寸变化误当作不改变光刻像素尺度。
+- OpenILT Multilevel 的实际身份是两次独立 CurvILT：Low 256²/20 轮后把最优参数近邻放大两倍，Mid 512²/100 轮继续；每一级重建 Adam，实际学习率为配置 StepSize 的 0.2 倍。它不是单个 optimizer 在多个尺度连续运行。
+- 参考代码在 Low/Mid 上直接使用同一 35×35 Hopkins 核，且评估时再分别放大 8/4 倍；在当前明确 `canvas/resolution` 的模型中照搬会改变核的物理像素语义。项目版采用“级别参数/监督网格 + 完整物理仿真网格”：低级软 mask 先放大到完整 target 网格做 forward，wafer 再 area 缩到级别网格算损失。
+- Multilevel 与 CurvMulti 的现实差异保留为：前者每级可配置独立轮数/Adam 步长并在级别监督网格算损失；后者所有尺度使用相同轮数/SGD，始终在完整 target 网格算损失。两者可共享现有结果/逐轮记录，但不应建立统一求解器基类或新阶段记录类。
+- OpenILT Multilevel 内嵌 CurvILT 同样把 `printedMax` 当 L2、窗口外清零并每轮重新分配曲率核；项目版分别改为具名 nominal、窗口外固定初值、复用现有曲率实现且权重为零时不计算。

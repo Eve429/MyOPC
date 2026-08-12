@@ -49,16 +49,16 @@
 
 ### Metadata
 - Source: architecture_review
-- Related Files: opc/iteration/ilt/curvmulti.py, tests/opc/test_curvmulti_ilt.py
+- Related Files: opc/iteration/ilt/curvmulti.py, opc/iteration/ilt/multilevel.py, tests/opc/test_curvmulti_ilt.py, tests/opc/test_multilevel_ilt.py
 - Tags: lithography, multiscale, calibration, physical-scale
 - Pattern-Key: myopc.fixed_lithography_pixel_scale
-- Recurrence-Count: 1
+- Recurrence-Count: 2
 - First-Seen: 2026-08-12
 - Last-Seen: 2026-08-12
 
 ### Resolution
 - **Resolved**: 2026-08-12T18:30:00+08:00
-- **Notes**: CurvMulti 已实现为粗尺度控制参数、完整目标网格光刻 forward，并由输入形状回归测试固定该契约。
+- **Notes**: CurvMulti 和 Multilevel 均采用低分辨率参数、完整目标网格光刻 forward；Multilevel 再把 wafer 汇聚到级别监督网格，两者都有输入 shape 回归。
 
 ---
 

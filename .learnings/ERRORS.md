@@ -26,6 +26,38 @@
 
 ---
 
+## [ERR-20260812-002] test_helper_edit_workflow
+
+**Logged**: 2026-08-12T20:30:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+收敛两个 ILT 测试 helper 时误用 PowerShell `Set-Content` 编辑文件，且名称替换后局部函数仍重复存在。
+
+### Error
+```text
+项目文件编辑必须使用 apply_patch；机械 Replace 不理解函数定义边界。
+```
+
+### Context
+- 涉及 `test_curvmulti_ilt.py` 与 `test_multilevel_ilt.py` 的测试 helper 重命名。
+- 生产代码和用户数据未受影响。
+
+### Suggested Fix
+所有源码变更只使用 `apply_patch`；重构函数时删除完整定义块，随后用 AST 重复函数体、编码和全量测试复核。
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/opc/test_curvmulti_ilt.py, tests/opc/test_multilevel_ilt.py
+
+### Resolution
+- **Resolved**: 2026-08-12T20:30:00+08:00
+- **Notes**: 使用 apply_patch 删除局部重复并执行 UTF-8、静态和完整功能复核。
+
+---
+
 ## [ERR-20260811-001] mbopc_benchmark_regression_scale
 
 **Logged**: 2026-08-11T00:00:00+08:00
@@ -1795,5 +1827,36 @@ owner/v1 校验收敛的多文件补丁使用了与已迁移代码不一致的�
 ### Resolution
 - **Resolved**: 2026-08-11T23:35:00+08:00
 - **Notes**: 读取真实片段后改用短锚点；模型 10 项测试、全仓库 152 项回归均通过，重复 PNG 实现已删除。
+
+---
+## [ERR-20260812-001] multilevel_real_gds_smoke
+
+**Logged**: 2026-08-12T20:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Multilevel 真实冒烟沿用了旧报告中的 `simple.gds` Layer 11/0，但用户版文件已不再包含该层。
+
+### Error
+```text
+错误：版图中不存在 Layer 11/0
+```
+
+### Context
+- 命令在版图预检阶段失败，未进入光刻或优化。
+- `TestReticle/simple.gds` 是用户文件，项目规则要求保留且不为测试修改。
+
+### Suggested Fix
+真实版图测试前只读枚举当前层信息，使用实际存在的层；确定性自动回归继续使用测试动态生成的 GDS。
+
+### Metadata
+- Reproducible: yes
+- Related Files: TestReticle/simple.gds, main/run_ilt.py
+
+### Resolution
+- **Resolved**: 2026-08-12T20:00:00+08:00
+- **Notes**: 改用只读层枚举选择当前实际层，不修改用户版图。
 
 ---

@@ -250,3 +250,9 @@
 - CurvMulti 真实 CUDA 冒烟在 4 GiB GTX 1650 上通过：256² 三尺度各一轮峰值显存 69,222,400 bytes，CPU/CUDA 最终二值评价一致。
 - 阶段 69 完成：未调用函数、重复函数体、旧符号、异常入口、中文注释、文档链接、保护目录和完整差异审计通过；旧错误原型物理删除且无兼容包装，准备本地关键提交。
 - 最终全仓功能复跑为 180 项通过（54.39 s）；正式源码与 `tests/` Ruff 通过。根目录扫描另报告用户 `Test/klayout.ipynb` 两处既有 SIM113，遵守范围约束未修改。
+- 阶段 70 开始：第三阶段限定为 MultilevelILT，不混入 DiffOPC；基线为干净提交 `0013194`，继续禁止修改 `layout/`、`geometry/`。
+- 阶段 70 完成：锁定“两级独立 Adam + 最优参数 warm-start + 级别监督/完整物理 forward”契约，并明确不复制 OpenILT 的像素尺度、nominal 和窗口外清零问题。
+- 阶段 71 完成：新增单文件 MultilevelILT，公共缩放/平滑张量操作收敛到 `simple.py` 并由两个现实算法复用；统一入口支持逐级尺度/轮数/Adam 步长和阶段记录。
+- 阶段 72 进行中：43 项完整 ILT 定向回归通过；当前 `simple.gds` Layer 1/0 的 CPU/CUDA 两级真实流程通过，最终二值 L2/PVBand/shot 均为 1922/815/134，CUDA 峰值分配 70,008,832 bytes。
+- 阶段 72 完成：Multilevel 专项 14 项（11.73 s）和全仓 194 项（60.77 s）通过；多图形、级别公式、物理 shape、窗口、batch、真实 backward、GDS/CLI/产物均覆盖。
+- 阶段 73 完成：全仓最终复跑 194 项（61.26 s），Ruff/compileall/diff/中文 docstring/链接/调用点/重复函数体/保护目录审计通过；生产与测试重复函数体均为 0。

@@ -1,4 +1,4 @@
-"""统一运行 Simple、LevelSet 和 CurvMulti ILT。"""
+"""统一运行 Simple、LevelSet、CurvMulti 和 Multilevel ILT。"""
 
 from __future__ import annotations
 
@@ -32,20 +32,25 @@ from opc.input import process_memory_snapshot
 from opc.iteration.ilt import (
     CurvMultiConfig,
     LevelSetConfig,
+    MultilevelConfig,
     SimpleILTConfig,
     optimize,
     optimize_curvmulti,
     optimize_levelset,
+    optimize_multilevel,
 )
 
 
 def run_ilt(
         input_path: str | Path, output_dir: str | Path, *, method: str = "simple",
-        iterations: int = 10, step_size: float | None = None,
+        iterations: int | None = None, step_size: float | None = None,
         weight_pvband: float | None = None,
         weight_process_l2: float | None = None,
         curvature_weight: float | None = None,
-        scales: tuple[int, ...] = (4, 2, 1), smoothing_kernel: int = 7,
+        scales: tuple[int, ...] | None = None,
+        stage_iterations: tuple[int, ...] | None = None,
+        stage_step_sizes: tuple[float, ...] | None = None,
+        smoothing_kernel: int = 7,
         sigmoid_steepness: float = 4.0, sigmoid_offset: float = 0.5,
         mask_threshold: float = 0.5, device: str = "auto",
         save_png: bool = True, layer: LayerSpec | None = None,
@@ -78,12 +83,13 @@ def run_ilt(
         torch.cuda.reset_peak_memory_stats(model.device)
         torch.cuda.synchronize(model.device)
     optimized_started = perf_counter()
-    # 方法分派只构造各求解器已有配置，不建立注册器或包装基类。第一阶段对
-    # levelset、第二阶段对 curvmulti 做完整质量承诺。None 表示使用各方法本身的
-    # 默认值，避免 CurvMulti 被 SimpleILT 的损失权重静默改成另一种算法。
+    # 方法分派只构造各求解器已有配置，不建立注册器或包装基类。前三阶段分别对
+    # levelset、curvmulti、multilevel 做完整质量承诺。None 表示使用入口既有默认
+    # 或新增方法自身默认，避免不同算法的损失权重被静默共用。
     if method == "simple":
         config: object = SimpleILTConfig(
-            iterations, 0.2 if step_size is None else step_size,
+            10 if iterations is None else iterations,
+            0.2 if step_size is None else step_size,
             weight_pvband=0.0 if weight_pvband is None else weight_pvband,
             weight_process_l2=(1.0 if weight_process_l2 is None else
                                weight_process_l2),
@@ -92,14 +98,17 @@ def run_ilt(
         result = optimize(target, model, config)
     elif method == "levelset":
         config = LevelSetConfig(
-            iterations, 0.2 if step_size is None else step_size,
+            10 if iterations is None else iterations,
+            0.2 if step_size is None else step_size,
             1.0 if weight_process_l2 is None else weight_process_l2,
             0.0 if weight_pvband is None else weight_pvband,
             0.0 if curvature_weight is None else curvature_weight)
         result = optimize_levelset(target, model, config)
     elif method == "curvmulti":
         config = CurvMultiConfig(
-            scales, iterations, 0.5 if step_size is None else step_size,
+            (4, 2, 1) if scales is None else scales,
+            10 if iterations is None else iterations,
+            0.5 if step_size is None else step_size,
             smoothing_kernel,
             sigmoid_steepness, sigmoid_offset,
             0.0 if weight_process_l2 is None else weight_process_l2,
@@ -107,6 +116,27 @@ def run_ilt(
             200.0 if curvature_weight is None else curvature_weight,
             mask_threshold)
         result = optimize_curvmulti(target, model, config)
+    elif method == "multilevel":
+        resolved_scales = (2, 1) if scales is None else scales
+        if stage_iterations is not None:
+            resolved_iterations = stage_iterations
+        elif iterations is not None:
+            resolved_iterations = (iterations,) * len(resolved_scales)
+        elif resolved_scales == (2, 1):
+            resolved_iterations = (20, 100)
+        else:
+            raise ValueError("自定义 Multilevel scales 时必须指定 iterations 或 stage_iterations")
+        resolved_steps = (stage_step_sizes if stage_step_sizes is not None else
+                          ((0.2 if step_size is None else step_size),) *
+                          len(resolved_scales))
+        config = MultilevelConfig(
+            resolved_scales, resolved_iterations, resolved_steps,
+            smoothing_kernel, sigmoid_steepness, sigmoid_offset,
+            0.0 if weight_process_l2 is None else weight_process_l2,
+            1.0 if weight_pvband is None else weight_pvband,
+            0.0 if curvature_weight is None else curvature_weight,
+            mask_threshold)
+        result = optimize_multilevel(target, model, config)
     else:
         raise ValueError(f"未知 ILT 方法：{method}")
     if model.device.type == "cuda":
@@ -158,6 +188,17 @@ def run_ilt(
             value.update({"stage_index": stage_index,
                           "stage_scale": config.scales[stage_index],
                           "stage_iteration": index % config.iterations_per_stage})
+        elif method == "multilevel":
+            # 每级迭代数可不同，按累计边界定位当前记录；阶段数通常只有 2–3，
+            # 这里只运行于最终 JSON 构造，不进入 GPU 优化热路径。
+            stage_start = 0
+            for stage_index, stage_count in enumerate(config.stage_iterations):
+                if index < stage_start + stage_count:
+                    value.update({"stage_index": stage_index,
+                                  "stage_scale": config.scales[stage_index],
+                                  "stage_iteration": index - stage_start})
+                    break
+                stage_start += stage_count
         record_values.append(value)
     summary: dict[str, Any] = {
         "status": "completed", "method": method,
@@ -189,8 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     """解析统一 ILT 命令行并返回标准退出码。"""
     parser = argparse.ArgumentParser(description="运行统一 ILT 方法")
     parser.add_argument("input", type=Path); parser.add_argument("--output-dir", type=Path, default=Path("output/ilt"))
-    parser.add_argument("--method", choices=("simple", "levelset", "curvmulti"), default="simple")
-    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--method", choices=("simple", "levelset", "curvmulti", "multilevel"), default="simple")
+    parser.add_argument("--iterations", type=int,
+                        help="不指定时使用方法默认；Multilevel 指定后各级相同")
     parser.add_argument("--step-size", type=float,
                         help="不指定时使用所选方法自己的默认步长")
     parser.add_argument("--weight-pvband", type=float,
@@ -199,8 +241,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="不指定时使用所选方法自己的默认权重")
     parser.add_argument("--curvature-weight", type=float,
                         help="不指定时使用所选方法自己的默认权重")
-    parser.add_argument("--scales", type=int, nargs="+", default=(4, 2, 1),
-                        help="CurvMulti 严格递减控制网格尺度，必须以 1 结束")
+    parser.add_argument("--scales", type=int, nargs="+",
+                        help="CurvMulti/Multilevel 严格递减尺度，必须以 1 结束")
+    parser.add_argument("--stage-iterations", type=int, nargs="+",
+                        help="Multilevel 各级迭代数，数量必须与 scales 相同")
+    parser.add_argument("--stage-step-sizes", type=float, nargs="+",
+                        help="Multilevel 各级 Adam 实际步长，数量必须与 scales 相同")
     parser.add_argument("--smoothing-kernel", type=int, default=7)
     parser.add_argument("--sigmoid-steepness", type=float, default=4.0)
     parser.add_argument("--sigmoid-offset", type=float, default=0.5)
@@ -219,7 +265,12 @@ def main(argv: list[str] | None = None) -> int:
             weight_pvband=args.weight_pvband,
             weight_process_l2=args.weight_process_l2,
             curvature_weight=args.curvature_weight,
-            scales=tuple(args.scales), smoothing_kernel=args.smoothing_kernel,
+            scales=None if args.scales is None else tuple(args.scales),
+            stage_iterations=(None if args.stage_iterations is None else
+                              tuple(args.stage_iterations)),
+            stage_step_sizes=(None if args.stage_step_sizes is None else
+                              tuple(args.stage_step_sizes)),
+            smoothing_kernel=args.smoothing_kernel,
             sigmoid_steepness=args.sigmoid_steepness,
             sigmoid_offset=args.sigmoid_offset,
             mask_threshold=args.mask_threshold, device=args.device,

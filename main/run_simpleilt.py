@@ -34,7 +34,16 @@ def run_simpleilt(
         glp_layers: dict[str, LayerSpec] | None = None,
         run_configuration: dict[str, object] | None = None
         ) -> tuple[SimpleILTResult, dict[str, Any]]:
-    """把历史 SimpleILT 参数适配到统一 ILT 执行路径并返回内存结果。"""
+    """把历史 SimpleILT 参数适配到统一 ILT 执行路径并返回内存结果。
+
+    这是一个兼容垫片入口：SimpleILT 曾是独立入口，现已并入统一 ILT。本函数只把
+    历史参数与默认值映射成 `run_ilt(method="simple", return_result=True)` 的调用，
+    自身不再实现版图读取、优化、评价与产物写入。这样能避免两个入口各维护一套
+    执行与产物逻辑而产生行为、文件格式分叉；return_result=True 使其额外拿回内存
+    结果对象，且复用同一次执行，绝不重新优化。
+    输入：像素 target 来源、输出目录与 SimpleILT 历史参数。
+    输出：(内存结果对象, summary dict)。
+    """
     # 兼容入口只映射参数和默认值；版图读取、优化、评价、资源统计与产物写入均
     # 由 run_ilt 完成，防止两个入口修复同一问题后出现行为和文件格式分叉。
     outcome = run_ilt(

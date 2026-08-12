@@ -39,9 +39,19 @@ def run_lithography_test(
         max_estimated_gib: float = 8.0, polarity: str = "clear",
         glp_layers: dict[str, LayerSpec] | None = None,
         run_configuration: dict[str, object] | None = None) -> dict[str, torch.Tensor]:
-    """从版图或像素归档运行光刻模型，并按需保存数值与 PNG。"""
-    # 版图分支只在 CPU 内存生成当前 ROI 的固定画布，不落临时 NPZ；NPZ 分支
-    # 则复用已准备数据。两者在这里汇合，后续 GPU 传输和模型计算没有双实现。
+    """从版图或像素归档运行光刻模型，并按需保存数值与 PNG。
+
+    这是光刻正向模型的独立入口，不做任何 OPC / 迭代。给定一张 mask，由
+    ICCAD13 模型产出三个工艺角（nominal 标称 / dose_max 最大剂量 / defocus_min
+    最小焦距）的成像图，用于单独验证光刻模型或诊断成像质量。输入可以是版图 ROI
+    （当场栅格化）或离线像素 NPZ（复用已备数据）。管线上只用到
+    `layout → geometry + lithography`。
+    输入：版图或 NPZ 路径、输出目录、设备与画布参数。
+    输出：含三个工艺角成像 Tensor 的 dict（同时按需写 NPZ/PNG/summary）。
+    """
+    # 阶段①取得模型方向画布。版图分支只在 CPU 内存生成当前 ROI 的固定画布，不
+    # 落临时 NPZ；NPZ 分支则复用已准备数据。两者在这里汇合，后续 GPU 传输和
+    # 模型计算没有双实现。
     mask, metadata = resolve_raster_input(
         input_path, layer=layer, top_cell=top_cell, box=box,
         pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
@@ -59,6 +69,10 @@ def run_lithography_test(
         torch.cuda.synchronize(model.device)
     started = perf_counter()
     mask_tensor = torch.as_tensor(mask, device=model.device)
+    # 阶段②三工艺角正向仿真。nominal 是标称工艺，dose_max 与 defocus_min 是对
+    # 剂量/焦距偏移的极端角；三者共享同一 mask 的 FFT，forward_only 一次给出。
+    # dose_max 与 defocus_min 的成像差就是 PVBand（工艺变化带），衡量工艺漂移下
+    # 边缘位置的不确定性。
     conditions = tuple(model.condition(name) for name in (
         "nominal", "dose_max", "defocus_min"))
     with torch.no_grad():
@@ -70,6 +84,9 @@ def run_lithography_test(
         _cpu_array(result["nominal"]), _cpu_array(result["dose_max"]),
         _cpu_array(result["defocus_min"]))
     if output_dir is not None:
+        # 阶段③归档结果。GPU Tensor 各拷回一次连续 float32 CPU 数组，后续 NPZ/PNG
+        # 全部复用同一份主机数据，避免每个产物重复触发设备同步。
+        output = Path(output_dir).expanduser().resolve()
         output = Path(output_dir).expanduser().resolve()
         output.mkdir(parents=True, exist_ok=True)
         result_path = atomic_npz(output / "lithography_result.npz", {

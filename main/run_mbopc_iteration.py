@@ -34,8 +34,21 @@ def run_mbopc_iteration_test(
         device: str = "auto", save_preview: bool = True,
         save_final_lithography_png: bool = True,
         run_configuration: dict[str, object] | None = None) -> SimpleMBOPCResult:
-    """仅从离线边段问题运行同步迭代并保存可继续分析的完整结果。"""
+    """仅从离线边段问题运行同步迭代并保存可继续分析的完整结果。
+
+    这是「前端准备」与「迭代求解」解耦的入口：从一个由
+    `prepare_segment_input` 产出的离线边段 NPZ 恢复出完整的 `MBOPCProblem`
+    （只读参考几何 + core 网格 + owner/context CSR），完全不读原始版图，独立
+    运行 simple MB-OPC 迭代。用途是：在没有版图/光刻准备环境时复跑求解器，
+    或固定同一输入对算法做对照。管线下游与在线入口一致，仍在
+    `opc.iteration.mbopc + lithography + evaluation`。
+    输入：边段 NPZ 路径、输出目录与迭代参数（nm，内部换算成 DBU）。
+    输出：内存中的 SimpleMBOPCResult（同时原子写 summary/产物）。
+    """
     loaded = perf_counter()
+    # 阶段①恢复离线问题。load_segment_input 重建 MBOPCProblem，并对法向单位、
+    # 边参数区间、ring 归属、owner/membership 等跨数组不变量做校验，确保归档
+    # 与在线准备产物语义一致。
     problem, metadata = load_segment_input(input_path)
     restored = perf_counter()
     try:
@@ -48,6 +61,9 @@ def run_mbopc_iteration_test(
     epe_dbu = float(exact_dbu(epe_distance_nm, dbu_nm, "epe_distance_nm"))
     if not isinstance(target_cache_mb, int) or target_cache_mb < 0:
         raise ValueError("target_cache_mb 必须是非负整数")
+    # 阶段②构建光刻模型与迭代配置。step/epe 等纳米量在此换算成 DBU；canvas 沿用
+    # 模型自身的固定画布，batch_size 控制单次 GPU tile 数。这套配置与在线入口
+    # 完全相同，保证离线迭代结果可直接对照在线运行。
     model = ICCAD13Lithography(device=device)
     config = SimpleMBOPCConfig(
         iterations=iterations, initial_step_dbu=step_dbu,
@@ -56,10 +72,15 @@ def run_mbopc_iteration_test(
         batch_size=batch_size, target_cache_bytes=target_cache_mb * 1024 * 1024)
     if model.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(model.device)
+    # 阶段③流式迭代求解。optimize 每轮只读同一 current，owner 更新到 next 后等待
+    # 全局屏障；本入口加载的 owner/CSR 与在线流程完全相同，因此离线运行不会改变
+    # 跨 core 的同步可见性。
     # optimize 每轮只读同一 current，owner 更新到 next 后等待全局屏障。本入口加载的
     # owner/CSR 与原流程完全相同，因此离线运行不会改变跨 core 的同步可见性。
     optimized = optimize(problem, model, config)
     iterated = perf_counter()
+    # 阶段④重建与产物保存。只对最佳位移做一次全局重建，写出 GDS、结果 NPZ、
+    # 最终光刻 tile 与可选诊断 PNG；这些都不进入迭代热路径。
     reconstructed = reconstruct_region(problem, optimized.best_displacements)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)

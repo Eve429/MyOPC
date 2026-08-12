@@ -81,11 +81,24 @@ def run_diffopc(
         max_estimated_gib: float = 8.0, polarity: str = "clear",
         glp_layers: dict[str, object] | None = None,
         run_configuration: dict[str, object] | None = None) -> dict[str, object]:
-    """执行输入准备、梯度迭代、精确重建和全部最终产物保存。"""
+    """执行输入准备、梯度迭代、精确重建和全部最终产物保存。
+
+    这是可微边段 OPC（DiffOPC）入口，与 simple MB-OPC 的关键区别：用梯度下降
+    整体优化法向位移，目标函数由加权 L2（成像与目标差）、PVBand（工艺变化带）
+    和软 EPE（边缘放置误差）组成；而不是每轮按贪心 EPE 方向走一步。它仍复用
+    前端的 SegmentBatch + owner/context 参考几何，但位移成为可微变量、参与
+    autograd 反传。输入按扩展名自动分派：离线边段 NPZ 或经安全预检的直接版图。
+    管线在 `layout → geometry → opc.input.edge → opc.iteration.diffopc`，
+    并接入 `lithography + evaluation`。
+    输入：版图或 NPZ 路径、输出目录、迭代与各损失权重（nm，内部换算成 DBU）。
+    输出：含最佳轮次、每轮记录、耗时与产物路径的 summary dict。
+    """
     started = perf_counter()
     memory = {"start": process_memory_snapshot()}
     source = Path(input_path).expanduser().resolve()
     direct_limit_nm = 24.0 if max_displacement_nm is None else max_displacement_nm
+    # 阶段①取得边段问题。_load_problem 按扩展名分派：NPZ 走离线归档恢复，版图
+    # 走经安全预检的唯一正式前端内存层，不复制 Layer/ROI、不写临时 NPZ。
     problem, metadata = _load_problem(
         source, layer=layer, top_cell=top_cell, box=box,
         tile_size_nm=tile_size_nm, halo_nm=halo_nm, corner_nm=corner_nm,
@@ -107,6 +120,9 @@ def run_diffopc(
         maximum_dbu = float(problem.config.max_displacement_dbu)
     else:
         maximum_dbu = max_displacement_nm / dbu_nm
+    # 阶段②构建光刻模型与可微配置。learning_rate 是位移步长，soft_temperature
+    # 控制软 EPE 的平滑宽度；weight_l2 / weight_pvband / weight_epe 分别决定
+    # 三类损失在梯度中的相对强度。raster_chunk_size 限制栅格化分块峰值内存。
     model = ICCAD13Lithography(device=device)
     config = DiffOPCConfig(
         iterations=iterations, learning_rate=learning_rate_nm / dbu_nm,
@@ -121,9 +137,13 @@ def run_diffopc(
         torch.cuda.reset_peak_memory_stats(model.device)
     model_ready = perf_counter()
     memory["model"] = process_memory_snapshot()
+    # 阶段③梯度迭代。optimize 在位移上做可微优化：每轮栅格化当前 mask、跑光刻
+    # 与评估、反传梯度更新位移，并在位移越界或拓扑非法时回滚。
     optimized = optimize(problem, model, config)
     iterated = perf_counter()
     memory["optimization"] = process_memory_snapshot()
+    # 阶段④重建与产物保存。只对最佳位移做一次精确矢量重建，写出结果 NPZ、GDS、
+    # 最终光刻 tile 与诊断 PNG；shot（掩膜矩形碎块）估算见下方固定 512² 画布。
     reconstructed = reconstruct_region(problem, optimized.best_displacements)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)

@@ -65,11 +65,23 @@ def run_ilt(
         run_configuration: dict[str, object] | None = None,
         return_result: bool = False
         ) -> dict[str, Any] | tuple[SimpleILTResult, dict[str, Any]]:
-    """运行指定 ILT；可选同时返回内存结果，并始终保存统一产物与统计。"""
+    """运行指定 ILT；可选同时返回内存结果，并始终保存统一产物与统计。
+
+    这是像素域 ILT（反演光刻技术，Inverse Lithography Technology）的统一入口。
+    与边段 OPC 不同，ILT 不依赖几何边段，而是直接在像素域优化一张掩膜（由软
+    mask soft→硬 mask binary），目标是让成像结果逼近目标图形。本入口按
+    --method 分派四种方法：simple（基础梯度）、levelset（水平集）、
+    curvmulti（多尺度曲率）、multilevel（多级由粗到细）。输入是像素 target
+    （版图 ROI 当场栅格化，或离线 raster NPZ），输出软/硬 mask 与最终成像。
+    管线在 `layout → geometry + lithography → opc.iteration.ilt`。
+    输入：像素 target 来源、输出目录、方法与各方法超参。
+    输出：summary dict（return_result=True 时额外返回内存结果对象，绝不重新优化）。
+    """
     loaded_started = perf_counter()
     memory_checkpoints = {"start": process_memory_snapshot()}
-    # GDS/OASIS 分支在 Region 物化前执行文件、层级图形、顶点、预计内存和
-    # canvas 上限检查；NPZ 分支验证版本及解压上限。两条路径只在内存中汇合。
+    # 阶段①取得像素 target。GDS/OASIS 分支在 Region 物化前执行文件、层级图形、
+    # 顶点、预计内存和 canvas 上限检查；NPZ 分支验证版本及解压上限。两条路径
+    # 只在内存中汇合。
     target_array, metadata = resolve_raster_input(
         input_path, layer=layer, top_cell=top_cell, box=box,
         pixel_nm=pixel_nm, canvas=canvas, max_file_gib=max_file_gib,
@@ -88,7 +100,10 @@ def run_ilt(
         torch.cuda.reset_peak_memory_stats(model.device)
         torch.cuda.synchronize(model.device)
     optimized_started = perf_counter()
-    # 方法分派只构造各求解器已有配置，不建立注册器或包装基类。前三阶段分别对
+    # 阶段②按方法分派优化。各方法对像素 mask 的优化思路不同：simple 直接对软
+    # mask 做带 sigmoid 的梯度下降；levelset 维护隐式水平集函数演化零等值线；
+    # curvmulti 在多尺度上叠加曲率正则；multilevel 由粗尺度到细尺度逐级精化。
+    # 分派只构造各求解器已有配置，不建立注册器或包装基类。前三阶段分别对
     # levelset、curvmulti、multilevel 做完整质量承诺。None 表示使用入口既有默认
     # 或新增方法自身默认，避免不同算法的损失权重被静默共用。
     if method == "simple":
@@ -152,6 +167,9 @@ def run_ilt(
     memory_checkpoints["optimization"] = process_memory_snapshot()
     conditions = tuple(model.condition(name) for name in (
         "nominal", "dose_max", "defocus_min"))
+    # 阶段③统一评价最佳硬 mask。L2 衡量标称成像与目标差，PVBand 衡量工艺漂移下
+    # 的边缘不确定性，shots 估算掩膜矩形碎块数。只在优化结束后追加一次，no_grad
+    # 避免为纯报告保存 autograd 图；forward_many 让三个条件共享 mask FFT。
     # 最佳硬 mask 只在优化结束后追加一次统一评价；no_grad 避免为纯报告保存
     # autograd 图。forward_many 让三个条件共享 mask FFT，不重复占用输入频谱。
     with torch.no_grad():
@@ -164,8 +182,8 @@ def run_ilt(
     memory_checkpoints["evaluation"] = process_memory_snapshot()
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    # GPU Tensor 只在这里各拷回一次；后续 NPZ/PNG 全部复用 CPU 数组，防止
-    # 每个产物重复触发设备同步和临时主机内存分配。
+    # 阶段④归档产物。GPU Tensor 只在这里各拷回一次；后续 NPZ/PNG 全部复用 CPU
+    # 数组，防止每个产物重复触发设备同步和临时主机内存分配。
     parameters = result.best_parameters.detach().cpu().numpy().astype(np.float32, copy=False)
     soft_mask = result.soft_mask.detach().cpu().numpy().astype(np.float32, copy=False)
     binary_mask = result.binary_mask.detach().cpu().numpy().astype(np.uint8, copy=False)

@@ -60,7 +60,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    """执行一次单文件、单 ROI 的完整 Layout 到 Geometry 数据流。"""
+    """执行一次单文件、单 ROI 的完整 Layout 到 Geometry 数据流。
+
+    这是整条 OPC 管线最底层的入口：只覆盖 `layout → geometry` 两个层，
+    不做任何 OPC / 光刻 / 迭代。读入一份 GDS/OASIS 版图，按目标层与 ROI
+    （感兴趣区，Region of Interest）查询、物化原生 Region，再按需做轮廓
+    提取、形状诊断、ownership Patch 导出和覆盖率 PNG 渲染。它定位为「OPC
+    之前版图→几何的公共基座」，用来验证层级读取和裁剪语义本身是否正确。
+    输入：args —— 已合并 TOML 默认值与 CLI 的 Namespace。
+    输出：分层统计与产物路径的 dict（仅当 --json 时随返回值打印）。
+    """
+    # 阶段①打开版图并圈定查询范围。DBU（database unit，版图最小整数单位）
+    # 是本文件所有坐标的共同标尺；查询框默认取顶层 bbox，可由 --box 覆盖。
     # LayoutDB 在 with 生命周期内唯一持有原生版图；后续所有 Region、轮廓和输出
     # 都在关闭前生成，避免惰性查询访问已经释放的 KLayout 对象。
     with LayoutDB.open(args.layout, top_cell=args.top,
@@ -76,6 +87,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("所选 top Cell 为空，无法生成默认查询框")
         if (args.png or args.show_image) and len(layers) != 1:
             raise ValueError("PNG 展示必须且只能选择一个 Layer")
+        # 阶段②物化 ROI 内图形。这里不把整片版图展平（flatten），而是借助层级
+        # 索引只物化与查询框真正相交的形状；这是 layout 层「读多大量付多少内存」
+        # 的核心保证，也是后续 OPC 能在大版图上局部工作的前提。
         # ShapeQuery 在 C++ 侧先用层级索引筛选候选，再以一次 Region 相交精确裁到
         # planner ROI；所有消费者共享相同语义，根入口不再维护第二套裁剪门面。
         batch = database.query(list(layers), query_box).materialize(args.diagnostics)
@@ -88,6 +102,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "run_configuration": args._configuration,
         }
         contour_batches = extract_contours(batch) if args.arrays else {}
+        # 阶段③逐层统计。Polygon 计数、面积与 bbox 直接来自原生 Region；
+        # --arrays 时额外提取 ContourBatch（多边形→环→顶点的两级结构），此处
+        # 只用它来报顶点/环/边数，诊断几何复杂度，不构造完整边段表。
         for layer in batch.layers:
             key = f"{layer.layer}/{layer.datatype}"
             region = batch.region(layer)
@@ -114,6 +131,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 }
             result["layers"][key] = layer_result
         if args.output:
+            # 阶段④（可选）把精确裁剪结果导出为 ownership Patch。GeometryPatch 是
+            # 「单 core 切片」的最小几何交付单元：这里把整张 ROI 当作单个 core，
+            # 写出与查询完全一致的几何，便于下游方法在不读原版图时复用。
             patches = PatchSet()
             for layer in batch.layers:
                 patches.add(GeometryPatch(
@@ -122,6 +142,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             result["output"] = str(PatchWriter.write(
                 patches, args.output, database.dbu_um, top_name="OPC_PATCHES"))
         if args.png or args.show_image:
+            # 阶段⑤（可选）把单个层渲染成覆盖率 PNG。像素值为 0–1 的面积覆盖率，
+            # 坐标约定为左下原点；这一步纯诊断，不回流到 OPC 的数值路径。
             layer = layers[0]
             pixels = render_region_batch(
                 batch, layer, database.dbu_um, args.pixel_size_nm,

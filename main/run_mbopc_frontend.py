@@ -184,7 +184,17 @@ def _demo_displacements(problem: MBOPCProblem,
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    """执行容量预检和完整几何前端，并返回含阶段性能的 JSON 兼容摘要。"""
+    """执行容量预检和完整几何前端，并返回含阶段性能的 JSON 兼容摘要。
+
+    这是基于模型 OPC（MB-OPC）几何前端的验证入口，只跑到 `prepare_problem`
+    为止，不接入光刻模型、不做任何迭代求解。它把合并后的物理 mask 转成
+    SegmentBatch 与 owner/context CSR——一份可被多轮迭代复用的只读参考几何，
+    再用一个 demo 法向位移去检验 materialize（按需端点）、reconstruct_region
+    （位移→Region 重建）和 ownership 覆盖是否自洽。管线位置在
+    `layout → geometry → opc.input.edge`；它不依赖 lithography/evaluation。
+    输入：args —— 已合并 TOML 默认与 CLI 的 Namespace。
+    输出：含各阶段耗时、内存检查点、计数与验证的 JSON 兼容 dict。
+    """
     total_started = perf_counter()
     timings: dict[str, float] = {}
     checkpoints = {"start": process_memory_snapshot()}
@@ -192,6 +202,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     budget = resolve_memory_budget_bytes(args.memory_budget_gib)
     preflight: dict[str, Any]
 
+    # 阶段①准备输入。两条分支：合成案例（含重叠、孔洞、凹角、斜边、跨 core 长边，
+    # 一次性覆盖前端所有几何路径，无需版图文件）与真实 GDS/OASIS（逐层、按 ROI
+    # 物化）。两者之后都汇聚到同一套分段配置与 core 网格。
     if args.layout is None:
         # 合成案例规模固定且很小，不重复写临时 GDS 做层级预检；仍记录构造耗时和
         # 内存检查点。`--preflight-only` 对合成输入只返回明确的无需预检状态。
@@ -228,6 +241,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         source_path = args.layout.expanduser().resolve()
         source = str(source_path)
         stage = perf_counter()
+        # 阶段②容量预检（真实版图）。在物化任何 Region/边段之前，先用原生层级
+        # 迭代器估算边段数与准备阶段峰值内存；超预算直接拒绝，避免分配超大数组。
         # 版图只解析一次并保持数据库打开；严格预检复用原生层级迭代器。只有预检
         # 通过才物化 ROI，避免超限后产生完整 Region 或边段数组。
         if args.polarity == MaskPolarity.OPAQUE.value and not args.box:
@@ -262,6 +277,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             stage = perf_counter()
             batch = database.query([layer], box).materialize()
             _finish_stage(timings, checkpoints, "roi_materialize", stage)
+            # 阶段③构造可复用问题。prepare_problem 在 with 内完成（它需要原生
+            # Region）：产出固定参考几何 + core 网格 + owner/context CSR。此后
+            # 多轮迭代只改一个一维位移数组，不再触碰源版图。
             stage = perf_counter()
             problem = prepare_problem(
                 batch, layer, config, grid, args.polarity,
@@ -270,13 +288,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     dbu_nm = dbu_um * 1000.0
     stage = perf_counter()
+    # 阶段④生成 demo 位移。给每个有 owner 边段的 core 各选一段、按 core 序号
+    # 交替取正负法向位移，用来演示「owner 唯一写、halo 只读」的更新语义，并
+    # 为后续重建与覆盖率检查提供一组非零位移。
     displacements, changed = _demo_displacements(
         problem, args.demo_displacement_nm / dbu_nm)
     _finish_stage(timings, checkpoints, "demo_update", stage)
 
     stage = perf_counter()
-    # 当前验证入口明确检查按需端点和 EPE probe；它们不是 problem 常驻字段。超大
-    # 输入已在预检阶段拒绝，因此这里不会用诊断功能绕过容量保护。
+    # 阶段⑤按需物化端点与探针。端点（materialize）和 EPE（边缘放置误差）
+    # 探针点都是诊断时才计算的派生量，不是 problem 的常驻字段；超大输入已
+    # 在预检阶段拒绝，因此这里不会用诊断功能绕过容量保护。
     geometry = problem.segments.materialize(displacements)
     reference_geometry = problem.segments.materialize()
     inner, outer = edge_probe_points(
@@ -285,11 +307,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     _finish_stage(timings, checkpoints, "segment_materialize_and_probes", stage)
 
     stage = perf_counter()
+    # 阶段⑥位移→Region 重建。零位移重建必须与参考 mask 完全一致；非零位移重建
+    # 则用于产物 GDS/PNG。重建只做最终/诊断输出，绝不进入未来每轮迭代的热路径。
     reference = reconstruct_region(problem, np.zeros(problem.segments.segment_count))
     reconstructed = reconstruct_region(problem, displacements)
     _finish_stage(timings, checkpoints, "reconstruct", stage)
 
     stage = perf_counter()
+    # 阶段⑦正确性验证。两条核心不变量：零位移重建与参考 mask 异或面积为 0；
+    # core ownership 覆盖 query_box 且无重叠、无缺口。core 只划分写出责任，
+    # 并不裁最终 Polygon，因此跨 core 共享边界允许存在。
     if (reference ^ problem.physical_mask.region).area() != 0:
         raise ValueError("零位移重建与物理参考 mask 不一致")
     # core 只划分责任而不裁最终 Polygon。覆盖与面积和同时检查，分别捕获缺口和
@@ -314,6 +341,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         timings[name] = 0.0
         checkpoints[name] = process_memory_snapshot()
     if not args.skip_artifacts:
+        # 阶段⑧落盘产物。NPZ 存问题/位移快照、GDS 存重建前后几何、PNG 存带
+        # 分段/法向/探针/core 的标注总图，可选再跑多图形几何套件。任一产物都
+        # 可由 --skip-* 跳过，只保留验证摘要。
         stage = perf_counter()
         npz_path = save_problem_npz(problem, displacements, output_dir / "segments.npz")
         _finish_stage(timings, checkpoints, "npz", stage)

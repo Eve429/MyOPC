@@ -112,10 +112,23 @@ def _select_layer(database: LayoutDB, requested: LayerSpec | None) -> LayerSpec:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    """执行版图读取、前端准备、流式迭代和最佳结果全局一次重建。"""
+    """执行版图读取、前端准备、流式迭代和最佳结果全局一次重建。
+
+    这是整条 OPC 管线的端到端代表入口，串联
+    `layout → geometry → opc.input.edge → opc.iteration.mbopc`，并接入
+    `lithography`（ICCAD13 光刻正向模型）与 `evaluation`（L2 / PVBand / EPE
+    评估指标）。它复用前端 prepare_problem 产出的只读参考几何，每轮只更新一个
+    一维位移数组；所有 core 的评价都完成后，经全局屏障统一发布下一状态，保证
+    「owner 唯一写、halo 只读」不被 tile 顺序破坏。最终只对最佳位移做一次全局
+    Region 重建并保存产物。
+    输入：args —— 已合并 TOML 默认值与 CLI 的 Namespace。
+    输出：含规模、最佳轮次、停止原因、各阶段耗时与产物路径的 dict。
+    """
     started = perf_counter()
     memory_checkpoints = {"start": process_memory_snapshot()}
     source = args.layout.expanduser().resolve()
+    # 阶段①打开版图并圈定处理范围。polarity（极性）表示源多边形是透光（clear）
+    # 还是不透光（opaque）；opaque 没有自然边界，必须用 --box 显式提供范围。
     if args.polarity == MaskPolarity.OPAQUE.value and not args.box:
         raise ValueError("opaque 极性必须通过 --box 显式提供处理范围")
     with LayoutDB.open(source, top_cell=args.top_cell,
@@ -128,6 +141,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         dbu_um = database.dbu_um
         loaded = perf_counter()
         memory_checkpoints["layout_open"] = process_memory_snapshot()
+        # 阶段②把纳米参数换算到整数 DBU 坐标，并约束坐标契约。core（瓦片）是
+        # 版图切块后独立仿真的矩形；halo 是 core 向外扩展的只读光学上下文；
+        # pixel 是光刻画布的像素。tile/halo 必须是 pixel 的整数倍，否则输入
+        # 边界、像素与迭代配置会在格点上错位。
         dbu_nm = dbu_um * 1000.0
         pixel_dbu = exact_dbu(args.pixel_nm, dbu_nm, "pixel-nm")
         tile_dbu = exact_dbu(args.tile_size_nm, dbu_nm, "tile-size-nm")
@@ -141,6 +158,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
             args.max_displacement_nm / dbu_nm)
         preflight_started = perf_counter()
+        # 阶段③容量预检。物化任何 Region/边段前估算边段数与准备阶段峰值内存；
+        # 超预算则返回 rejected，或在 --preflight-only 时只报告估算而跳过物化。
         preflight = preflight_layout(
             database, layer=layer, box=box,
             corner_dbu=fragmentation.corner_length_dbu,
@@ -171,14 +190,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         batch = database.query([layer], box).materialize()
         materialized = perf_counter()
         memory_checkpoints["roi_materialize"] = process_memory_snapshot()
-        # 层级遍历只在 materialize 时发生一次；prepare_problem 批量生成全局参考边、
-        # 参数化 segment 和 owner/context CSR，之后每轮不会重新读取源版图。
+        # 阶段④构造可复用问题（仍在 with 内，因依赖原生 Region）。层级遍历只在
+        # materialize 时发生一次；prepare_problem 批量生成全局参考边、参数化
+        # segment 和 owner/context CSR，之后每轮不会重新读取源版图。
         problem = prepare_problem(
             batch, layer, fragmentation, grid, args.polarity,
             max_memberships=int(preflight["max_memberships"]))
     prepared = perf_counter()
     memory_checkpoints["problem_prepare"] = process_memory_snapshot()
 
+    # 阶段⑤构建光刻模型与迭代配置。ICCAD13 是基于 Hopkins 公式的光刻正向模型；
+    # canvas 是单次仿真的固定方形画布，batch_size 是一次送 GPU 的 tile 数，
+    # target_cache 限制参考画布的 CPU 缓存上限。其余参数控制迭代步长衰减与 EPE
+    # 探针距离。
     model = ICCAD13Lithography(device=args.device)
     iteration = SimpleMBOPCConfig(
         iterations=args.iterations, initial_step_dbu=args.step_nm / dbu_nm,
@@ -189,6 +213,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         target_cache_bytes=args.target_cache_mb * 1024 * 1024)
     if model.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(model.device)
+    # 阶段⑥流式迭代求解。optimize 按 core batch 评价当前状态，由 EPE（边缘
+    # 放置误差）方向驱动位移；owner 方向先暂存到 next，只有整轮评价完成且全局
+    # 轮廓拓扑合法才跨越屏障发布为下一轮的 current，因此 tile 顺序不会提前改变
+    # 后续边段看到的状态。
     # optimize 对所有 batch 只读同一 current，并把 owner 方向暂存到 next；只有整轮
     # 评价完成且全局轮廓合法才跨越屏障发布，因此 tile 顺序不会提前改变后续边段。
     optimized = optimize(problem, model, iteration)
@@ -196,6 +224,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    # 阶段⑦最终重建与产物保存。最佳位移在所有 tile 完成后只做一次全局矢量重建：
+    # core 从不裁最终 Polygon，所以跨 core 与斜边不会产生两套取整端点；halo 也
+    # 从不回写。shot（掩膜矩形碎块）估算只在最终几何上以固定 512² 画布做一次，
+    # 既不进入迭代，也不让整张 reticle 高分辨率像素图常驻。
     # 最佳状态在所有 tile 完成后只做一次全局矢量重建。core 从不裁最终 Polygon，
     # 所以跨 core 与斜边不会产生两套取整端点；halo 也从不回写。
     reconstructed = reconstruct_region(problem, optimized.best_displacements)

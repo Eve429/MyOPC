@@ -637,7 +637,7 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 #### `prepare_raster_input(...) -> Path`
 
-调用同一内存接口后保存 raster NPZ v1。不会产生第二套栅格逻辑。
+调用同一内存接口后保存 raster NPZ v2。不会产生第二套栅格逻辑。
 
 #### `load_raster_input(path, max_archive_gib=8.0) -> (mask, metadata)`
 
@@ -647,12 +647,12 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 仅按扩展名分派：`.npz` 调 `load_raster_input`，其他扩展名按版图调用 `materialize_raster_input`。NPZ 分支的 Layer/ROI/pixel 已由 metadata 固定，调用参数不会覆盖归档内容。
 
-### 10.2 raster NPZ v1 字段
+### 10.2 raster NPZ v2 字段
 
 | 字段 | 类型 |
 |---|---|
 | `format_name` | 标量字符串 `myopc.raster-input` |
-| `format_version` | int32 标量 1 |
+| `format_version` | int32 标量 2；loader 兼容历史 v1 clear 输入 |
 | `metadata_json` | JSON 字符串标量 |
 | `mask` | `float32[canvas,canvas]` |
 
@@ -668,13 +668,13 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 #### `load_segment_input(path, max_archive_gib=8.0) -> (problem, metadata)`
 
-恢复顺序为 `ContourBatch -> SegmentBatch -> RectilinearCoreGrid -> Region -> PhysicalMask -> MBOPCProblem`，再校验单位法向、segment 参数连续覆盖、ring 对齐、每 core membership 严格递增无重复、每段在 owner context 恰好出现一次、metadata 计数与数组一致。v1 不兼容并要求重新生成。
+恢复顺序为 `ContourBatch -> SegmentBatch -> RectilinearCoreGrid -> Region -> PhysicalMask -> MBOPCProblem`，再校验单位法向、segment 参数连续覆盖、ring 对齐、每 core membership 严格递增无重复、每段在 owner context 恰好出现一次、metadata 计数与数组一致。v3 保存 polarity，loader 兼容历史 v2 clear 输入。
 
-### 10.4 segment NPZ v2 字段
+### 10.4 segment NPZ v3 字段
 
 | 分组 | 字段 |
 |---|---|
-| 头 | `format_name=myopc.mbopc-input`、`format_version=2`、`metadata_json` |
+| 头 | `format_name=myopc.mbopc-input`、`format_version=3`、`metadata_json` |
 | 轮廓 | `contour_vertices`、`contour_ring_offsets`、`contour_polygon_ring_offsets` |
 | 数学边 | `edge_next_ids`、`edge_polygon_ids`、`edge_normals` |
 | segment | `segment_ring_offsets`、`segment_edge_ids`、`segment_t0`、`segment_t1` |
@@ -710,7 +710,7 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 直接完成 `GDS/OASIS -> preflight -> Region -> MBOPCProblem -> 光刻迭代 -> best Region`。输入包括 Layer/top/ROI、tile/halo/pixel、边段配置、迭代参数、GPU batch、target cache、device 和内存预算。
 
-`run(args)` 返回 JSON 兼容字典，状态可能为 `preflight_only`、`rejected` 或 `completed`。完成时保存 summary JSON、双 cell 结果 GDS 和 preview PNG；额外在固定 512² 画布计算一次 shot 估计。当前 `--preview` 参数默认值为 True 且没有 `--no-preview`，因此 CLI 实际总会生成 preview；这是当前入口行为，不是底层 solver 的强制输出。
+`run(args)` 返回 JSON 兼容字典，状态可能为 `preflight_only`、`rejected` 或 `completed`。完成时保存 summary JSON、双 cell 结果 GDS 和可选 preview PNG；额外在固定 512² 画布计算一次 shot 估计。`--preview/--no-preview` 可显式覆盖 TOML 默认值，这不是底层 solver 的强制输出。
 
 注意：完成摘要中的 `top_cell` 当前回显命令行 `args.top_cell`；自动选择唯一 top 时该字段可能为 `null`，权威几何仍来自 `LayoutDB` 实际选择的 top。
 
@@ -734,7 +734,7 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 ### 11.8 [`main/run_mbopc_iteration.py`](../main/run_mbopc_iteration.py)
 
-`run_mbopc_iteration_test(input_path, output_dir, ...) -> SimpleMBOPCResult` **只接受** `prepare_segment_input` 生成的 segment NPZ v2。它不读取源 GDS、不重新提边、不重新分 owner。输出 GDS、`mbopc_result.npz`、summary JSON和可选 preview；结果 NPZ v1 保存最佳位移、最佳轮次和停止原因。
+`run_mbopc_iteration_test(input_path, output_dir, ...) -> SimpleMBOPCResult` **只接受** `prepare_segment_input` 生成的 segment NPZ v2/v3。它不读取源 GDS、不重新提边、不重新分 owner。输出 GDS、`mbopc_result.npz`、summary JSON和可选 preview；结果 NPZ v1 保存最佳位移、最佳轮次和停止原因。
 
 ### 11.9 [`main/offline_inputs.py`](../main/offline_inputs.py) 与 [`main/__init__.py`](../main/__init__.py)
 
@@ -789,7 +789,7 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 - MB-OPC 的像素与光刻中间量按 core batch 流式释放，但还没有 CPU macro shard 或 memmap 双代位移状态。
 - 当前版图引用在 Region 物化后成为 top 全局 occurrence 几何，结果不会回写 master cell，也不会自动传播到其他引用。
 - 当前 segment ID 只是一次 `MBOPCProblem` 内的数组下标；显式 remesh 后必须重建 owner、membership 和优化状态。
-- 诊断 NPZ v3、raster NPZ v1、segment problem NPZ v2、各算法结果 NPZ v1 是四类不同协议，不应按扩展名相同而互换。
+- 诊断 NPZ v3、raster NPZ v2、segment problem NPZ v3、各算法结果 NPZ v1 是四类不同协议，不应按扩展名相同而互换。
 
 未来大版图接口方案见[大 Reticle 流式处理方案](large_reticle_streaming_plan.md)，其中未实施内容不属于本文公共接口。
 

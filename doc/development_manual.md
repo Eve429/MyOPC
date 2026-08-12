@@ -156,9 +156,9 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 - `prepare_segment_input`：一次性完成物化、规范化、切分和 owner/context 构造；
 - `load_segment_input`：恢复现有 `MBOPCProblem`，不创建第二套 problem 类型。
 
-像素归档只对应一个可直接送入模型的 canvas，超限 ROI 必须缩小，不隐式切 tile。边段归档是可恢复的 version 2 输入协议，保存两级 contour CSR、两个 edge cache、segment 数组、grid cuts 和 membership CSR；version 1 明确提示重新生成，不保留转换分支。它与 `opc.diagnostics.save_problem_npz` 的不可恢复 v3 诊断快照完全分离。
+像素归档只对应一个可直接送入模型的 canvas，超限 ROI 必须缩小，不隐式切 tile。当前 raster/segment 协议分别为 v2/v3并保存显式 polarity；loader 继续兼容缺少 polarity 的历史 v1/v2，按 clear 解释。它与 `opc.diagnostics.save_problem_npz` 的不可恢复 v3 诊断快照完全分离。
 
-准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检有意额外读取一次版图：公共 `LayoutDB` 第一次读取只解析 Layer/ROI/DBU 并保持打开，独立原生读取扫描层级复杂度；只有扫描通过，才由已打开的 `LayoutDB` 公共查询物化。布尔合并可能产生的新交点无法在物化前完全预测，因此离线边段准备完成后还会按真实 segment/membership 数量复核内存估计。
+准备前先检查源文件、像素尺寸、层级展开图形/顶点和保守内存估计。严格预检复用已打开的 `LayoutDB` 原生层级迭代器，源 GDS/OASIS/GLP 只解析一次；只有扫描通过才物化 Region。布尔合并可能产生的新交点无法在物化前完全预测，因此离线边段准备完成后还会按真实 segment/membership 数量复核内存估计。
 
 `main/run_lithography.py` 和 `main/run_simpleilt.py` 都接受 GDS/OASIS 或 raster NPZ。直接版图模式用 `--layer/--top-cell/--box/--pixel-nm/--canvas` 选择目标并只在内存中生成 mask，不隐式保存 NPZ；归档模式保持原契约。`main/run_mbopc_iteration.py` 只消费边段归档，避免和完整 `run_mbopc.py` 重复版图前端。入口均可从任意工作目录直接运行，不需要安装本项目。
 
@@ -168,7 +168,7 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 ## 11. 物化前容量预检与资源统计
 
-真实版图根入口必须先调用 `preflight_layout(source, top_cell, layer, box, ...)`，通过后才能调用 `ShapeQuery.materialize()`。默认 CPU 预算是启动时系统可用内存的 70%；显式 `--memory-budget-gib` 只改变本次任务预算。超过预算或 `int32` 容量时返回 `sharded_required`，当前版本不会尝试继续分配。
+真实版图根入口必须先调用 `preflight_layout(database, layer, box, ...)`，通过后才能调用 `ShapeQuery.materialize()`。默认 CPU 预算是启动时系统可用内存的 70%；显式 `--memory-budget-gib` 只改变本次任务预算。超过预算或 `int32` 容量时返回 `sharded_required`，当前版本不会尝试继续分配。
 
 ```powershell
 # 只做完整层级容量扫描，不物化 Region/边段
@@ -201,3 +201,9 @@ LevelSetILT 使用前景为负的精确欧氏 SDF 初始化和硬二值代理梯
 CurvMultiILT 使用 `[0,1]` 连续参数、奇数均值平滑核、带 offset 的 sigmoid 和 SGD。`scales` 严格递减且必须以 1 结束；粗尺度只减少控制参数自由度，每轮 soft mask 近邻恢复到完整物理网格后再执行统一 Hopkins 光刻，避免改变核的像素物理含义。曲率作用于 nominal wafer，不作用于 mask；窗口外在平滑前后均固定为初始参考值。入口按方法选择默认值：CurvMulti 的 step/PVBand/curvature 默认为 `0.5/1/200`，显式 CLI 参数才覆盖。
 
 MultilevelILT 默认按 scale 2/1 运行两个独立 Adam 级别，各为 20/100 轮、实际步长 0.2；低级历史最优参数近邻放大给细级，但不传递 Adam 状态。每级参数和 target 位于本级网格，soft mask 恢复到完整物理网格执行光刻，wafer 再 area 汇聚到本级计算损失。`--iterations N` 表示所有级别同为 N 轮；需要不同轮数或步长时使用 `--stage-iterations`、`--stage-step-sizes`，其数量必须与 `--scales` 相同。
+
+## 14. 版图极性、GLP 与 TOML 配置
+
+版图极性必须显式选择 `clear` 或 `opaque`，内部 mask 永远以 1 表示透光。opaque 必须给出处理 `--box`；处理框只在 raster 边界反相，不进入边段轮廓。GLP 支持严格 ICCAD 子集，符号层可用 `--glp-layer NAME=LAYER/DATATYPE` 映射，结果仍统一写 GDS。
+
+六份默认配置位于 `config/`。全部 `main/run_*.py` 和 `main/offline_inputs.py` 支持 `--config`；优先级为默认 common、默认 entry、自定义 common、自定义 entry、显式 CLI。配置中的相对路径相对配置文件目录解析，未知键或类型立即失败。动态 SRAF 仍是未来能力，实施约束见[动态 SRAF 设计](dynamic_sraf_design.md)，本轮没有加入空接口。

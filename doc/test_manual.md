@@ -193,6 +193,15 @@ FAQ 契约专项回归：
 
 重点确认公共 raster 数组都以最低 Y 为第 0 行、PNG 仅在输出边界翻转，以及 `iterations=1` 确实提交并评价一次合法 MB-OPC 更新。详细矩阵见 [FAQ 契约修复测试报告](faq_contract_fix_test_report.md)。
 
+## 12. 极性、GLP 与配置专项
+
+```powershell
+& $python -m pytest tests\layout\test_glp.py tests\opc\test_polarity.py `
+  tests\test_configuration.py tests\workbench\test_offline_workbench.py -q
+```
+
+必须覆盖 clear/opaque 透光互补、opaque halo 框外为零、法向反转和源几何输出；GLP 的真实 `EQUIV ... +X,+Y`、RECT/PGON、显式层映射、未使用辅助 LEVEL 与非法语句；TOML 的五级优先级、相对路径、未知键/类型和外部工作目录启动。详细数据见[专项测试报告](polarity_glp_config_test_report.md)。
+
 ## 10. 离线光刻与迭代专项测试
 
 准备一次输入：

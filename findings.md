@@ -368,3 +368,14 @@
 - 定向基线 `tests/geometry/test_raster.py`、`tests/opc/test_iteration_raster.py`、`tests/layout/test_database.py`、`tests/opc/test_simple_mbopc.py` 共 40 项全部通过（5.19 s）。
 - FAQ 修复最终全仓 210 项通过；2048×2048 raster 为 471.94 ms、7.90 MiB 且 coverage exact。Ruff/compileall、95 个 Python 文件中文 docstring 与重复函数体、36 份文档链接/围栏及 diff whitespace 审计均通过。
 - `pytest-cov` 在当前 Windows/KLayout 进程的收集阶段与 NumPy 扩展加载冲突；测试体未执行，因此不作为代码失败，也不报告新增覆盖率数值。无插桩全量与专项分支测试是本轮发布门禁。
+
+## 阶段 82 设计结论
+
+- 当前 KLayout 0.30.10 不直接读取 `.glp`；第一版 GLP 必须严格解析 `EQUIV/LEVEL/CNAME/CELL/RECT/PGON/ENDMSG`，直接构建内存 `Layout`，不得用临时 GDS 绕行。
+- `EQUIV 1 1000 MICRON` 表示 `dbu=0.001um`；符号层默认仅允许末尾数字映射为 GDS layer，无法确定或冲突时要求显式 `NAME=LAYER/DATATYPE` 映射。
+- `PhysicalMask.region` 继续保存源多边形而非处理框补集。`clear` 时多边形覆盖率即透光率；`opaque` 时仅在显式处理框内计算 `1-覆盖率`，处理框外固定为 0。
+- opaque 边段法向需要反向，使公共不变量保持为“法向从透光侧指向不透光侧、正位移扩大透光区域”；这样 EPE、Simple MB-OPC 与 DiffOPC 无需拥有两套方向语义。
+- 动态 SRAF 会改变 segment 数量和优化器状态，必须在轮次屏障追加并原子发布；旧 segment 保持前缀稳定，新状态初始化为零，接触导致拓扑合并时只能显式全量 remesh。
+- TOML 配置采用“默认 common→默认 entry→自定义 common→自定义 entry→显式 CLI”优先级；配置路径只在进程启动时读取一次，配置内相对路径相对于配置文件目录解析。
+- OpenILT ICCAD2013 GLP 的 `EQUIV` 实际包含第五个方向字段 `+X,+Y`，且可能声明未承载图形的 `E1TARGET`；严格解析器接受唯一已定义方向和未使用辅助 LEVEL，只在某符号层真正承载图形时要求可确定映射。
+- 当前生产 raster 的直接调用已经全部收口到 `rasterize_mask_canvas`；`rasterize_region_canvas` 只作为其 coverage 底层保留。这样普通几何覆盖与光学极性没有两份裁剪实现。

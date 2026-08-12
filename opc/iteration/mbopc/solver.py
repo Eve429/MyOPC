@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from time import perf_counter
 
 import klayout.db as kdb
@@ -16,6 +15,7 @@ from opc.errors import ReconstructionError
 from opc.input import CoreSpec
 from opc.input.edge import MBOPCProblem, edge_probe_points, reconstruct_contours
 from opc.input.raster import ownership_canvas, rasterize_region_canvas
+from opc.iteration._cache import ArrayTileCache
 
 from .contracts import IterationRecord, SimpleMBOPCConfig, SimpleMBOPCResult
 
@@ -67,38 +67,8 @@ def _polygon_ids_for_core(problem: MBOPCProblem, core_index: int) -> np.ndarray:
     return np.unique(problem.segments.edge_polygon_ids[edge_ids]).astype(np.int64)
 
 
-class _TargetCache:
-    """按字节上限缓存固定 target tile，避免每轮重复调用 KLayout 栅格器。"""
-
-    def __init__(self, max_bytes: int) -> None:
-        """创建空 LRU，并允许零上限显式关闭缓存。"""
-        self.max_bytes = max_bytes
-        self.current_bytes = 0
-        self.values: OrderedDict[int, np.ndarray] = OrderedDict()
-
-    def get(self, key: int) -> np.ndarray | None:
-        """返回并提升命中项；未命中返回 None。"""
-        value = self.values.pop(key, None)
-        if value is not None:
-            self.values[key] = value
-        return value
-
-    def put(self, key: int, value: np.ndarray) -> None:
-        """保存 uint8 tile，并从最旧项开始驱逐直到满足字节上限。"""
-        if self.max_bytes <= 0 or value.nbytes > self.max_bytes:
-            return
-        old = self.values.pop(key, None)
-        if old is not None:
-            self.current_bytes -= old.nbytes
-        self.values[key] = value
-        self.current_bytes += value.nbytes
-        while self.current_bytes > self.max_bytes:
-            _, removed = self.values.popitem(last=False)
-            self.current_bytes -= removed.nbytes
-
-
 def _target_tile(problem: MBOPCProblem, core_index: int, core: CoreSpec,
-                 config: SimpleMBOPCConfig, cache: _TargetCache) -> np.ndarray:
+                 config: SimpleMBOPCConfig, cache: ArrayTileCache) -> np.ndarray:
     """读取或生成固定参考 mask 的 uint8 context 画布。"""
     cached = cache.get(core_index)
     if cached is not None:
@@ -146,58 +116,6 @@ def _owner_indices(problem: MBOPCProblem) -> tuple[np.ndarray, ...]:
     return tuple(owners)
 
 
-def _ring_signed_areas2(contours: ContourBatch) -> np.ndarray:
-    """向量化返回每个 ring 的两倍有向面积，不逐 ring 遍历顶点。"""
-    if not len(contours.vertices):
-        return np.empty(0, dtype=np.float64)
-    current = np.arange(len(contours.vertices), dtype=np.int64)
-    following = current + 1
-    following[contours.ring_offsets[1:] - 1] = contours.ring_offsets[:-1]
-    vertices = contours.vertices.astype(np.float64, copy=False)
-    crosses = (vertices[:, 0] * vertices[following, 1] -
-               vertices[:, 1] * vertices[following, 0])
-    return np.add.reduceat(crosses, contours.ring_offsets[:-1])
-
-
-def _preserves_reference_topology(reference: ContourBatch,
-                                  candidate: ContourBatch,
-                                  reference_areas: np.ndarray | None = None) -> bool:
-    """检查候选环未翻转，且每个 hole 仍完整包含在原所属 hull 内。"""
-    if (candidate.ring_count != reference.ring_count or
-            not np.array_equal(candidate.polygon_ring_offsets,
-                               reference.polygon_ring_offsets)):
-        return False
-    expected_areas = (_ring_signed_areas2(reference) if reference_areas is None else
-                      np.ascontiguousarray(reference_areas, dtype=np.float64))
-    candidate_areas = _ring_signed_areas2(candidate)
-    # 对边穿越会把环的绕向翻转，例如矩形左边越过右边后仍可形成非零面积的反向
-    # 矩形。只比较符号而不限制面积变化，正常 OPC 的外扩/内缩仍可通过。
-    if (len(expected_areas) != reference.ring_count or
-            np.any(np.signbit(expected_areas) != np.signbit(candidate_areas))):
-        return False
-    ring_is_hole = np.ones(candidate.ring_count, dtype=np.bool_)
-    ring_is_hole[candidate.polygon_ring_offsets[:-1]] = False
-    hole_ring_ids = np.flatnonzero(ring_is_hole)
-    ring_polygon_ids = np.repeat(
-        np.arange(candidate.polygon_count, dtype=np.int64),
-        np.diff(candidate.polygon_ring_offsets))
-    for hole_ring_id in hole_ring_ids:
-        polygon_id = ring_polygon_ids[hole_ring_id]
-        hull_id = candidate.polygon_ring_offsets[polygon_id]
-        hull_start, hull_end = candidate.ring_offsets[hull_id:hull_id + 2]
-        hull = kdb.Region(kdb.Polygon([
-            kdb.Point(int(x), int(y))
-            for x, y in candidate.vertices[hull_start:hull_end]]))
-        start, end = candidate.ring_offsets[hole_ring_id:hole_ring_id + 2]
-        hole = kdb.Region(kdb.Polygon([
-            kdb.Point(int(x), int(y)) for x, y in candidate.vertices[start:end]]))
-        # 只对实际存在 hole 的 Polygon 进入原生包含检查；无孔的大规模版图完全走
-        # 上面的 NumPy 路径。hole 任意面积落到 hull 外即表示外线越过内线，整轮拒绝。
-        if not (hole - hull).is_empty():
-            return False
-    return True
-
-
 def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
              config: SimpleMBOPCConfig) -> SimpleMBOPCResult:
     """以 tile batch 评价当前状态，并在轮次屏障后统一发布 owner 更新。"""
@@ -214,14 +132,11 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
     owners = _owner_indices(problem)
     polygon_ids = tuple(_polygon_ids_for_core(problem, index) for index in range(len(cores)))
     reference_geometry = problem.segments.materialize()
-    cache = _TargetCache(config.target_cache_bytes)
+    cache = ArrayTileCache(config.target_cache_bytes)
     current = np.zeros(problem.segments.segment_count, dtype=np.float64)
     # 零位移初态与 prepare_problem 保存的参考轮廓完全相同，直接共享只读 ContourBatch
     # 即可，避免求解开始前对整张 reticle 再做一次 O(vertex+segment) 全局重建。
     current_contours = problem.segments.contours
-    # 参考 ring 绕向在普通迭代中永不变化，只计算一次；候选每轮只生成自身面积，
-    # 避免对整张 reticle 的固定顶点重复做叉积归约。
-    reference_topology_areas = _ring_signed_areas2(problem.segments.contours)
     nominal_condition = model.condition("nominal")
     maximum_condition = model.condition("dose_max")
     minimum_condition = model.condition("defocus_min")
@@ -326,10 +241,6 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
         if iteration < config.iterations - 1 and moved:
             try:
                 candidate_contours = reconstruct_contours(problem, next_values)
-                if not _preserves_reference_topology(
-                        problem.segments.contours, candidate_contours,
-                        reference_topology_areas):
-                    raise ReconstructionError("候选轮廓改变了参考 ring/hole 拓扑")
             except (ValueError, ReconstructionError):
                 # 第一版以全轮回滚保证拓扑安全；不会保留半个 Polygon 的更新，也不会
                 # 为特定错误引入补偿点。报告 rejected 数量，后续可在有真实需求时细化。

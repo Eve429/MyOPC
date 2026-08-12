@@ -12,6 +12,57 @@ from .builder import MBOPCProblem
 from .fragmentation import FragmentationConfig, SegmentBatch
 
 
+def _ring_signed_areas2(contours: ContourBatch) -> np.ndarray:
+    """向量化返回每个 ring 的两倍有向面积，供拓扑方向比较。"""
+    if not len(contours.vertices):
+        return np.empty(0, dtype=np.float64)
+    current = np.arange(len(contours.vertices), dtype=np.int64)
+    following = current + 1
+    following[contours.ring_offsets[1:] - 1] = contours.ring_offsets[:-1]
+    vertices = contours.vertices.astype(np.float64, copy=False)
+    crosses = (vertices[:, 0] * vertices[following, 1] -
+               vertices[:, 1] * vertices[following, 0])
+    return np.add.reduceat(crosses, contours.ring_offsets[:-1])
+
+
+def _validate_reference_topology(reference: ContourBatch,
+                                 candidate: ContourBatch) -> None:
+    """拒绝 ring 翻转及 hole 越出所属 hull 的候选轮廓。"""
+    if (candidate.ring_count != reference.ring_count or
+            not np.array_equal(candidate.polygon_ring_offsets,
+                               reference.polygon_ring_offsets)):
+        raise ReconstructionError("reconstructed contours changed ring topology")
+    reference_areas = _ring_signed_areas2(reference)
+    candidate_areas = _ring_signed_areas2(candidate)
+    # 左边越过右边后仍可能形成 KLayout 认为“有效”的反向矩形；绕向比较专门
+    # 捕获这类对边穿越。零面积候选会在后面的 validate_contours 中被拒绝。
+    if np.any(np.signbit(reference_areas) != np.signbit(candidate_areas)):
+        raise ReconstructionError("reconstructed ring reversed orientation")
+    ring_is_hole = np.ones(candidate.ring_count, dtype=np.bool_)
+    ring_is_hole[candidate.polygon_ring_offsets[:-1]] = False
+    hole_ids = np.flatnonzero(ring_is_hole)
+    if not len(hole_ids):
+        return
+    ring_polygon_ids = np.repeat(
+        np.arange(candidate.polygon_count, dtype=np.int64),
+        np.diff(candidate.polygon_ring_offsets))
+    for hole_id in hole_ids:
+        polygon_id = ring_polygon_ids[hole_id]
+        hull_id = candidate.polygon_ring_offsets[polygon_id]
+        hull_start, hull_end = candidate.ring_offsets[hull_id:hull_id + 2]
+        hole_start, hole_end = candidate.ring_offsets[hole_id:hole_id + 2]
+        hull = kdb.Region(kdb.Polygon([
+            kdb.Point(int(x), int(y))
+            for x, y in candidate.vertices[hull_start:hull_end]]))
+        hole = kdb.Region(kdb.Polygon([
+            kdb.Point(int(x), int(y))
+            for x, y in candidate.vertices[hole_start:hole_end]]))
+        # hole 与 hull 的关系不是单 ring 有效性可以表达的；任意 hole 面积落到
+        # hull 外都意味着内外线交叉，必须整轮拒绝而不能让 Region 布尔运算修补。
+        if not (hole - hull).is_empty():
+            raise ReconstructionError("reconstructed hole escaped its hull")
+
+
 def _validated_displacements(segments: SegmentBatch, displacements: object,
                              config: FragmentationConfig) -> np.ndarray:
     """规范化位移向量，并在几何计算前执行一次全局范围检查。"""
@@ -98,6 +149,7 @@ def reconstruct_contours(problem: MBOPCProblem, displacements: object) -> Contou
     np.cumsum(clean_counts, out=clean_offsets[1:])
     contours = ContourBatch(vertices[keep], clean_offsets,
                             segments.contours.polygon_ring_offsets)
+    _validate_reference_topology(segments.contours, contours)
     report = validate_contours(contours, problem.physical_mask.layer)
     if not report.is_valid:
         codes = ", ".join(issue.code for issue in report.issues)

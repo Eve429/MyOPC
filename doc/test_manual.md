@@ -111,6 +111,17 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 
 第三阶段最终 Multilevel 专项 14 项、全仓回归 194 项通过。
 
+第四阶段 DiffOPC：
+
+```powershell
+D:\app\miniforge\envs\myopc\python.exe -m pytest tests/opc/test_diffopc.py -q
+D:\app\miniforge\envs\myopc\python.exe main/run_diffopc.py TestReticle/simple.gds --layer 1/0 --box -520 -20 -180 320 --tile-size-nm 256 --halo-nm 32 --corner-nm 8 --segment-nm 32 --max-displacement-nm 8 --pixel-nm 2 --epe-distance-nm 8 --iterations 2 --batch-size 2 --raster-chunk-size 4 --device cuda --no-preview --no-final-lithography-png --output-dir output/diffopc_phase4_cuda
+```
+
+专项 14 项必须覆盖：软栅格零位移严格一致与非饱和点中心有限差分；外轮廓/孔洞法向；左下原点像素中心 probe；batch 大小和 1-core/2-core 划分不变性；best 记录与位移快照一致；孔洞、斜边、跨 core membership；全局非法几何整轮回滚；资源配置拒绝；直接 GDS 的结果 NPZ、GDS、JSON 与最终光刻 manifest。正式入口的逐轮 `records` 同时保存连续训练损失和二值 L2/PVBand/EPE 诊断，二者不可混为同一单位。
+
+当前 `simple.gds` 的 4-core、44-segment、60-membership 两轮 CPU/CUDA 验收中，L2 为 `773→687`、PVBand 为 `350→247`、EPE 为 `2→0`，两端最佳轮次均为 1。CUDA 峰值分配 133,264,384 bytes；首轮含 CUDA/NVRTC 初始化，不用该两轮总时长宣称加速比。
+
 ## 5. 严格性能基准
 
 ```powershell

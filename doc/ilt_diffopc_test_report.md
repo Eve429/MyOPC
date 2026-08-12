@@ -8,7 +8,7 @@
 
 结果：3 passed。覆盖水平集/多尺度统一结果、软边段有限梯度和离线问题消费；既有光刻/工作台回归 26 passed，Ruff 与 compileall 通过。
 
-后续补充孔洞/斜边跨 core 的数值梯度、MRC/SRAF 和大版图 CUDA 峰值测试。
+孔洞/斜边跨 core 数值梯度、直接入口和 CUDA 峰值已在第四阶段补齐，详见[DiffOPC 第四阶段测试报告](diffopc_test_report.md)。SRAF、规则 deck MRC 与 macro shard 大版图仍需独立阶段。
 
 第一阶段新增 8 项独立 LevelSet 回归：精确 SDF 的符号/距离、代理梯度局部性、配置/输入/窗口/条件拒绝、空工艺窗口与固定区域、曲率有限值、严格零等值线、真实 Hopkins backward、GDS 直接入口完整产物，以及仓库外直接运行。
 

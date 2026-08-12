@@ -256,3 +256,7 @@
 - 阶段 72 进行中：43 项完整 ILT 定向回归通过；当前 `simple.gds` Layer 1/0 的 CPU/CUDA 两级真实流程通过，最终二值 L2/PVBand/shot 均为 1922/815/134，CUDA 峰值分配 70,008,832 bytes。
 - 阶段 72 完成：Multilevel 专项 14 项（11.73 s）和全仓 194 项（60.77 s）通过；多图形、级别公式、物理 shape、窗口、batch、真实 backward、GDS/CLI/产物均覆盖。
 - 阶段 73 完成：全仓最终复跑 194 项（61.26 s），Ruff/compileall/diff/中文 docstring/链接/调用点/重复函数体/保护目录审计通过；生产与测试重复函数体均为 0。
+- 阶段 74 开始：第四阶段限定为 DiffOPC 专项验收，基线为干净提交 `bf932a9`；继续禁止修改 `layout/`、`geometry/`，不把现有原型和旧通用回归当作完成证据。
+- 阶段 74–77 完成：DiffOPC 改为占据差软栅格、owner-only 计分、逐 batch backward、最佳快照一致和全局拓扑屏障；直接支持 GDS/OASIS 或 segment NPZ，并保存结果 GDS/NPZ/JSON/最终光刻 tile。
+- 新增 14 项 DiffOPC 专项，核心覆盖率 80%；相关 37 项回归与全仓 208 项均通过。真实 `simple.gds` 4-core CPU/CUDA 两轮二值 L2/PVBand/EPE 均为 `773→687`、`350→247`、`2→0`，CUDA 峰值分配 133,264,384 bytes。
+- 最终审计：正式改动 Ruff、compileall、中文 docstring、重复函数体、Markdown 链接、diff whitespace 均通过；`layout/`、`geometry/` 零差异；没有保留旧缓存/拓扑兼容包装，SRAF 和 macro shard 未被误报为当前能力。

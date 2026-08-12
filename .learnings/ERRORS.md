@@ -26,6 +26,39 @@
 
 ---
 
+## [ERR-20260812-003] diffopc_stale_edge_paths
+
+**Logged**: 2026-08-12T21:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+第四阶段审查时沿用了 edge 契约收敛前的两个旧文件名。
+
+### Error
+```text
+Cannot find path opc/input/edge/types.py
+Cannot find path opc/input/edge/reconstruct.py
+```
+
+### Context
+- 当前 edge 包已在早期架构收敛中重命名/合并。
+- 同一只读命令中的现有测试和 sampling 文件读取成功，没有修改文件。
+
+### Suggested Fix
+审查重构频繁的目录时先以 `rg --files` 获取真实清单，不从历史上下文猜测路径。
+
+### Metadata
+- Reproducible: yes
+- Related Files: opc/input/edge
+
+### Resolution
+- **Resolved**: 2026-08-12T21:00:00+08:00
+- **Notes**: 后续只读取当前文件清单返回的真实路径。
+
+---
+
 ## [ERR-20260812-002] test_helper_edit_workflow
 
 **Logged**: 2026-08-12T20:30:00+08:00
@@ -1858,5 +1891,82 @@ Multilevel 真实冒烟沿用了旧报告中的 `simple.gds` Layer 11/0，但用
 ### Resolution
 - **Resolved**: 2026-08-12T20:00:00+08:00
 - **Notes**: 改用只读层枚举选择当前实际层，不修改用户版图。
+
+---
+## [ERR-20260812-004] 默认 Python 缺少 pytest
+
+**Logged**: 2026-08-12
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+直接执行 `python -m pytest` 命中了 Miniforge base，其中未安装 pytest。
+
+### Error
+`D:\app\miniforge\python.exe: No module named pytest`
+
+### Resolution
+测试命令显式使用项目既有 Conda 环境的 Python；默认解释器只用于不依赖 pytest 的轻量检查。
+
+### Prevention
+阶段开始先用 `conda env list` 与 `python -c` 确认解释器和测试依赖，不假设 shell 默认 Python 是项目环境。
+
+---
+## [ERR-20260812-005] 拓扑函数归位时误删仍使用的 KLayout 导入
+
+**Logged**: 2026-08-12
+**Priority**: medium
+**Status**: resolved
+**Area**: refactor
+
+### Summary
+把 MB-OPC 拓扑校验归入公共重建模块时，误删了局部 Region 差分仍依赖的 `klayout.db` 导入。
+
+### Error
+`NameError: name 'kdb' is not defined`，发生在 `_current_tile` 第二轮局部重建。
+
+### Resolution
+恢复必要导入；不恢复已删除的重复拓扑函数，并重跑所有 simple MB-OPC 与工作台回归。
+
+### Prevention
+删除模块导入前先对符号执行全文件调用点搜索，不能只依据被移动函数的依赖判断。
+
+---
+## [ERR-20260812-006] 软栅格混合 dtype 破坏零位移严格等式
+
+**Logged**: 2026-08-12
+**Priority**: medium
+**Status**: resolved
+**Area**: numerical
+
+### Summary
+float64 位移测试中，几何和参考 sigmoid 被强制为 float32，零位移仍留下约 4e-8 占据残差。
+
+### Error
+零位移逐像素严格相等测试失败，最大绝对差 `4.108e-8`。
+
+### Resolution
+软栅格的 base、几何和像素中心统一跟随 displacement dtype；float32 生产路径不增加内存，float64 有限差分路径保持精度一致。
+
+### Prevention
+可微表达式中用于解析抵消的两项必须使用相同 dtype/device，数值梯度测试同时覆盖 float32 生产和 float64 对照。
+
+---
+## [ERR-20260812-007] 短补丁引入测试缩进错误
+
+**Logged**: 2026-08-12
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+为有限差分 Tensor 补充 dtype 时，多保留了一级缩进，导致测试模块无法收集。
+
+### Resolution
+修正局部缩进并立即执行 compileall/专项测试；生产代码未受影响。
+
+### Prevention
+对多行函数调用的短补丁先读取相邻上下文，补丁后先 compileall 再运行 pytest。
 
 ---

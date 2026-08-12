@@ -47,10 +47,13 @@ def test_diffopc_runs_on_saved_problem(tmp_path: Path) -> None:
     """DiffOPC 应能消费现有 segment archive 并保持精确 Region 合法。"""
     import klayout.db as kdb
 
-    layout = kdb.Layout(); layout.dbu = 0.001
-    layer = layout.layer(1, 0); top = layout.create_cell("TOP")
+    layout = kdb.Layout()
+    layout.dbu = 0.001
+    layer = layout.layer(1, 0)
+    top = layout.create_cell("TOP")
     top.shapes(layer).insert(kdb.Box(16, 16, 96, 96))
-    source = tmp_path / "diff.gds"; layout.write(str(source))
+    source = tmp_path / "diff.gds"
+    layout.write(str(source))
     archive = prepare_segment_input(
         source, tmp_path / "input.npz", layer=LayerSpec(1, 0),
         box=DbuBox(0, 0, 128, 128), tile_size_nm=128, halo_nm=0,
@@ -58,5 +61,7 @@ def test_diffopc_runs_on_saved_problem(tmp_path: Path) -> None:
     from main.offline_inputs import load_segment_input
     problem, _ = load_segment_input(archive)
     result = optimize_diffopc(problem, ICCAD13Lithography(device="cpu"),
-                               DiffOPCConfig(iterations=1, pixel_dbu=1, canvas=128))
+                               DiffOPCConfig(
+                                   iterations=1, pixel_dbu=1, canvas=128,
+                                   max_displacement_dbu=8))
     assert result.best_displacements.shape == (problem.segments.segment_count,)

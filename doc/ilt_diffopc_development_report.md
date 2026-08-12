@@ -7,7 +7,7 @@
 - DiffOPC 使用独立解析软边段栅格器；精确 KLayout raster 只保留在非梯度路径。
 - 不复制 OpenILT/DiffOPC 的代码、资产、Hydra、数据集或日志框架。
 
-当前 DiffOPC 首版完成 L2/PVBand 和固定 inner/outer probe 的连续 EPE hinge 梯度路径；MRC、SRAF 和多 GPU 仍属后续阶段。
+DiffOPC 首版的后续质量问题已在第四阶段完成修正：owner-only 计分、逐 batch backward、软边占据差、连续工艺窗口/EPE、最佳快照、拓扑屏障、直接版图入口和完整产物均已验收，详见[DiffOPC 第四阶段开发报告](diffopc_development_report.md)。SRAF、多 GPU 和 macro shard 仍属后续阶段；未提供规则 deck 时不宣称完整工艺厂 MRC。
 
 ## 第一阶段质量修正
 

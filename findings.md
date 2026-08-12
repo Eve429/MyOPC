@@ -323,7 +323,7 @@
 - OpenILT 的 LevelSet、CurvMulti、Multilevel 依赖旧 LithoSim/配置体系；本项目仅迁移参数化和调度思想，统一复用当前 ICCAD13 模型。DiffOPC 采用独立解析软边段 rasterizer，不能把不可微 KLayout rasterizer 改造成 autograd 路径。
 - LevelSet 的硬前向必须以 `phi < 0` 为唯一权威；`sigmoid(-phi)` 只是连续诊断图，不能再用 `>=0.5` 生成硬结果，否则 `phi==0` 会从关闭错误翻转为开启。
 - 精确欧氏 SDF 可用两遍一维下包络在 `O(HW)` 时间和内存内完成；本项目只在初始化执行一次并通过 1×1 至 8×8 随机图暴力对照，不在光刻迭代热路径重复计算。
-- 第一阶段只验收 LevelSetILT。CurvMulti、Multilevel 与 DiffOPC 虽有原型代码，但在各自专项数值、入口、产物和性能门槛完成前仍保持未验收状态。
+- 历史第一阶段只验收 LevelSetILT；此后 CurvMulti、Multilevel 和 DiffOPC 已分别在第二、第三、第四阶段完成专项验收。
 - OpenILT CurvMulti 不是 LevelSet 的多尺度包装：它对连续像素参数先做 7×7 平均池化，再以带 offset 的 sigmoid 生成软 mask，使用 SGD，并把曲率正则施加到标称曝光图。当前 `multiscale.py` 调用 LevelSetILT，算法身份错误，第二阶段必须替换而不是继续包装。
 - OpenILT CurvMulti 源码把 nominal L2 实际写成 `printedMax`，与 process L2 重复，且把 mask 直接乘中央 filter 令窗口外归零；这两处属于历史实现问题，不应照搬。项目版应使用具名 nominal condition，并让优化窗口外保持固定初值语义。
 - 当前 ICCAD13 `forward_many` 对小于 canvas 的 mask 只做居中补零，不会按尺度放大；因此 CurvMulti 的 coarse mask 必须先恢复到完整 target 网格再做光刻。粗尺度只能减少控制变量自由度，不能改变 Hopkins 核对应的像素物理尺度。
@@ -334,3 +334,23 @@
 - 参考代码在 Low/Mid 上直接使用同一 35×35 Hopkins 核，且评估时再分别放大 8/4 倍；在当前明确 `canvas/resolution` 的模型中照搬会改变核的物理像素语义。项目版采用“级别参数/监督网格 + 完整物理仿真网格”：低级软 mask 先放大到完整 target 网格做 forward，wafer 再 area 缩到级别网格算损失。
 - Multilevel 与 CurvMulti 的现实差异保留为：前者每级可配置独立轮数/Adam 步长并在级别监督网格算损失；后者所有尺度使用相同轮数/SGD，始终在完整 target 网格算损失。两者可共享现有结果/逐轮记录，但不应建立统一求解器基类或新阶段记录类。
 - OpenILT Multilevel 内嵌 CurvILT 同样把 `printedMax` 当 L2、窗口外清零并每轮重新分配曲率核；项目版分别改为具名 nominal、窗口外固定初值、复用现有曲率实现且权重为零时不计算。
+
+## 阶段 74 DiffOPC 前置审查
+
+- NVlabs DiffOPC 的公开实现用二值前向加自定义直通反向：每条 edge 从 mask 梯度取平均，再乘移动方向；它适合固定小画布，但 backward 含逐 edge Python 循环，不能直接满足本项目整张 reticle 的流式资源目标。
+- 参考实现的训练损失是 nominal L2、maximum/minimum 对 target 的工艺角 L2、maximum/minimum 之间的连续平方差和可选 EPE；真正的二值 PVBand 只作为诊断，不能把返回 Python `int` 的评价函数放进 autograd 损失。
+- 参考仓库的 `mrc` 模块是优化后连通域矩形分解与最小面积/宽高过滤，不是边段迭代中的可微 MRC。当前阶段采用已有 `max_displacement_dbu` 投影和 `reconstruct_region` 全局拓扑校验作为已定义的几何约束，不虚构工艺厂规则。
+- 当前原型把每个 context 的 halo 像素和全部 member segment 都计入损失，导致同一物理像素/边段因 tile membership 数不同而重复贡献梯度；必须以 `ownership_canvas` 限定像素，以 `owner_indices` 限定 EPE，每个全局对象恰好计分一次。
+- 当前原型在所有 batch 结束后一次 backward，会让整轮光刻计算图常驻；等价且有界的做法是在只读同一参数快照期间逐 batch 缩放损失并立即 backward，仅累积全局位移梯度，全部 batch 完成后才执行一次 optimizer step。
+- 当前软栅格的 `base + displacement * sign * Gaussian` 不是边界平移的 occupancy 差，且 probe 像素中心少了 `0.5 pixel` 修正。修正版应使用 `sigmoid((d-q)/T)-sigmoid(-q/T)` 的局部占据变化，保证零位移严格等于参考 mask，并按有限边段切向窗口限制影响。
+- 当前最佳损失来自 step 前状态，却保存 step 后位移，记录与产物不对应；最佳位移必须与被实际评价的同一快照绑定。最后一次未评价的 step 不得冒充最佳状态。
+- 第四阶段不把 SRAF 混入 DiffOPC：SRAF 会新增图形、segment 身份和归属，属于显式 remesh/输入构造方法，必须在其独立阶段重建问题和优化器状态。
+
+## 阶段 75–77 DiffOPC 实施结论
+
+- 软栅格使用法向 signed-distance 占据差，零位移严格复现参考 coverage；segment chunk 配合 checkpoint 后，反向中间量峰值由 `canvas²×chunk` 而非当前 tile 全部 segment 决定。
+- L2/连续 PV 只统计 ownership 像素，EPE 只统计 owner segment；1-core/2-core 与 batch=1/2 专项结果一致。逐 batch backward 只累积梯度，Adam step 位于全轮屏障后。
+- `reconstruct_contours` 统一拒绝 ring 翻转和 hole 越出 hull，simple MB-OPC 删除重复拓扑实现；共享 `ArrayTileCache` 取代旧私有 `_TargetCache`，生产函数体重复扫描为 0。
+- 直接版图入口使用 `materialize_segment_input` 内存层，显式离线归档仍由 `prepare_segment_input` 完成；没有大问题临时 NPZ 写读开销，也没有第二套前端。
+- 真实 `simple.gds` 4-core CPU/CUDA 两轮二值指标一致，L2/PVBand/EPE=`773→687/350→247/2→0`；CUDA 峰值分配 133,264,384 bytes。全仓 208 项通过，DiffOPC 专项核心覆盖率 80%。
+- 当前仍为 CPU 常驻完整问题、GPU 流式 batch；macro shard、SRAF、多 GPU 和未定义规则 deck MRC 均未虚报为完成能力。

@@ -657,9 +657,13 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 ### 10.3 segment 问题接口
 
+#### `materialize_segment_input(...) -> (problem, metadata)`
+
+执行版图范围选择、preflight、ROI 物化、分段和 owner/membership 构造，直接在内存中返回 `MBOPCProblem` 与 JSON 兼容 metadata，不写中间文件。正式 DiffOPC 的 GDS/OASIS 分支使用此接口，避免大问题先写再读 NPZ。
+
 #### `prepare_segment_input(...) -> Path`
 
-输入版图、输出 NPZ、Layer/top/ROI、tile/halo/角段/最大段/最大位移 nm 和安全上限。所有物理长度必须能由当前 DBU 精确表达。执行完整 preflight 后才物化 Region 并调用 `prepare_problem`；构造后再用真实数组规模复核估算。
+输入版图、输出 NPZ、Layer/top/ROI、tile/halo/角段/最大段/最大位移 nm 和安全上限。所有物理长度必须能由当前 DBU 精确表达。它调用相同的 `materialize_segment_input` 后只增加版本化原子归档；构造后仍用真实数组规模复核估算。
 
 #### `load_segment_input(path, max_archive_gib=8.0) -> (problem, metadata)`
 
@@ -725,7 +729,7 @@ python main\offline_inputs.py segments INPUT.gds mbopc_input.npz [版图、tile 
 
 ### 11.7 [`main/run_diffopc.py`](../main/run_diffopc.py)
 
-读取 segment NPZ 并调用 DiffOPC 原型；当前只用于后续阶段开发验证，尚未完成连续 EPE、MRC/SRAF、入口产物和大图性能专项验收，不属于第一阶段完成能力。
+读取 GDS/OASIS 或 segment NPZ 并调用已验收 DiffOPC。入口保存结果 NPZ、参考/重建 GDS、summary、可选 preview 和 ownership-only 最终光刻 tile；当前仍是 CPU 常驻完整问题、GPU 流式 batch，不等同于未来 macro shard。
 
 ### 11.8 [`main/run_mbopc_iteration.py`](../main/run_mbopc_iteration.py)
 
@@ -797,7 +801,7 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 - `opc`：`__init__`、`errors`、`diagnostics`；
 - `opc.input`：`__init__`、`_arrays`、`grid`、`mask`、`raster`、`preflight`；
 - `opc.input.edge`：`__init__`、`builder`、`fragmentation`、`ownership`、`sampling`、`reconstruction`；
-- `opc.iteration`：顶层 `__init__`、ILT 的 `__init__/simple/levelset/curvmulti`、MB-OPC 的 `__init__/contracts/solver`，以及待验收 DiffOPC 原型的四个模块；
+- `opc.iteration`：顶层 `__init__`、共享有界 tile 缓存、ILT 的 `__init__/simple/levelset/curvmulti/multilevel`、MB-OPC 的 `__init__/contracts/solver`，以及已验收 DiffOPC 的四个模块；
 - `lithography`：`__init__`、`iccad13`；
 - `evaluation`：`__init__`、`metrics`；
 - `main`：`__init__`、`offline_inputs` 和八个 `run_*.py`。
@@ -815,6 +819,6 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 | `opc.input.edge` | `FragmentationConfig`、`MBOPCProblem`、`SegmentBatch`、`SegmentGeometry`、`edge_probe_points`、`fragment_edges`、`prepare_problem`、`reconstruct_contours`、`reconstruct_region` |
 | `opc.iteration.ilt` | `CurvMultiConfig`、`ILTIterationRecord`、`LevelSetConfig`、`SimpleILTConfig`、`SimpleILTResult`、`optimize`、`optimize_curvmulti`、`optimize_levelset`、`signed_distance_initialization` |
 | `opc.iteration.mbopc` | `IterationRecord`、`SimpleMBOPCConfig`、`SimpleMBOPCResult`、`optimize` |
-| `opc.iteration.diffopc` | `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult`、`optimize`（后续阶段待验收） |
+| `opc.iteration.diffopc` | `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult`、`optimize`；owner-only、逐 batch backward、拓扑屏障已验收 |
 | `lithography` | `ICCAD13Config`、`ICCAD13Lithography`、`ProcessCondition` |
 | `evaluation` | `EPEEvaluation`、`estimate_rectangular_shots`、`evaluate_binary_l2`、`evaluate_edge_probes`、`evaluate_pvband` |

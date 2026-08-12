@@ -22,21 +22,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from geometry import (
+from geometry import (  # noqa: E402
     ContourBatch,
     contours_to_region,
 )
-from layout import DbuBox, LayerSpec, LayoutDB
-from opc.input import PhysicalMask, RectilinearCoreGrid, preflight_layout
-from opc.input.edge import (
+from layout import DbuBox, LayerSpec, LayoutDB  # noqa: E402
+from opc.input import PhysicalMask, RectilinearCoreGrid, preflight_layout  # noqa: E402
+from opc.input.edge import (  # noqa: E402
     FragmentationConfig,
     MBOPCProblem,
     SegmentBatch,
     prepare_problem,
 )
-from opc.input.grid import axis_cuts_by_size
-from opc.input.preflight import estimate_prepare_peak_bytes
-from opc.input.raster import ownership_canvas, rasterize_region_canvas
+from opc.input.grid import axis_cuts_by_size  # noqa: E402
+from opc.input.preflight import estimate_prepare_peak_bytes  # noqa: E402
+from opc.input.raster import ownership_canvas, rasterize_region_canvas  # noqa: E402
 
 _GIB = 1024 ** 3
 _RASTER_FORMAT = "myopc.raster-input"
@@ -483,8 +483,8 @@ def resolve_raster_input(
         max_estimated_gib=max_estimated_gib)
 
 
-def prepare_segment_input(
-        layout_path: str | Path, output_path: str | Path, *,
+def materialize_segment_input(
+        layout_path: str | Path, *,
         layer: LayerSpec | None = None, top_cell: str | None = None,
         box: DbuBox | tuple[int, int, int, int] | None = None,
         tile_size_nm: float = 1024.0, halo_nm: float = 512.0,
@@ -492,8 +492,8 @@ def prepare_segment_input(
         max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
         max_source_vertices: int = 20_000_000,
-        max_estimated_gib: float = 8.0) -> Path:
-    """预检、物化并保存可直接恢复为 MBOPCProblem 的完整边段输入。"""
+        max_estimated_gib: float = 8.0) -> tuple[MBOPCProblem, dict[str, object]]:
+    """预检并在内存中返回完整 MBOPCProblem 及其输入元数据。"""
     source = Path(layout_path).expanduser().resolve()
     database, selected_layer, selected_box = _select_database_input(
         source, top_cell, layer, box, max_file_gib)
@@ -555,6 +555,29 @@ def prepare_segment_input(
                    "memberships": len(problem.member_segment_indices)},
         "preflight": preflight, "post_prepare_estimated_peak_bytes": actual_peak,
     }
+    return problem, metadata
+
+
+def prepare_segment_input(
+        layout_path: str | Path, output_path: str | Path, *,
+        layer: LayerSpec | None = None, top_cell: str | None = None,
+        box: DbuBox | tuple[int, int, int, int] | None = None,
+        tile_size_nm: float = 1024.0, halo_nm: float = 512.0,
+        corner_nm: float = 16.0, segment_nm: float = 32.0,
+        max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
+        max_shape_occurrences: int = 5_000_000,
+        max_source_vertices: int = 20_000_000,
+        max_estimated_gib: float = 8.0) -> Path:
+    """物化边段问题并保存可严格恢复的版本化离线归档。"""
+    problem, metadata = materialize_segment_input(
+        layout_path, layer=layer, top_cell=top_cell, box=box,
+        tile_size_nm=tile_size_nm, halo_nm=halo_nm,
+        corner_nm=corner_nm, segment_nm=segment_nm,
+        max_displacement_nm=max_displacement_nm, max_file_gib=max_file_gib,
+        max_shape_occurrences=max_shape_occurrences,
+        max_source_vertices=max_source_vertices,
+        max_estimated_gib=max_estimated_gib)
+    contours, segments = problem.segments.contours, problem.segments
     arrays: dict[str, object] = {
         "format_name": np.array(_SEGMENT_FORMAT),
         "format_version": np.array(_SEGMENT_VERSION, dtype=np.int32),

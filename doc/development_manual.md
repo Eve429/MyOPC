@@ -37,7 +37,8 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 | `main/run_lithography.py` | 独立光刻模型验证入口 |
 | `main/run_mbopc_iteration.py` | 独立 MB-OPC 迭代验证入口 |
 | `main/run_simpleilt.py` | 独立 SimpleILT 入口 |
-| `main/run_ilt.py` | 统一 ILT 入口；第一阶段已验收 LevelSetILT |
+| `main/run_ilt.py` | 统一 ILT 入口；LevelSet、CurvMulti、Multilevel 均已验收 |
+| `main/run_diffopc.py` | DiffOPC 入口；直接读取 GDS/OASIS 或 segment NPZ，保存最佳几何与流式最终光刻结果 |
 
 诊断代码不属于输入模型，求解器不反向依赖某个输出格式。未来 ILT 可复用版图、Region 栅格、光刻和评价层，但不必依赖边段重建。
 
@@ -185,7 +186,13 @@ python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
 
 ## 13. 新增 ILT 与 DiffOPC
 
-`main/run_ilt.py --method levelset|curvmulti|multilevel` 统一运行新增 ILT；`main/run_diffopc.py` 读取 segment NPZ，使用独立软边段栅格器优化位移。LevelSetILT、CurvMultiILT 和 MultilevelILT 已分别完成前三阶段专项验收；DiffOPC 仍是后续待验收阶段，不能按完整迁移能力使用。
+`main/run_ilt.py --method levelset|curvmulti|multilevel` 统一运行新增 ILT；`main/run_diffopc.py` 可直接读取 GDS/OASIS，也可复用 segment NPZ，使用独立软边段栅格器优化固定参考 segment 的全局绝对位移。LevelSetILT、CurvMultiILT、MultilevelILT 和 DiffOPC 已分别完成四个阶段专项验收。
+
+DiffOPC 每个 tile 的 halo 只参与软 mask 与光刻传播，L2/PV 连续损失只在 `ownership_canvas` 内累计，EPE 只由 owner segment 贡献。所有 batch 读取同一 `current`；每个 batch 立即 backward 释放光刻图，只累积位移梯度，整轮结束后才执行 Adam step。候选位移同时受前端 `max_displacement_dbu` 与 `reconstruct_region` 全局环方向、孔洞归属和 Polygon 合法性约束。
+
+软栅格以 `sigmoid((d-q)/T)-sigmoid(-q/T)` 表示边界平移产生的占据变化，`d=0` 严格返回参考覆盖率。有限 segment 使用平滑切向端帽；segment chunk 通过重计算式 checkpoint 限制反向中间量，而非只对前向循环分块。连续 PV 损失使用 maximum/minimum wafer 平方差；二值 PVBand、L2 和 EPE 只作为逐轮诊断，不能误接入 autograd。
+
+当前 DiffOPC 与 simple MB-OPC 相同，CPU 仍常驻完整 `MBOPCProblem`、owner/membership 和全局位移；GPU 只常驻当前 batch。它不等同于 `large_reticle_streaming_plan.md` 中尚未实现的 macro shard/memmap 方案。SRAF 会改变图形和 segment 身份，属于输入构造/remesh 阶段，不在本求解器内隐式插入。
 
 LevelSetILT 使用前景为负的精确欧氏 SDF 初始化和硬二值代理梯度；SDF 只在优化前计算一次。`run_ilt.py --method levelset` 支持 `--layer`、`--box`、`--top-cell`、像素/画布和容量上限，并保存 `ilt_result.npz`、`summary.json`、最终三工艺角 NPZ 及可选 PNG。
 

@@ -14,15 +14,14 @@ from opc.errors import ReconstructionError
 from opc.input import RectilinearCoreGrid
 from opc.input.edge import FragmentationConfig, prepare_problem
 from opc.input.raster import rasterize_region_canvas
+from opc.iteration._cache import ArrayTileCache
 from opc.iteration.mbopc.contracts import SimpleMBOPCConfig
 from opc.iteration.mbopc.solver import (
     _current_tile,
     _owner_indices,
     _polygon_ids_for_core,
-    _preserves_reference_topology,
     _subset_contours,
     _target_tile,
-    _TargetCache,
     optimize,
 )
 
@@ -69,7 +68,7 @@ def _solver_config(iterations: int = 2, cache_bytes: int = 1 << 20) -> SimpleMBO
 def test_target_cache_hit_keeps_compact_uint8_until_batch_transfer() -> None:
     """target 命中与未命中都应保持 uint8，避免 CPU 批次提前展开为 float32。"""
     problem, _ = _rectangle_problem()
-    cache = _TargetCache(1 << 20)
+    cache = ArrayTileCache(1 << 20)
     core = problem.grid.cores()[0]
     first = _target_tile(problem, 0, core, _solver_config(), cache)
     second = _target_tile(problem, 0, core, _solver_config(), cache)
@@ -91,7 +90,7 @@ def test_owner_indices_match_global_reference_scan() -> None:
 
 def test_target_lru_replaces_existing_value_and_evicts_oldest() -> None:
     """target LRU 应正确更新字节计数，并在超限时只驱逐最旧 tile。"""
-    cache = _TargetCache(8)
+    cache = ArrayTileCache(8)
     cache.put(0, np.zeros(4, dtype=np.uint8))
     cache.put(0, np.zeros(6, dtype=np.uint8))
     assert cache.current_bytes == 6
@@ -182,7 +181,7 @@ def test_zero_local_tile_preserves_unquantized_reference_raster() -> None:
     context = core.context_box
     expected = rasterize_region_canvas(
         problem.physical_mask.region, context, config.pixel_dbu, config.canvas)
-    target = _target_tile(problem, core_index, core, config, _TargetCache(1 << 20))
+    target = _target_tile(problem, core_index, core, config, ArrayTileCache(1 << 20))
     actual = _current_tile(
         problem, problem.segments.contours,
         np.zeros(problem.segments.segment_count), core_index, core,
@@ -225,9 +224,8 @@ def test_topology_guard_rejects_opposite_edge_crossing_and_hull_inside_hole() ->
     left = ((rectangle_geometry.starts[:, 0] == 0) &
             (rectangle_geometry.ends[:, 0] == 0))
     rectangle_values[left] = -30.0
-    crossed = reconstruct_contours(rectangle_problem, rectangle_values)
-    assert not _preserves_reference_topology(
-        rectangle_problem.segments.contours, crossed)
+    with pytest.raises(ReconstructionError, match="orientation"):
+        reconstruct_contours(rectangle_problem, rectangle_values)
 
     hollow = (kdb.Region(kdb.Box(0, 0, 40, 40)) -
               kdb.Region(kdb.Box(10, 10, 30, 30)))
@@ -241,8 +239,8 @@ def test_topology_guard_rejects_opposite_edge_crossing_and_hull_inside_hole() ->
         np.arange(contours.ring_count, dtype=np.int32), np.diff(contours.ring_offsets))
     segment_holes = ring_holes[edge_ring_ids[hollow_problem.segments.edge_ids]]
     hollow_values[~segment_holes] = -25.0
-    inverted = reconstruct_contours(hollow_problem, hollow_values)
-    assert not _preserves_reference_topology(hollow_problem.segments.contours, inverted)
+    with pytest.raises(ReconstructionError, match="escaped"):
+        reconstruct_contours(hollow_problem, hollow_values)
 
 
 def test_two_dbu_hollow_wall_invalid_long_edge_probes_are_not_published() -> None:

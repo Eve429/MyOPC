@@ -279,6 +279,11 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 第三阶段真实 `simple.gds` 冒烟沿用旧文档 Layer 11/0 | 1 | 当前用户版图已变化且预检在优化前拒绝；只读枚举实际层后重跑，不修改用户 GDS |
 | 测试 helper 收敛时误用 `Set-Content` 且机械替换保留了两个同名局部定义 | 1 | 立即停止该路径；用 `apply_patch` 删除局部重复、核对 UTF-8/BOM/换行并复跑全部测试 |
 | BOM 恢复后的 diff 检查发现 CurvMulti 测试文件尾多一空行 | 1 | 编码已恢复为 UTF-8 无 BOM；用 `apply_patch` 精确删除文件尾空行后重跑完整门禁 |
+| DiffOPC 审查沿用已删除的 `edge/types.py` 与 `reconstruct.py` 旧文件名 | 1 | 部分只读命令失败；后续先用 `rg --files opc/input/edge` 获取当前清单，再读取真实模块 |
+| 第四阶段默认 `python` 命中未安装 pytest 的 Miniforge base | 1 | 显式选择项目既有 Conda 环境执行测试，并在测试前确认解释器依赖 |
+| 拓扑校验归位时误删 `_current_tile` 仍使用的 `klayout.db` 导入 | 1 | 恢复必要导入，不恢复重复函数；重跑 simple MB-OPC 和工作台回归 |
+| float64 位移与强制 float32 几何使零位移软栅格残留约 4e-8 | 1 | 所有软栅格计算跟随 displacement dtype，并保留有限差分回归 |
+| 有限差分测试 dtype 短补丁多出一级缩进 | 1 | 修正后先 compileall，再执行专项回归 |
 
 | 64. OpenILT ILT and DiffOPC migration | in progress | Phase 1 LevelSet quality complete; later CurvMulti, Multilevel and DiffOPC acceptance remain |
 | 65. LevelSetILT quality closure | complete | Exact SDF, strict contracts, correct curvature, complete runner artifacts and dedicated tests |
@@ -300,3 +305,12 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 71 | 已完成 | 实现独立 MultilevelILT 并接入统一 `run_ilt.py`，不建立无调用方抽象且不修改保护目录 |
 | 72 | 已完成 | 增加数值、层级、窗口、真实 backward、GDS 直跑、产物、CPU/GPU 与多图形专项测试 |
 | 73 | 已完成 | 全量回归、内存/速度/冗余/异常/调用点审计，更新手册和专项报告并创建本地提交 |
+
+## 阶段 74–77：第四阶段 DiffOPC
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| 74 | 已完成 | 审查当前 DiffOPC 原型、本项目 edge/problem 契约与 NVlabs 参考实现，锁定梯度、EPE、拓扑和资源验收边界 |
+| 75 | 已完成 | 修正 DiffOPC 软栅格、owner-only 流式求解、最佳快照、拓扑屏障、直接版图入口与最终几何/光刻产物 |
+| 76 | 已完成 | 完成数值梯度、孔洞/斜边/跨 core、tile/batch 不变性、EPE/几何约束、GDS 直跑及 CPU/CUDA 资源专项测试 |
+| 77 | 已完成 | 完成 207 项全量回归、性能/内存/冗余/异常/调用点/文档审计，更新手册与专项报告并创建本地提交 |

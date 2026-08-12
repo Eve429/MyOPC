@@ -1970,3 +1970,129 @@ float64 位移测试中，几何和参考 sigmoid 被强制为 float32，零位�
 对多行函数调用的短补丁先读取相邻上下文，补丁后先 compileall 再运行 pytest。
 
 ---
+
+## [ERR-20260812-008] FAQ 审查实验使用了默认 Python
+
+**Logged**: 2026-08-12
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Region 生命周期临时实验使用了系统默认 Python，该解释器没有项目 NumPy 依赖。
+
+### Error
+`ModuleNotFoundError: No module named 'numpy'`
+
+### Resolution
+改用已确认的 `D:\app\miniforge\envs\myopc\python.exe`；生产代码和工作树数据未受影响。
+
+### Prevention
+项目行为实验与测试统一显式使用项目 Conda 解释器，不再依赖 shell 默认 Python。
+
+---
+
+## [ERR-20260812-009] FAQ 审查沿用旧输入函数名
+
+**Logged**: 2026-08-12
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Region 生命周期实验沿用了历史函数名 `prepare_physical_mask`，当前公共导出已经收敛为 `normalize_physical_mask`。
+
+### Error
+`ImportError: cannot import name 'prepare_physical_mask' from 'opc.input'`
+
+### Resolution
+读取当前 `opc/input/__init__.py` 公共导出后改用实际接口；没有增加兼容别名。
+
+### Prevention
+审查重构频繁的公共包前先读取当前 `__all__`，不根据历史文档或上下文猜测符号名。
+
+---
+
+## [ERR-20260812-010] raster 定向测试猜测了诊断测试文件名
+
+**Logged**: 2026-08-12
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+raster 修复后的首条 pytest 命令引用了不存在的 `tests/opc/test_diagnostics.py`，收集前退出。
+
+### Error
+`ERROR: file or directory not found: tests/opc/test_diagnostics.py`
+
+### Resolution
+通过 `rg --files tests/opc` 和符号调用点定位实际测试为 `test_geometry_matrix.py` 与 `test_validation.py` 后重跑；没有功能测试失败。
+
+### Prevention
+组合定向测试命令前先使用当前文件清单定位路径，不根据模块名推测测试文件名。
+
+---
+
+## [ERR-20260812-011] 新增 Ruff 排除配置暴露未固定的规则口径
+
+**Logged**: 2026-08-12
+**Priority**: medium
+**Status**: resolved
+**Area**: config
+
+### Summary
+首次执行 `ruff check .` 时，当前 Ruff 0.16.2 启用了远超项目历史门禁的规则，报告 17 项无关既存问题并在 compileall/pytest 前停止。
+
+### Error
+主要为 `RUF100` 未使用 `E402 noqa`，另有既存测试的 `PLR0402/C408`；本次功能代码没有被报告。
+
+### Resolution
+首次尝试 `E4/E7/E9/F` 时发现它仍包含项目刻意不采用的 `E402/E702`，会要求改写约百处直接运行入口和紧凑测试；尝试 `ALL` 又扩展出两万余条与中文标点、命令行 `print` 和既有紧凑排版冲突的规则。最终显式启用基础正确性规则 `E4/E7/E9/F`，只忽略有明确设计原因的 `E402/E702`，并保留用户 notebook 排除；不借工具升级顺带重写无关代码。
+
+### Prevention
+新增 Ruff 配置时必须同时固定 `lint.select`，避免不同 Ruff 版本或上级配置让规则集合静默漂移。
+
+---
+
+## [ERR-20260812-012] 最终门禁首次使用了不存在的旧虚拟环境路径
+
+**Logged**: 2026-08-12
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+最终 Ruff 门禁误用了不存在的仓库上级 `.venv`，命令在启动解释器前退出。
+
+### Error
+`D:\00_WorkSpace\02_CodeStorage\01_OPC\.venv\Scripts\python.exe` 无法识别为可执行命令。
+
+### Resolution
+从项目记录确认权威解释器为 `D:\app\miniforge\envs\myopc\python.exe`，随后 Ruff、compileall 和全量 pytest 均使用该解释器；没有修改生产代码。
+
+### Prevention
+运行项目门禁前优先读取 `findings.md` 的环境基线，不从相邻目录结构猜测虚拟环境位置。
+
+---
+
+## [ERR-20260812-013] pytest-cov 与 Windows 扩展模块加载冲突
+
+**Logged**: 2026-08-12
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+在已通过全量 pytest 后追加专项分支覆盖率时，coverage 插件插桩导致 NumPy 扩展在测试收集阶段被重复加载。
+
+### Error
+`ImportError: cannot load module more than once per process`
+
+### Resolution
+该命令没有执行任何测试体，也没有暴露业务回归；保留已经通过的 210 项无插桩全量测试，并用定向回归、测试—分支映射和 AST 审计完成本轮覆盖检查，不为测试插件问题修改运行时代码。
+
+### Prevention
+此 Windows/KLayout 环境不把 `pytest-cov` 作为发布阻断门禁；覆盖率采样应放在隔离进程或无 KLayout 导入的测试子集执行。
+
+---

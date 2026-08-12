@@ -118,11 +118,16 @@ def test_all_batches_read_same_state_before_barrier_and_owner_moves_once() -> No
     problem, _ = _rectangle_problem()
     model = _RecordingZeroModel()
     result = optimize(problem, model, _solver_config())
-    assert len(model.inputs) == 4
-    # 第一轮两个 batch 都来自零位移；完成整轮并通过重建后，第二轮才看到外移 mask。
+    assert len(model.inputs) == 6
+    # 每个状态的两个 batch 都只读同一全局位移；两次合法更新分别在屏障后发布，
+    # 第三组输入是第二次更新后的最终评价态，证明 iterations=2 真正提交两次。
     assert not np.array_equal(model.inputs[0], model.inputs[2])
     assert not np.array_equal(model.inputs[1], model.inputs[3])
+    assert not np.array_equal(model.inputs[2], model.inputs[4])
+    assert not np.array_equal(model.inputs[3], model.inputs[5])
     assert result.records[0].moved_segments == problem.segments.segment_count
+    assert result.records[1].moved_segments == problem.segments.segment_count
+    assert result.records[2].moved_segments == 0
     assert result.records[0].rejected_segments == 0
 
 
@@ -132,7 +137,7 @@ def test_diagnostic_metrics_do_not_select_mbopc_best_state(
     from opc.iteration.mbopc import solver
 
     problem, _ = _rectangle_problem()
-    l2_values = iter((100, 100, 0, 0))
+    l2_values = iter((100, 100, 0, 0, 50, 50))
 
     def diagnostic_l2(*args: object, **kwargs: object) -> int:
         """制造第二轮明显更好的诊断 L2，但不改变 EPE 探针结果。"""
@@ -150,21 +155,19 @@ def test_diagnostic_metrics_do_not_select_mbopc_best_state(
     assert result.best_iteration == 0
 
 
-def test_zero_state_skips_global_and_local_contour_reconstruction(
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    """单轮零位移求解应共享参考轮廓，并跳过局部轮廓和 Region 差分构造。"""
-    from opc.iteration.mbopc import solver
-
+def test_single_iteration_publishes_and_evaluates_one_legal_update() -> None:
+    """单次迭代必须发布一次合法位移，并额外评价更新后的最终状态。"""
     problem, _ = _rectangle_problem()
-
-    def reject_reconstruction(*args: object, **kwargs: object) -> None:
-        """零位移热路径若触发全局或局部重建则立即失败。"""
-        raise AssertionError("零位移状态不应重建轮廓或 Region")
-
-    monkeypatch.setattr(solver, "reconstruct_contours", reject_reconstruction)
-    monkeypatch.setattr(solver, "contours_to_region", reject_reconstruction)
-    result = solver.optimize(problem, _RecordingZeroModel(), _solver_config(iterations=1))
-    assert len(result.records) == 1
+    model = _RecordingZeroModel()
+    result = optimize(problem, model, _solver_config(iterations=1))
+    # 两个 core 分别评价初态和一次更新后的状态；旧错误只会产生前两个输入。
+    assert len(model.inputs) == 4
+    assert not np.array_equal(model.inputs[0], model.inputs[2])
+    assert not np.array_equal(model.inputs[1], model.inputs[3])
+    assert len(result.records) == 2
+    assert result.records[0].moved_segments == problem.segments.segment_count
+    assert result.records[1].moved_segments == 0
+    assert result.records[1].step_dbu == 0.0
 
 
 def test_zero_local_tile_preserves_unquantized_reference_raster() -> None:
@@ -204,7 +207,8 @@ def test_reconstruction_failure_rolls_back_whole_round(monkeypatch: pytest.Monke
         raise ReconstructionError("测试候选非法")
 
     monkeypatch.setattr(solver, "reconstruct_contours", fail_candidate)
-    result = solver.optimize(problem, _RecordingZeroModel(), _solver_config())
+    result = solver.optimize(
+        problem, _RecordingZeroModel(), _solver_config(iterations=1))
     assert result.stop_reason == "no_legal_update"
     assert result.records[0].rejected_segments == problem.segments.segment_count
     assert np.count_nonzero(result.best_displacements) == 0

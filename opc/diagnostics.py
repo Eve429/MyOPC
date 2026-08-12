@@ -124,7 +124,9 @@ def render_boundary_overlay(
     pixel_nm = pixel_dbu * float(dbu_um) * 1000.0
     batch = RegionBatch({layer: region}, box, CellRef("OPC_VISUAL", 0))
     pixels = render_region_batch(batch, layer, dbu_um, pixel_size_nm=pixel_nm)
-    image = Image.fromarray(pixels, mode="L").convert("RGB")
+    # 公共 raster 数组统一以左下为原点；Pillow 图片第 0 行显示在顶部，所以标注
+    # 边界只在构造显示底图时翻转一次，后续 DBU→图片坐标继续使用顶部向下公式。
+    image = Image.fromarray(np.flipud(pixels), mode="L").convert("RGB")
     # 小版图只对诊断图做最多四倍最近邻放大；DBU 几何和底层栅格值不改变，
     # 放大仅为标签、法向箭头和两类探针留出可读空间。
     display_scale = min(4.0, max(1.0, max_dimension / max(image.width, image.height)))

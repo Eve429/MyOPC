@@ -39,7 +39,7 @@ GDS/OASIS
 - `extract_contour` 一次写入三个连续 64 位缓冲，再建立 NumPy 视图，避免逐 ring 小数组和最终拼接峰值；
 - 数学边的闭环索引和 OPC 分段缓存位于 `opc.input.edge`，不再由通用几何层持久保存；
 - `validate_contours` 检查空边、重复点、ring 数量和拓扑输入不变量；
-- `render_region_batch`/`render_layout_region` 使用 KLayout 面积栅格，输出顶部朝上的 `uint8` 图；
+- `render_region_batch`/`render_layout_region` 使用 KLayout 面积栅格，返回左下原点 `uint8` 数组；PNG/查看器只在输出边界翻转；
 - `PatchSet` 按 Layer 累计原生 ownership Region，拒绝正面积冲突，并精确裁剪 patch；
 - `PatchWriter` 与 `PatchSet` 同属 `geometry.patch`，写临时文件后原子替换目标，不修改源数据库；`layout` 不再反向导入 geometry。
 

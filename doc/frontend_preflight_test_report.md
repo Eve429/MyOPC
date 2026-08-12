@@ -15,7 +15,7 @@
 
 ## 2. 功能矩阵
 
-- Raster：孔洞、部分像素、空 Region、负坐标、上下方向、固定 canvas 超限均保持原结果；展示输出仍为顶部朝上 `uint8`，模型输出仍为左下原点 `float32`。
+- Raster：孔洞、部分像素、空 Region、负坐标、上下方向、固定 canvas 超限均保持覆盖率结果；展示返回值为左下原点 `uint8`，模型返回值为同方向 `float32`，非对称 PNG 在输出边界翻转。
 - 类型归位：包级导入、边段准备、ownership、重建、solver、诊断和离线 v2 归档全部通过；旧深层路径无第一方残留引用。
 - Preflight：小版图完整扫描并接受；低预算在 Region 物化前拒绝；百亿切分估算不构造 SegmentBatch；`int32`、内存预算、扫描下界和推荐模式字段正确。
 - 入口：frontend 的 `preflight_only/rejected/completed` 三状态、`skip_artifacts`、详细阶段统计均覆盖；正式 solver 的 preflight-only 通过 monkeypatch 证明未加载光刻模型。

@@ -68,7 +68,8 @@ def iter_region_coverage_tiles(
             height <= 0 or width <= 0 or max_tile_pixels <= 0):
         raise RasterizationError("像素 DBU、栅格尺寸和分块像素上限必须为正整数")
     # 两个上层调用都需要相同的集合语义：只计算当前 ROI，并在原生端合并重叠
-    # Polygon，避免面积重复。显示层和 OPC 层只在坐标方向、类型与 padding 上分工。
+    # Polygon，避免面积重复。显示层和 OPC 层共享坐标方向，只在类型、padding
+    # 以及是否跨入图片输出边界上分工。
     clipped = (region & kdb.Region(box.to_native())).merged()
     if clipped.is_empty():
         return
@@ -91,22 +92,21 @@ def iter_region_coverage_tiles(
 
 def _rasterize(region: kdb.Region, box: DbuBox, pixel_dbu: int,
                shape: tuple[int, int]) -> NDArray[np.uint8]:
-    """消费公共覆盖率分块，并转换为顶部朝上的八位灰度数组。"""
-    height, _ = shape
+    """消费公共覆盖率分块，并转换为左下原点的八位灰度数组。"""
     pixels = np.zeros(shape, dtype=np.uint8)
     for y0, x0, areas in iter_region_coverage_tiles(region, box, pixel_dbu, shape):
         rows, columns = areas.shape
         areas *= 255.0
         np.rint(areas, out=areas)
-        # 图片第 0 行位于顶部，而版图栅格第 0 行位于底部。块内翻转后再映射到
-        # 全局反向行区间，保证 planner 坐标系的 +Y 在最终图片中仍然朝上。
-        top = height - y0 - rows
-        pixels[top:height - y0, x0:x0 + columns] = np.flipud(areas).astype(np.uint8)
+        # 所有返回给 Python 调用方的版图/模型数组统一保持第 0 行为最低 Y；这样
+        # ROI、OPC 探针和光刻画布可以直接共享索引约定。只有写入人眼图片时翻转，
+        # 避免同一份覆盖率数组因为调用入口不同而具有相反方向。
+        pixels[y0:y0 + rows, x0:x0 + columns] = areas.astype(np.uint8)
     return pixels
 
 
 def _save_png(pixels: NDArray[np.uint8], output_path: str | Path) -> Path:
-    """在目标目录原子保存八位灰度 PNG。"""
+    """把左下原点数组翻为图片方向，并在目标目录原子保存灰度 PNG。"""
     output = Path(output_path).expanduser().resolve()
     if output.suffix.lower() != ".png":
         raise RasterizationError("像素图输出扩展名必须是 .png")
@@ -117,7 +117,9 @@ def _save_png(pixels: NDArray[np.uint8], output_path: str | Path) -> Path:
     os.close(handle)
     temporary = Path(temporary_name)
     try:
-        Image.fromarray(pixels).save(temporary, format="PNG")
+        # 图片文件第 0 行显示在顶部，因此只在 I/O 边界执行一次上下翻转；返回数组
+        # 仍保持模型方向，保存动作不会原位修改调用方的数据。
+        Image.fromarray(np.flipud(pixels)).save(temporary, format="PNG")
         os.replace(temporary, output)
     finally:
         if temporary.exists():
@@ -129,7 +131,7 @@ def render_region_batch(batch: RegionBatch, layer: LayerSpec, dbu_um: float,
                         pixel_size_nm: float = 5.0, *, output_path: str | Path | None = None,
                         show: bool = False,
                         max_pixels: int = _DEFAULT_MAX_PIXELS) -> NDArray[np.uint8]:
-    """把已提取批次中的单层区域显示或保存为灰度 PNG，并返回像素数组。"""
+    """返回左下原点灰度数组，并可按图片方向显示或保存单层区域。"""
     if layer not in batch.regions:
         raise RasterizationError(f"批次不包含图层 {layer.layer}/{layer.datatype}")
     pixel_dbu = _pixel_size_dbu(dbu_um, pixel_size_nm)
@@ -138,7 +140,7 @@ def render_region_batch(batch: RegionBatch, layer: LayerSpec, dbu_um: float,
     if output_path is not None:
         _save_png(pixels, output_path)
     if show:
-        Image.fromarray(pixels).show(title=f"Layer {layer.layer}/{layer.datatype}")
+        Image.fromarray(np.flipud(pixels)).show(title=f"Layer {layer.layer}/{layer.datatype}")
     return pixels
 
 

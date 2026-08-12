@@ -35,7 +35,7 @@ class SimpleMBOPCConfig:
 
 @dataclass(frozen=True, slots=True)
 class IterationRecord:
-    """保存一个已完成光刻评价状态的质量和更新统计。"""
+    """保存一个已评价状态的质量，以及由该状态提出的更新统计。"""
 
     iteration: int
     step_dbu: float
@@ -51,7 +51,7 @@ class IterationRecord:
 
 @dataclass(frozen=True, slots=True)
 class SimpleMBOPCResult:
-    """保存最佳位移、完整轮次记录、最佳轮次和停止原因。"""
+    """保存最佳已评价位移、状态记录、最佳状态下标和停止原因。"""
 
     best_displacements: NDArray[np.float64]
     records: tuple[IterationRecord, ...]

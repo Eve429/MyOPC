@@ -10,7 +10,7 @@
 
 两种上层 raster 保持独立：
 
-- `geometry.render_region_batch`：可变图幅、顶部朝上、`uint8`，服务 PNG/显示；
+- `geometry.render_region_batch`：可变图幅、左下原点、`uint8`；PNG/显示边界再翻转；
 - `opc.input.rasterize_region_canvas`：固定方形、左下原点、`float32` 和零 padding，服务模型。
 
 共同的 Region 裁剪、合并、原生面积栅格化、归一化和临时分块由 `geometry.iter_region_coverage_tiles` 完成。显示调用逐块翻转、量化，不产生整图 float64；OPC 调用逐块写入固定 float32 canvas。这样消除了重复逻辑，同时没有把模型坐标语义塞进通用 geometry。

@@ -260,3 +260,11 @@
 - 阶段 74–77 完成：DiffOPC 改为占据差软栅格、owner-only 计分、逐 batch backward、最佳快照一致和全局拓扑屏障；直接支持 GDS/OASIS 或 segment NPZ，并保存结果 GDS/NPZ/JSON/最终光刻 tile。
 - 新增 14 项 DiffOPC 专项，核心覆盖率 80%；相关 37 项回归与全仓 208 项均通过。真实 `simple.gds` 4-core CPU/CUDA 两轮二值 L2/PVBand/EPE 均为 `773→687`、`350→247`、`2→0`，CUDA 峰值分配 133,264,384 bytes。
 - 最终审计：正式改动 Ruff、compileall、中文 docstring、重复函数体、Markdown 链接、diff whitespace 均通过；`layout/`、`geometry/` 零差异；没有保留旧缓存/拓扑兼容包装，SRAF 和 macro shard 未被误报为当前能力。
+- 阶段 78 开始：读取项目开发手册 12 条 FAQ，并对照两套 raster、simple MB-OPC 轮次屏障、LayoutDB 生命周期、owner/拓扑/preflight 实现；本轮只做审查，不修改生产代码。
+- 已确认两个 raster 共用同一原生覆盖率底层，方向差异只存在于公开返回数组；已确认 simple MB-OPC 的 N−1 提交是当前真实代码行为。
+- KLayout 生命周期实验确认已物化 `RegionBatch` 可脱离关闭后的数据库继续使用，手册第 1 条为文档错误；惰性 `ShapeQuery` 关闭后失败的现有回归仍正确。
+- 完成 12 条 FAQ 分类；40 项 Layout/Geometry/raster/simple MB-OPC 定向回归通过（5.19 s）。阶段 78 只更新审查/错误记录，未修改生产代码或用户数据。
+- 用户授权本轮修改 `geometry/`；Geometry 与 OPC raster 返回数组已统一为左下原点，PNG/查看器/诊断图只在输出边界翻转，Ruff 配置排除用户 notebook。
+- simple MB-OPC 已把 `iterations` 修正为最大更新次数：初态与每次发布后状态均评价，最后更新经过拓扑守卫；56 项核心回归和 37 项入口/工作台回归通过。
+- 阶段 81 完成：Ruff、compileall、210 项全仓测试（72.93 s）和 2048² raster 严格基准通过；95 个第一方 Python 文件中文 docstring/重复函数体、36 份文档链接/围栏及 diff whitespace 审计均通过。
+- 最终调用点审查清理了接口手册中三处旧 raster 方向描述；没有新增包装层、兼容分支或重复求解器，`layout/` 生产代码零修改，`geometry/` 只调整公开数组与图片输出的翻转边界。

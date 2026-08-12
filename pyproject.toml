@@ -29,6 +29,15 @@ include = ["layout*", "geometry*", "opc*", "lithography*", "evaluation*"]
 addopts = "-ra"
 testpaths = ["tests"]
 
+[tool.ruff]
+exclude = ["Test/klayout.ipynb"]
+
+[tool.ruff.lint]
+# 门禁只检查语法、未定义名称和确定性的导入错误；中文标点、紧凑排版等
+# 项目约定不交给 Ruff 改写。直接运行入口的根目录注入以及同块分号是既有约束。
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E402", "E702"]
+
 [tool.coverage.run]
 branch = true
 source = ["layout", "geometry", "opc", "lithography", "evaluation"]

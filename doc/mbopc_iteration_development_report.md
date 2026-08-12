@@ -12,6 +12,8 @@ CPU 常驻全局参考 problem 和一维 displacement。每个 batch 只生成 c
 
 每轮所有 batch 只读 `current`，写入 `next_values`；完成全部 batch 和全局拓扑验证后才发布。该同步屏障保证 core 处理顺序不改变结果，也避免边被某个早完成 batch 提前更新。
 
+本次修复把 `iterations` 明确为“最多提交的全局更新次数”。求解器评价初态，发布每次合法更新后再评价新状态；完整执行 N 次更新产生 N+1 条状态记录，最后一条 `step_dbu=0` 且不再构造候选。最后一次允许更新与此前轮次一样执行全局拓扑检查，不会再被无声丢弃，最佳位移也不会来自未经光刻评价的候选。
+
 最终从最佳全局 displacement 重建一次完整 Region。halo 从不写最终结果，core 也不裁剪最终 Polygon。
 
 owner segment 索引由每 core 的 membership CSR 直接过滤，避免对全局 segment 数组重复扫描。ICCAD13 在一次 `forward` 内共享 mask FFT 和 focus 单位剂量强度；这些优化不改变轮次状态、segment 身份或模型输出接口。
@@ -25,6 +27,8 @@ L2/PVBand 只在 core ownership 像素统计。EPE probe 使用当前 segment �
 ## 4. 拓扑安全
 
 候选轮次发布前检查每个 ring 的有向面积符号和 hull/hole 包含关系。矩形相对边交叉或外轮廓移动到孔内都会整轮回滚。当前没有增加未经验证的局部修补层；这是有明确测试的保守 v1 行为。
+
+所有 raster 公共返回数组同步采用左下原点。Geometry 的 `uint8` 展示数组与 OPC 的 `float32` 模型数组可以按有效区域逐像素对齐；PNG、查看器与边界标注仅在输出边界翻转，不把图片方向传播回优化器。
 
 ## 5. 产物
 

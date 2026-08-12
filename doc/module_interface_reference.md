@@ -31,7 +31,7 @@
 
 - `DbuBox(left, bottom, right, top)` 使用整数 DBU，必须有正宽高。
 - KLayout `Region`、轮廓和边段均位于版图全局坐标系。
-- `geometry.render_*` 返回顶部为第 0 行的显示图；`opc.input.raster` 返回左下原点的模型数组。二者不能直接按行对齐。
+- `geometry.render_*` 与 `opc.input.raster` 的公共数组都以最低 Y 为第 0 行，可在有效 ROI 内直接按行对齐；只有 PNG、Pillow 查看器和标注图底图会在输出边界上下翻转。
 - 边段法向始终从 mask 材料指向空区。正位移沿外法向外移，负位移向材料内部移动。
 - 除非接口明确写入文件，否则生产数据都只在内存中返回；诊断 PNG/GDS/NPZ 只由 `main/` 或 `opc.diagnostics` 显式生成。
 
@@ -223,7 +223,7 @@ GDS/OASIS 或 raster NPZ
 
 #### `render_region_batch(...) -> uint8[H,W]`
 
-把一个 `RegionBatch` 的单 Layer 变成顶部朝上的灰度图；0 表示空，255 表示完全覆盖。`pixel_size_nm` 必须能被当前 `dbu_um` 精确表示成整数 DBU。`max_pixels` 在分配前限制总像素数；可选原子保存 `.png` 或调用系统查看器。
+把一个 `RegionBatch` 的单 Layer 变成左下原点灰度数组；第 0 行对应最低 Y，0 表示空，255 表示完全覆盖。`pixel_size_nm` 必须能被当前 `dbu_um` 精确表示成整数 DBU。`max_pixels` 在分配前限制总像素数；可选 PNG/查看器只在输出边界上下翻转，不改变返回数组。
 
 #### `render_layout_region(...) -> uint8[H,W]`
 
@@ -568,8 +568,8 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 #### 输出记录
 
-- `IterationRecord`：`iteration`、当前 `step_dbu`、EPE/L2/PVBand、有效/歧义探针数、成功移动/拒绝段数、耗时。
-- `SimpleMBOPCResult`：`best_displacements: float64[S]`、记录元组、`best_iteration` 和 `stop_reason`。
+- `IterationRecord`：`iteration` 是已评价状态下标，另含该状态的 EPE/L2/PVBand、有效/歧义探针数，以及由该状态提出的 `step_dbu`、成功移动/拒绝段数和耗时；最终只评价状态的三项更新字段为 0。
+- `SimpleMBOPCResult`：`best_displacements: float64[S]`、状态记录元组、最佳已评价状态下标 `best_iteration` 和 `stop_reason`。
 
 `stop_reason` 当前可能为 `iteration_limit`、`zero_epe` 或 `no_legal_update`。
 
@@ -579,15 +579,16 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 前置约束：每个 core 的 context 按 `pixel_dbu` 计算后必须装入固定 canvas；solver canvas 不得超过模型 canvas。
 
-一轮接口语义：
+状态与更新接口语义：
 
 1. CPU 的 `current: float64[S]` 是本轮只读全局绝对位移；
 2. 每个 batch 构造 target `uint8[B,H,W]`、current mask `float32[B,H,W]`、ownership `bool[B,H,W]`；
 3. GPU/CPU 模型计算三个默认条件；L2/PVBand 只在 ownership 像素累计；
 4. 只为 owner segment 评价参考探针，并把方向写入 `next_values`；halo 只读；
 5. batch 输出释放后继续下一批，但任何批都看不到 `next_values`；
-6. 全部 core 完成后全局重建候选，检查 ring 绕向和 hole 包含关系；合法才跨轮屏障发布，非法则整轮回滚；
-7. 最佳状态只按 EPE 严格改善选择，EPE 相同保留更早轮，L2/PVBand 不影响几何选择。
+6. 全部 core 完成后全局重建候选，检查 ring 绕向和 hole 包含关系；合法才跨轮屏障发布，非法则整次更新回滚；最后一次允许更新也执行相同检查；
+7. `iterations=N` 最多发布 N 次更新，初态和每次发布后状态都执行评价；完整执行产生 N+1 条状态记录，最后一条不再提出更新；
+8. 最佳状态只按 EPE 严格改善选择，EPE 相同保留更早状态，L2/PVBand 不影响几何选择。
 
 固定 target tile 使用字节上限 LRU 缓存；上限 0 可关闭。GPU 只常驻当前 batch，但 CPU 当前仍常驻完整 problem、全局位移和少量索引。输出的 `best_displacements` 不一定是最后一轮位移，调用方必须用它重建最终结果。
 

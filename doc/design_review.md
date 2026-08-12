@@ -28,6 +28,8 @@
 **A. 迭代语义 off-by-one（待确认）【中】**
 `solver.optimize` 主循环在末轮 `if iteration == config.iterations − 1: break`（`solver.py:312`）**早于**提交语句 `current = next_values`（`:319`），导致最后一轮算出的位移永远不提交、也不进入 `best_displacements` 候选。后果：`iterations=1` 提交 **0** 次位移（仅评估参考态），`iterations=N` 最多提交 **N−1** 次。`best_displacements = current.copy()`（`:287`）本身正确（score 反映被评估的 `current`），问题纯粹是末轮 `next_values` 被丢弃。建议二选一：(a) 文档明确“iterations = 评估轮数，返回最佳已评估态”；(b) 末轮也做拓扑检查并提交，使 `iterations=N` 实际应用 N 步。属语义选择，需用户拍板。
 
+**2026-08-12 处置**：用户确认按更新次数修复。当前 `iterations=N` 最多发布 N 次合法更新，评价初态及每次发布后状态；完整执行时产生 N+1 条状态记录，最后记录不再提出候选。末次更新执行同一全局拓扑守卫，最佳位移只来自已评价状态。原段落保留为历史问题说明，不再代表当前行为。
+
 **B. ICCAD13 FFT 归一化是移植不变量（移植脆弱点）【中】**
 `lithography/iccad13.py` 的 `_aerial` 对 `fft2`/`ifft2` **均**用 `norm="forward"`（`:171`/`:172`），两者叠加使 aerial 相对标准卷积多一个 1/N 因子。当前自洽**完全依赖**随附的 OpenILT `.pt` scale 在同一约定下生成。建议加一条“对已知 OpenILT 参考 aerial image 校验绝对强度”的锚定断言，防止日后重生成资产或改 `norm=` 时静默失真。非 bug，是移植校准脆弱点。
 

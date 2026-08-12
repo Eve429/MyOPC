@@ -93,9 +93,11 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 2. 模型输出立即累计本 core 的 L2/PVBand/EPE 和 owner 更新，然后释放 tile tensor；
 3. halo 只提供光学上下文，不累计指标、不写边；
 4. 全部 batch 完成后验证全局候选轮廓；只有合法时才把 `next_values` 发布为下一轮 `current`；
-5. 保存最佳一维位移，结束后只做一次全局重建。
+5. `iterations=N` 最多发布 N 次合法同步更新；初态和每次更新后的状态都会评价，最佳一维位移只来自已评价状态，结束后只做一次全局重建。
 
 因此“立即累计”只累计数值，不会提前移动参考边。跨 core 的同一边段只有一个 owner，其他 core 即使在 halo 中看到它也无写权限。
+
+Geometry 展示与 OPC/ILT 模型的公共 raster 返回数组都使用左下原点；PNG、查看器和诊断标注只在图片输出边界上下翻转。已物化 `RegionBatch` 也可在 `LayoutDB` 关闭后继续使用，只有尚未执行的惰性 `ShapeQuery` 依赖打开的数据库。
 
 求解开始时的零位移状态直接共享 `SegmentBatch.contours`，不执行一次无意义的全局
 `reconstruct_contours`。某个 core 的全部 context segment 仍为精确零位移时，

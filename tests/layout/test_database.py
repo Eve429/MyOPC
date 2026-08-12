@@ -63,6 +63,20 @@ def test_closed_database_invalidates_lazy_query(tmp_path: Path) -> None:
         query.materialize()
 
 
+def test_materialized_region_batch_survives_database_close(tmp_path: Path) -> None:
+    """已物化 RegionBatch 应独立持有几何，关闭数据库后仍可读取和计算。"""
+    source = write_advanced_layout(tmp_path / "advanced.gds")
+    db = LayoutDB.open(source)
+    layer = LayerSpec(1, 0)
+    batch = db.query([layer], DbuBox(-200, -200, 1000, 2700)).materialize()
+    expected = (batch.region(layer).count(), batch.region(layer).area())
+    db.close()
+    # ShapeQuery 依赖数据库的层级迭代器，但 materialize 已把 ROI 结果复制进独立
+    # KLayout Region；关闭源版图不得清空它，否则无法安全解耦输入准备和迭代阶段。
+    assert (batch.region(layer).count(), batch.region(layer).area()) == expected
+    assert expected[0] > 0 and expected[1] > 0
+
+
 def test_importing_layout_does_not_load_geometry() -> None:
     """基础版图层不得因公共导入而反向加载几何输出层。"""
     command = "import sys, layout; assert not any(n == 'geometry' or n.startswith('geometry.') for n in sys.modules)"

@@ -295,10 +295,10 @@
 - 当前生产代码共 45 个 Python 模块：`layout` 6、`geometry` 6、`opc` 21、`lithography` 2、`evaluation` 2、`main` 8（含各包 `__init__`）；接口文档将逐一覆盖，并单列 7 个直接运行入口。
 - 包级公共入口由 `layout/__init__.py`、`geometry/__init__.py`、`opc/input/__init__.py`、`opc/input/edge/__init__.py`、`lithography/__init__.py`、`evaluation/__init__.py` 和两个迭代子包定义；`_arrays.py`、ownership 及 runner 私有辅助函数只记录为内部契约，不宣传为稳定 API。
 - Layout 的核心生命周期是 `LayoutDB.open -> query -> ShapeQuery.materialize -> RegionBatch`；`ShapeQuery` 持有数据库引用，数据库关闭后不可物化，而已经返回的 `RegionBatch` 持有原生 Region。ROI 的候选筛选和精确裁剪均在 KLayout 侧完成，`preserve_properties=True` 只导入并继承属性，不过滤无属性图形。
-- Geometry 有三组独立输出契约：`ContourBatch` 是 Polygon→Ring→Vertex 两级 CSR；`PatchSet` 是按 ownership 裁剪、同层无正面积重叠的结果集合；显示 raster 是顶部朝上的 `uint8`，而底层 coverage tile 是左下原点浮点覆盖率，接口文档必须避免混淆坐标方向。
+- Geometry 有三组独立输出契约：`ContourBatch` 是 Polygon→Ring→Vertex 两级 CSR；`PatchSet` 是按 ownership 裁剪、同层无正面积重叠的结果集合；Geometry 与 OPC raster 公共返回数组现已统一为左下原点，只有图片输出边界翻转。
 - OPC 公共输入分为三层：`PhysicalMask` 保存合并后的单层物理 Region；`RectilinearCoreGrid` 定义唯一写入 core 与只读 halo；`MBOPCProblem` 再加入固定参考轮廓、segment 参数区间、owner 向量和 core→segment CSR。`prepare_problem` 是这三层的组合边界，一次准备后供多轮迭代复用。
 - `SegmentBatch` 不常驻端点；它以 `edge_ids + t0/t1` 引用数学边，`materialize(displacements)` 才输出三个 `float64[S,2]` 数组。owner 由参考边段中点唯一决定；membership 由参考边段 bbox 扩 halo 后形成 CSR，同一 segment 可属于多个 core context 但只能有一个 owner。
-- 栅格接口存在有意的方向差异：`opc.input.raster.rasterize_region_canvas` 返回左下原点、固定 `canvas×canvas` 的 `float32`；`geometry.render_*` 返回顶部朝上的可视化 `uint8`。光刻、探针换算和 ILT 使用前者，PNG 展示使用后者。
+- 栅格接口方向已统一：`opc.input.raster.rasterize_region_canvas` 返回左下原点、固定 `canvas×canvas` 的 `float32`；`geometry.render_*` 返回同方向可变图幅 `uint8`。PNG、查看器和诊断标注只在图片 I/O 边界翻转。
 - `preflight_layout` 会单独读取版图并扫描层级 ROI，在完整 Region/Segment 分配前返回字节估算和接受判断；提前超预算时计数是下界且 `scan_complete=False`，当前拒绝结果指向尚未实现的 `sharded_required`，不能写成自动切换流式求解。
 - 光刻公共接口是 `ICCAD13Lithography.forward(mask, condition)` 和 `forward_many(mask, conditions)`；输入为 `[H,W]` 或 `[B,H,W]`，输出形状与输入一致、值为连续光刻胶概率。模型内部居中 padding 到 canvas、必要时最近邻缩放到 resolution，并在一次 `forward_many` 内共享 mask FFT 和同 kernel bank 的单位剂量强度；原生 PyTorch autograd 提供 backward。
 - Evaluation 的 L2/PVBand 返回 Python `int` 像素计数；EPE 返回五个逐探针 Tensor，其中方向 +1 为沿外法向外移、-1 为内移、同时冲突为 0 且 `ambiguous=True`。这些接口接受的像素图必须 shape/device 一致，ownership mask 只控制计分，不裁剪卷积上下文。
@@ -354,3 +354,17 @@
 - 直接版图入口使用 `materialize_segment_input` 内存层，显式离线归档仍由 `prepare_segment_input` 完成；没有大问题临时 NPZ 写读开销，也没有第二套前端。
 - 真实 `simple.gds` 4-core CPU/CUDA 两轮二值指标一致，L2/PVBand/EPE=`773→687/350→247/2→0`；CUDA 峰值分配 133,264,384 bytes。全仓 208 项通过，DiffOPC 专项核心覆盖率 80%。
 - 当前仍为 CPU 常驻完整问题、GPU 流式 batch；macro shard、SRAF、多 GPU 和未定义规则 deck MRC 均未虚报为完成能力。
+
+## 阶段 78 FAQ 初步审查
+
+- `geometry.raster` 与 `opc.input.raster` 已共用 `iter_region_coverage_tiles`，裁剪、合并、面积覆盖率和分块逻辑没有重复；差异只在最终数组方向、dtype 和固定 canvas padding。
+- OPC/ILT、ownership 与探针坐标统一依赖“第 0 行为低 Y”的模型数组；人眼 PNG 才需要“第 0 行为顶部”。可把展示函数返回值也统一为模型方向，只在 PNG/显示/标注边界执行 `flipud`，从而消除公共 Python 数组存在两种方向的陷阱；这会修改 `geometry/` 的既有返回契约，实施前必须得到用户逐次确认。
+- simple MB-OPC 的旧 `iterations=N` 至多提交 N−1 次更新问题已修复：当前最多提交 N 次，初态和每次更新后的状态均评价，完整执行记录数为 N+1。
+- FAQ 第 1 条已按实测和正式回归修正：惰性 `ShapeQuery` 在数据库关闭后失败，已经物化的 `RegionBatch` 独立持有 Region 并可继续准备问题。
+- 当前 KLayout 实测证明 `RegionBatch` 在 `LayoutDB.close()` 前后保持 25 个 Polygon、面积 136000，并可在关闭后继续执行 `normalize_physical_mask` 和 `prepare_problem` 得到 208 个 segment；FAQ 第 1 条及手册 §1.3/§3.4/§6.3 的“已物化 Region 绑定 DB”说法错误，应改为“只要求惰性查询在关闭前物化”。
+- FFT 条目属于必要的模型校准不变量，已有四资产 SHA-256、OpenILT 三工艺角绝对和、共享/独立 FFT 逐像素对照和 autograd 有限差分测试，不应改变实现；可把 FAQ 改成明确指向这些现有回归。
+- nm→DBU 精确换算、owner 有效范围、重复 owner 写检测、零位移 XOR、确定性测试夹具和大 reticle 预检均是应保留的安全约束，不是待修 bug。第 7 条文档把当前每轮新建 `written bool[S]` 写成 epoch/bitset，属于实现描述漂移，应只改文档。
+- 整轮拓扑回滚能保证正确性但粒度保守；它不是当前 bug。若未来要提升收敛，可在不破坏轮次屏障的前提下采用候选步长回退或按 polygon 隔离非法更新，但必须先定义冲突语义并加入孔洞/对边穿越/跨 core 回归。
+- 定向基线 `tests/geometry/test_raster.py`、`tests/opc/test_iteration_raster.py`、`tests/layout/test_database.py`、`tests/opc/test_simple_mbopc.py` 共 40 项全部通过（5.19 s）。
+- FAQ 修复最终全仓 210 项通过；2048×2048 raster 为 471.94 ms、7.90 MiB 且 coverage exact。Ruff/compileall、95 个 Python 文件中文 docstring 与重复函数体、36 份文档链接/围栏及 diff whitespace 审计均通过。
+- `pytest-cov` 在当前 Windows/KLayout 进程的收集阶段与 NumPy 扩展加载冲突；测试体未执行，因此不作为代码失败，也不报告新增覆盖率数值。无插桩全量与专项分支测试是本轮发布门禁。

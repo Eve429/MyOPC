@@ -16,13 +16,13 @@ from .helpers import region_batch
 
 
 def test_partial_coverage_and_y_axis_are_exact() -> None:
-    """部分覆盖像素应为灰度，并把版图底部映射到图片最后一行。"""
+    """部分覆盖像素应为灰度，返回数组第 0 行统一对应版图最低 Y。"""
     layer = LayerSpec(1, 0)
     region = kdb.Region(kdb.Box(0, 0, 15, 10))
     batch = region_batch({layer: region}, DbuBox(0, 0, 20, 20))
     pixels = render_region_batch(batch, layer, 0.001, pixel_size_nm=10)
     assert pixels.dtype == np.uint8
-    assert pixels.tolist() == [[0, 0], [255, 128]]
+    assert pixels.tolist() == [[255, 128], [0, 0]]
 
 
 def test_hole_overlap_merge_and_forced_tiles(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,7 +48,7 @@ def test_non_multiple_box_pads_right_and_top_with_partial_coverage() -> None:
     box = DbuBox(0, 0, 12, 7)
     batch = region_batch({layer: kdb.Region(box.to_native())}, box)
     pixels = render_region_batch(batch, layer, 0.001, pixel_size_nm=5)
-    assert pixels.tolist() == [[102, 102, 41], [255, 255, 102]]
+    assert pixels.tolist() == [[255, 255, 102], [102, 102, 41]]
 
 
 def test_cross_core_images_reassemble_without_loss_or_overlap() -> None:
@@ -64,19 +64,28 @@ def test_cross_core_images_reassemble_without_loss_or_overlap() -> None:
 
 
 def test_png_save_and_optional_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """同一个像素结果可以原子保存，并按需交给系统查看器显示。"""
+    """返回值保持模型方向，PNG 与查看器只在显示边界翻为顶部原点。"""
     layer = LayerSpec(3, 1)
+    # 只填充 ROI 下半部，确保返回数组和保存图片的上下方向可被真实区分。
     batch = region_batch({layer: kdb.Region(kdb.Box(0, 0, 10, 10))},
-                         DbuBox(0, 0, 10, 10))
+                         DbuBox(0, 0, 10, 20))
     shown: list[str | None] = []
-    monkeypatch.setattr(Image.Image, "show", lambda self, title=None: shown.append(title))
+    shown_pixels: list[np.ndarray] = []
+
+    def capture_show(image: Image.Image, title: str | None = None) -> None:
+        """记录查看器收到的图片方向，避免测试依赖桌面环境。"""
+        shown.append(title)
+        shown_pixels.append(np.asarray(image).copy())
+
+    monkeypatch.setattr(Image.Image, "show", capture_show)
     output = tmp_path / "roi.png"
     expected = render_region_batch(batch, layer, 0.001, pixel_size_nm=5,
                                    output_path=output, show=True)
     with Image.open(output) as image:
         assert image.mode == "L"
-        assert np.array_equal(np.asarray(image), expected)
+        assert np.array_equal(np.asarray(image), np.flipud(expected))
     assert shown == ["Layer 3/1"]
+    assert np.array_equal(shown_pixels[0], np.flipud(expected))
 
 
 def test_layout_convenience_function_uses_existing_database(tmp_path: Path) -> None:

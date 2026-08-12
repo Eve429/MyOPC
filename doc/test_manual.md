@@ -183,6 +183,16 @@ PVBand 在三轮中上升，必须在报告中原样保留，不能只报告改�
 
 交付前执行：完整 diff、`git diff --check`、受保护目录差异、删除符号调用点、AST 中文 docstring、未调用函数/重复实现/异常入口、覆盖率未命中分支和 Markdown 链接/代码围栏检查。用户 GDS、图片和无关工作树修改不得进入提交。
 
+FAQ 契约专项回归：
+
+```powershell
+& $python -m pytest tests\geometry\test_raster.py `
+  tests\opc\test_iteration_raster.py tests\opc\test_simple_mbopc.py `
+  tests\layout\test_database.py tests\opc\test_validation.py -q
+```
+
+重点确认公共 raster 数组都以最低 Y 为第 0 行、PNG 仅在输出边界翻转，以及 `iterations=1` 确实提交并评价一次合法 MB-OPC 更新。详细矩阵见 [FAQ 契约修复测试报告](faq_contract_fix_test_report.md)。
+
 ## 10. 离线光刻与迭代专项测试
 
 准备一次输入：

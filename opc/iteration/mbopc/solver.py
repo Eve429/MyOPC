@@ -145,11 +145,17 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
     best_iteration = 0
     records: list[IterationRecord] = []
     stop_reason = "iteration_limit"
-    for iteration in range(config.iterations):
+    # `iterations` 表示最多提交多少次全局同步更新。初态先评价一次，此后每个合法
+    # 更新发布后再评价新状态，因此完整执行 N 次更新会产生 N+1 条状态记录；最后
+    # 一条只评价最终状态而不再生成候选，保证最佳位移一定对应真实光刻/EPE 结果。
+    for iteration in range(config.iterations + 1):
         started = perf_counter()
-        step = config.initial_step_dbu * (0.5 ** (iteration // config.decay_every))
-        next_values = current.copy()
-        written = np.zeros(problem.segments.segment_count, dtype=np.bool_)
+        can_update = iteration < config.iterations
+        step = (config.initial_step_dbu * (0.5 ** (iteration // config.decay_every))
+                if can_update else 0.0)
+        next_values = current.copy() if can_update else current
+        written = (np.zeros(problem.segments.segment_count, dtype=np.bool_)
+                   if can_update else None)
         total_l2 = total_pvb = 0
         total_epe = total_valid = total_ambiguous = 0
         for batch_start in range(0, len(cores), config.batch_size):
@@ -215,14 +221,17 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
                         torch.as_tensor(np.concatenate(probe_outer), device=model.device),
                         model.config.print_threshold)
                 segments = np.concatenate(probe_segments)
-                if np.any(written[segments]):
-                    raise RuntimeError("一个 segment 在同一轮被多个 core 重复写入")
-                written[segments] = True
-                directions = epe.directions.detach().cpu().numpy()
-                next_values[segments] = np.clip(
-                    current[segments] + directions * step,
-                    -problem.config.max_displacement_dbu,
-                    problem.config.max_displacement_dbu)
+                if can_update:
+                    # 最终评价态没有下一次更新，不分配/写入候选数组；其余状态仍用
+                    # 本轮 bool 表检测唯一 owner 契约，防止错误 membership 重复写边。
+                    if np.any(written[segments]):
+                        raise RuntimeError("一个 segment 在同一轮被多个 core 重复写入")
+                    written[segments] = True
+                    directions = epe.directions.detach().cpu().numpy()
+                    next_values[segments] = np.clip(
+                        current[segments] + directions * step,
+                        -problem.config.max_displacement_dbu,
+                        problem.config.max_displacement_dbu)
                 total_epe += epe.violation_count
                 total_valid += int(torch.count_nonzero(epe.valid).item())
                 total_ambiguous += int(torch.count_nonzero(epe.ambiguous).item())
@@ -236,9 +245,10 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
             best_epe = total_epe
             best_displacements = current.copy()
             best_iteration = iteration
-        moved = int(np.count_nonzero(~np.isclose(next_values, current, atol=1e-12, rtol=0.0)))
+        moved = (int(np.count_nonzero(~np.isclose(
+            next_values, current, atol=1e-12, rtol=0.0))) if can_update else 0)
         rejected = 0
-        if iteration < config.iterations - 1 and moved:
+        if moved:
             try:
                 candidate_contours = reconstruct_contours(problem, next_values)
             except (ValueError, ReconstructionError):
@@ -255,13 +265,14 @@ def optimize(problem: MBOPCProblem, model: ICCAD13Lithography,
         if total_epe == 0:
             stop_reason = "zero_epe"
             break
-        if iteration == config.iterations - 1:
+        if not can_update:
             break
         if moved == 0 or rejected == moved:
             stop_reason = "no_legal_update"
             break
-        # 屏障位于此处：只有全部 core/batch 完成且候选轮廓合法后，下一轮才同时
-        # 看到新的全局绝对位移。不存在边计算边覆盖 `current` 的顺序依赖。
+        # 屏障位于此处：只有全部 core/batch 完成且候选轮廓合法后，下一状态才同时
+        # 看到新的全局绝对位移。末次允许更新也必须经过该重建守卫，随后额外评价
+        # 一次发布结果；不存在未经评价候选冒充最佳状态或边算边覆盖 current。
         current = next_values
         current_contours = candidate_contours
     return SimpleMBOPCResult(

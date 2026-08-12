@@ -52,6 +52,8 @@ flowchart TD
 
 版图数据库只在查询和 `prepare_problem` 期间保持打开。返回的 problem 是 NumPy/KLayout Region 组成的计算输入，后续迭代不再逐 core 调用层级查询。
 
+`ShapeQuery` 必须在数据库关闭前物化；已经返回的 `RegionBatch` 独立持有 ROI Region，可在关闭后继续规范化和提边。入口把两步放在同一 `with` 内是为了缩短生命周期，不表示已物化 Region 仍绑定数据库。
+
 ## 3. 输入构造 `prepare_problem`
 
 ```mermaid

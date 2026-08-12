@@ -4,7 +4,8 @@ import klayout.db as kdb
 import numpy as np
 import pytest
 
-from layout import DbuBox
+from geometry import render_region_batch
+from layout import CellRef, DbuBox, LayerSpec, RegionBatch
 from opc.input.raster import ownership_canvas, rasterize_region_canvas
 
 
@@ -26,6 +27,17 @@ def test_rasterize_hole_preserves_fractional_pixel_coverage() -> None:
     assert image[2, 2] == 0.0
     assert image[1, 1] == pytest.approx(0.75)
     assert image.sum() == pytest.approx(21.0)
+
+
+def test_display_and_model_rasters_share_bottom_left_array_direction() -> None:
+    """展示与模型公共返回数组必须同向，差异只允许是 dtype 和 canvas padding。"""
+    layer, box = LayerSpec(1, 0), DbuBox(0, 0, 40, 30)
+    region = kdb.Region(kdb.Box(0, 0, 20, 10))
+    batch = RegionBatch({layer: region}, box, CellRef("RASTER_DIRECTION", 0))
+    display = render_region_batch(batch, layer, 0.001, pixel_size_nm=10)
+    model = rasterize_region_canvas(region, box, 10, 4)
+    assert display.shape == (3, 4)
+    assert np.array_equal(display, np.rint(model[:3] * 255.0).astype(np.uint8))
 
 
 def test_rasterize_rejects_context_larger_than_fixed_canvas() -> None:

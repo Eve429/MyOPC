@@ -271,7 +271,10 @@ def test_mbopc_runner_optimizes_loaded_cross_core_problem(tmp_path: Path) -> Non
     with np.load(output / "mbopc_result.npz", allow_pickle=False) as data:
         assert np.array_equal(data["best_displacements"], result.best_displacements)
         assert int(data["best_iteration"]) == result.best_iteration
-    assert len(result.records) == 1
+    assert len(result.records) == 2
+    assert result.records[0].moved_segments > 0
+    assert result.records[1].moved_segments == 0
+    assert result.records[1].step_dbu == 0.0
     assert (output / "mbopc_result.gds").is_file()
     assert (output / "mbopc_result.png").is_file()
     manifest = output / "final_lithography" / "manifest.json"

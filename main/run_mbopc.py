@@ -63,8 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="源多边形为透光 clear 或不透光 opaque")
     parser.add_argument("--tile-size-nm", type=float,
                         help="core 正方形边长，默认 1024 nm")
-    parser.add_argument("--halo-nm", type=float,
-                        help="只读光学上下文宽度，默认 512 nm")
+    parser.add_argument("--tile-halo-nm", type=float,
+                        help="每个 tile 的只读光学上下文宽度")
     parser.add_argument("--pixel-nm", type=float,
                         help="一个光刻像素的物理尺寸，默认 8 nm")
     parser.add_argument("--corner-nm", type=float,
@@ -148,9 +148,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         dbu_nm = dbu_um * 1000.0
         pixel_dbu = exact_dbu(args.pixel_nm, dbu_nm, "pixel-nm")
         tile_dbu = exact_dbu(args.tile_size_nm, dbu_nm, "tile-size-nm")
-        halo_dbu = exact_dbu(args.halo_nm, dbu_nm, "halo-nm", allow_zero=True)
+        halo_dbu = exact_dbu(
+            args.tile_halo_nm, dbu_nm, "tile-halo-nm", allow_zero=True)
         if tile_dbu % pixel_dbu or halo_dbu % pixel_dbu:
-            raise ValueError("tile-size-nm 和 halo-nm 必须是 pixel-nm 的整数倍")
+            raise ValueError("tile-size-nm 和 tile-halo-nm 必须是 pixel-nm 的整数倍")
         grid = RectilinearCoreGrid(
             axis_cuts_by_size(box.left, box.right, tile_dbu),
             axis_cuts_by_size(box.bottom, box.top, tile_dbu), halo_dbu)
@@ -273,7 +274,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "device": str(model.device),
         "run_configuration": args._configuration,
         "tiling": {"columns": grid.column_count, "rows": grid.row_count,
-                   "tile_size_nm": args.tile_size_nm, "halo_nm": args.halo_nm,
+                   "tile_size_nm": args.tile_size_nm,
+                   "tile_halo_nm": args.tile_halo_nm,
                    "pixel_nm": args.pixel_nm},
         "counts": {"polygons": problem.segments.contours.polygon_count,
                    "rings": problem.segments.contours.ring_count,

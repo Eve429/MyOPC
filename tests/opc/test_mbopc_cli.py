@@ -31,8 +31,8 @@ def test_direct_mbopc_runner_works_outside_repository_and_writes_results(
     output = tmp_path / "result"
     command = [
         sys.executable, str(project_root / "main" / "run_mbopc.py"), str(source),
-        "--box", "0", "0", "256", "256", "--tile-size-nm", "256",
-        "--halo-nm", "0", "--pixel-nm", "1", "--iterations", "1",
+        "--box", "0", "0", "256", "256", "--tile-size-nm", "128",
+        "--tile-halo-nm", "48", "--pixel-nm", "1", "--iterations", "1",
         "--batch-size", "1", "--device", "cpu", "--output-dir", str(output), "--json",
     ]
     completed = subprocess.run(
@@ -40,7 +40,7 @@ def test_direct_mbopc_runner_works_outside_repository_and_writes_results(
         encoding="utf-8", timeout=30, check=False)
     assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
-    assert result["counts"]["cores"] == 1
+    assert result["counts"]["cores"] == 4
     assert len(result["optimization"]["records"]) == 1
     assert result["verification"]["reconstructed_valid"] is True
     assert Path(result["artifacts"]["summary"]).is_file()
@@ -57,7 +57,7 @@ def test_runner_rejects_tile_not_aligned_to_pixel_before_model_load(tmp_path: Pa
     source = _write_single_layer_layout(tmp_path / "single.gds")
     args = build_parser().parse_args([
         str(source), "--box", "0", "0", "256", "256",
-        "--tile-size-nm", "255", "--halo-nm", "0", "--pixel-nm", "2",
+        "--tile-size-nm", "255", "--tile-halo-nm", "24", "--pixel-nm", "2",
         "--output-dir", str(tmp_path / "unused"),
     ])
     with pytest.raises(ValueError, match="整数倍"):
@@ -76,7 +76,7 @@ def test_solver_preflight_only_does_not_load_lithography_model(
     monkeypatch.setattr("main.run_mbopc.ICCAD13Lithography", forbidden_model)
     args = build_parser().parse_args([
         str(source), "--box", "0", "0", "256", "256",
-        "--tile-size-nm", "256", "--halo-nm", "0", "--pixel-nm", "1",
+        "--tile-size-nm", "256", "--tile-halo-nm", "24", "--pixel-nm", "1",
         "--preflight-only", "--output-dir", str(tmp_path / "result"),
     ])
     result = run(args)

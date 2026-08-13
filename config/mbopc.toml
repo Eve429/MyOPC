@@ -5,7 +5,7 @@
 [entry.mbopc]
 device = "auto"
 tile_size_nm = 1024.0
-halo_nm = 512.0
+tile_halo_nm = 512.0
 pixel_nm = 8.0
 corner_nm = 16.0
 segment_nm = 32.0
@@ -25,7 +25,10 @@ polarity = "clear"
 
 [entry.mbopc_frontend]
 grid = [2, 1]
-halo_nm = 200.0
+tile_halo_nm = 200.0
+roi_halo_nm = 224.0
+macro_size_nm = 4096.0
+pixel_nm = 8.0
 corner_nm = 16.0
 segment_nm = 32.0
 max_displacement_nm = 24.0

@@ -56,7 +56,7 @@ def test_diffopc_runs_on_saved_problem(tmp_path: Path) -> None:
     layout.write(str(source))
     archive = prepare_segment_input(
         source, tmp_path / "input.npz", layer=LayerSpec(1, 0),
-        box=DbuBox(0, 0, 128, 128), tile_size_nm=128, halo_nm=0,
+        box=DbuBox(0, 0, 128, 128), tile_size_nm=128, tile_halo_nm=0,
         corner_nm=8, segment_nm=16, max_displacement_nm=8)
     from main.offline_inputs import load_segment_input
     problem, _ = load_segment_input(archive)

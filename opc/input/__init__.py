@@ -2,6 +2,7 @@
 
 from .grid import CoreSpec, RectilinearCoreGrid
 from .mask import MaskPolarity, PhysicalMask, normalize_physical_mask
+from .macro import macro_boxes
 from .preflight import (
     default_memory_budget_bytes,
     preflight_layout,
@@ -15,6 +16,7 @@ __all__ = [
     "PhysicalMask",
     "RectilinearCoreGrid",
     "default_memory_budget_bytes",
+    "macro_boxes",
     "normalize_physical_mask",
     "preflight_layout",
     "process_memory_snapshot",

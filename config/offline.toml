@@ -13,7 +13,7 @@ canvas = 256
 
 [entry.segments]
 tile_size_nm = 1024.0
-halo_nm = 512.0
+tile_halo_nm = 512.0
 corner_nm = 16.0
 segment_nm = 32.0
 max_displacement_nm = 24.0

@@ -20,7 +20,7 @@ import numpy as np
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, LayoutError, RegionBatch
 from main.artifacts import atomic_json
 from main.configuration import (
-    ConfiguredArgumentParser, glp_layer_map, parse_glp_layer, parse_layer_spec,
+    ConfiguredArgumentParser, exact_dbu, glp_layer_map, parse_glp_layer, parse_layer_spec,
 )
 from opc import OPCError
 from opc.diagnostics import (
@@ -32,6 +32,7 @@ from opc.diagnostics import (
 from opc.input import (
     MaskPolarity,
     RectilinearCoreGrid,
+    macro_boxes,
     preflight_layout,
     process_memory_snapshot,
     resolve_memory_budget_bytes,
@@ -41,9 +42,11 @@ from opc.input.edge import (
     MBOPCProblem,
     edge_probe_points,
     prepare_problem,
+    prepare_macro,
     reconstruct_region,
 )
 from opc.input.grid import axis_cuts_by_size
+from opc.input.raster import rasterize_mask_canvas
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,7 +68,16 @@ def build_parser() -> argparse.ArgumentParser:
                         metavar=("COLUMNS", "ROWS"), help="core 网格列数和行数，默认 2 1")
     tiling.add_argument("--tile-size-nm", type=float, metavar="SIZE",
                         help="按固定正方形边长切分 core，末列和末行自动裁到处理边界")
-    parser.add_argument("--halo-nm", type=float, help="每个 core 的 halo，默认 200 nm")
+    parser.add_argument("--tile-halo-nm", type=float,
+                        help="每个 tile 的光刻只读上下文")
+    parser.add_argument("--roi-halo-nm", type=float,
+                        help="每个 CPU macro 物化完整图形的额外范围")
+    parser.add_argument("--macro-size-nm", type=float,
+                        help="CPU macro 最大边长；边界自动对齐 tile 切线")
+    parser.add_argument("--pixel-nm", type=float,
+                        help="macro 栅格逐 tile 对照的物理像素尺寸")
+    parser.add_argument("--macro-verify", action="store_true",
+                        help="逐 macro 验证未裁剪提边和栅格化时裁剪，不运行全局前端")
     parser.add_argument("--corner-nm", type=float, help="角部段长，默认 16 nm")
     parser.add_argument("--segment-nm", type=float, help="最大段长，默认 32 nm")
     parser.add_argument("--max-displacement-nm", type=float,
@@ -150,10 +162,138 @@ def _problem_configuration(
         x_cuts = axis_cuts_by_size(box.left, box.right, tile_size_dbu)
         y_cuts = axis_cuts_by_size(box.bottom, box.top, tile_size_dbu)
     grid = RectilinearCoreGrid(
-        x_cuts, y_cuts, round(args.halo_nm / dbu_nm))
+        x_cuts, y_cuts,
+        exact_dbu(args.tile_halo_nm, dbu_nm, "tile-halo-nm", allow_zero=True))
     config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
                                  args.max_displacement_nm / dbu_nm)
     return config, grid
+
+
+def _run_macro_verification(
+        args: argparse.Namespace, database: LayoutDB, layer: LayerSpec,
+        box: DbuBox, dbu_um: float, config: FragmentationConfig,
+        tile_grid: RectilinearCoreGrid, output_dir: Path,
+        started: float, timings: dict[str, float],
+        checkpoints: dict[str, dict[str, int]], memory_budget_bytes: int,
+        global_preflight: dict[str, Any]) -> dict[str, Any]:
+    """逐 macro 准备真实边并逐 tile 对照精确裁剪栅格，返回有界验证摘要。"""
+    dbu_nm = dbu_um * 1000.0
+    macro_dbu = exact_dbu(args.macro_size_nm, dbu_nm, "macro-size-nm")
+    roi_halo_dbu = exact_dbu(
+        args.roi_halo_nm, dbu_nm, "roi-halo-nm", allow_zero=True)
+    pixel_dbu = exact_dbu(args.pixel_nm, dbu_nm, "pixel-nm")
+    required_roi_halo = tile_grid.halo_dbu + int(np.ceil(config.max_displacement_dbu))
+    if roi_halo_dbu < required_roi_halo:
+        raise ValueError(
+            f"roi-halo-nm 过小：至少需要 {required_roi_halo * dbu_nm:.3f} nm，"
+            "以覆盖 tile 光学上下文和最大允许边位移")
+    if tile_grid.halo_dbu % pixel_dbu:
+        raise ValueError("tile-halo-nm 必须是 pixel-nm 的整数倍")
+    macros = macro_boxes(tile_grid, macro_dbu)
+    mismatch_pixels = duplicate_owner_tiles = 0
+    total_owned = total_active = total_memberships = 0
+    peak_macro_bytes = 0
+    peak_macro_snapshot = checkpoints["preflight"]
+    written_cores = np.zeros(tile_grid.core_count, dtype=np.bool_)
+    stage = perf_counter()
+    for macro_index, ownership_box in enumerate(macros):
+        context_box = ownership_box.expanded(roi_halo_dbu)
+        # 局部预检只估算当前 macro 所含 tile 的 membership；若仍传全局网格，
+        # 一个跨整片的完整 occurrence 会在每个 macro 重复计入所有远端 tile，
+        # 从而错误拒绝本可流式处理的输入。正式 owner 随后仍使用全局 tile_grid。
+        local_grid = RectilinearCoreGrid(
+            tile_grid.x_cuts[(tile_grid.x_cuts >= ownership_box.left) &
+                             (tile_grid.x_cuts <= ownership_box.right)],
+            tile_grid.y_cuts[(tile_grid.y_cuts >= ownership_box.bottom) &
+                             (tile_grid.y_cuts <= ownership_box.top)],
+            tile_grid.halo_dbu)
+        local_preflight = preflight_layout(
+            database, layer=layer, box=context_box,
+            corner_dbu=config.corner_length_dbu,
+            maximum_segment_dbu=config.max_segment_length_dbu,
+            grid=local_grid, memory_budget_bytes=memory_budget_bytes,
+            include_layout_load_bytes=False)
+        if not local_preflight["accepted"]:
+            raise MemoryError(
+                f"macro {macro_index} {ownership_box} 容量预检失败："
+                f"{local_preflight['reason']}")
+        # 这里只筛选与 context 相交的 occurrence 并保留完整 Polygon；查询框不做
+        # 布尔相交，因此不会成为边。当前 macro 完成后 batch/prepared 均立即释放。
+        batch = database.query([layer], context_box).materialize_intersecting()
+        prepared = prepare_macro(
+            batch, layer, config, tile_grid, ownership_box, args.polarity,
+            max_memberships=int(local_preflight["max_memberships"]))
+        total_active += len(prepared.active_segment_indices)
+        owned_segments = prepared.owned_segments()
+        total_owned += len(owned_segments)
+        total_memberships += len(prepared.member_segment_indices)
+        peak_macro_bytes = max(
+            peak_macro_bytes,
+            prepared.segments.persistent_nbytes + prepared.active_segment_indices.nbytes +
+            prepared.active_owner_indices.nbytes +
+            prepared.core_indices.nbytes + prepared.core_offsets.nbytes +
+            prepared.member_segment_indices.nbytes)
+        # macro 由完整 tile 组成，segment 唯一写入由它的全局 owner tile 决定。
+        # 因此只需验证每个 tile 恰好落入一个 macro；不能保存全局边段签名集合，
+        # 否则验证器自身会重新引入 O(整片 segment 数) 的 Python 对象内存。
+        duplicate_owner_tiles += int(np.count_nonzero(written_cores[prepared.core_indices]))
+        written_cores[prepared.core_indices] = True
+        for core_index in prepared.core_indices:
+            core = tile_grid.core(int(core_index))
+            width = (core.context_box.width + pixel_dbu - 1) // pixel_dbu
+            height = (core.context_box.height + pixel_dbu - 1) // pixel_dbu
+            canvas = max(width, height)
+            actual = rasterize_mask_canvas(
+                prepared.physical_mask.region, core.context_box, pixel_dbu, canvas,
+                polarity=prepared.physical_mask.polarity, field_box=box)
+            # 对照路径使用既有精确裁剪 materialize；它只物化当前 tile context，
+            # 不构造整 ROI。两张画布比较后立即释放，峰值不随 macro/tile 数增长。
+            expected_batch = database.query([layer], core.context_box).materialize()
+            expected = rasterize_mask_canvas(
+                expected_batch.region(layer), core.context_box, pixel_dbu, canvas,
+                polarity=prepared.physical_mask.polarity, field_box=box)
+            mismatch_pixels += int(np.count_nonzero(~np.isclose(
+                actual, expected, atol=1e-6, rtol=0.0)))
+            del actual, expected, expected_batch
+        del prepared, batch
+        snapshot = process_memory_snapshot()
+        if snapshot["peak_working_set_bytes"] > peak_macro_snapshot["peak_working_set_bytes"]:
+            peak_macro_snapshot = snapshot
+    timings["macro_prepare_and_raster"] = perf_counter() - stage
+    if duplicate_owner_tiles or not np.all(written_cores):
+        raise RuntimeError("macro tile 覆盖必须无重复且完整")
+    timings["total"] = perf_counter() - started
+    checkpoints["macro_peak"] = peak_macro_snapshot
+    checkpoints["total"] = process_memory_snapshot()
+    result: dict[str, Any] = {
+        "run_configuration": args._configuration,
+        "status": "macro_verified", "source": str(database.source_path),
+        "layer": f"{layer.layer}/{layer.datatype}", "dbu_um": dbu_um,
+        "box_dbu": [box.left, box.bottom, box.right, box.top],
+        "preflight": global_preflight,
+        "tiling": {
+            "tile_columns": tile_grid.column_count, "tile_rows": tile_grid.row_count,
+            "macro_count": len(macros), "tile_size_nm": args.tile_size_nm,
+            "macro_size_nm": args.macro_size_nm,
+            "tile_halo_nm": args.tile_halo_nm, "roi_halo_nm": args.roi_halo_nm,
+            "pixel_nm": args.pixel_nm,
+        },
+        "counts": {
+            "macro_active_segments": total_active,
+            "macro_owned_segments": total_owned,
+            "macro_memberships": total_memberships,
+        },
+        "memory": {"peak_macro_array_bytes": peak_macro_bytes},
+        "timing_seconds": timings, "memory_checkpoints": checkpoints,
+        "verification": {
+            "raster_mismatch_pixels": mismatch_pixels,
+            "duplicate_owned_segments": 0,
+            "materialization_mode": "complete_intersecting_shapes",
+        },
+        "artifacts": {"json": str(output_dir / "summary.json")},
+    }
+    atomic_json(output_dir / "summary.json", result)
+    return result
 
 
 def _finish_stage(timings: dict[str, float], checkpoints: dict[str, dict[str, int]],
@@ -201,6 +341,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = args.output_dir.expanduser().resolve()
     budget = resolve_memory_budget_bytes(args.memory_budget_gib)
     preflight: dict[str, Any]
+    if args.macro_verify and args.layout is None:
+        raise ValueError("macro-verify 必须提供真实 GDS/OASIS/GLP 输入")
 
     # 阶段①准备输入。两条分支：合成案例（含重叠、孔洞、凹角、斜边、跨 core 长边，
     # 一次性覆盖前端所有几何路径，无需版图文件）与真实 GDS/OASIS（逐层、按 ROI
@@ -259,8 +401,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 maximum_segment_dbu=config.max_segment_length_dbu, grid=grid,
                 memory_budget_bytes=budget)
             _finish_stage(timings, checkpoints, "preflight", stage)
-            if not preflight["accepted"] or args.preflight_only:
-                status = "preflight_only" if preflight["accepted"] else "rejected"
+            if args.preflight_only or (not preflight["accepted"] and not args.macro_verify):
+                status = ("preflight_only" if args.preflight_only and preflight["accepted"]
+                          else "rejected")
                 result = {
                     "run_configuration": args._configuration,
                     "status": status, "source": source,
@@ -274,6 +417,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 checkpoints["total"] = process_memory_snapshot()
                 atomic_json(output_dir / "summary.json", result)
                 return result
+            if args.macro_verify:
+                # Macro 验证在预检通过后直接走未裁剪相交物化，不构造完整处理 ROI
+                # 的 Region/SegmentBatch。每个 macro 完成后释放，证明 CPU 工作集可
+                # 随 macro 大小受控；此阶段不调用 solver，也不宣称支持多轮 shard。
+                return _run_macro_verification(
+                    args, database, layer, box, dbu_um, config, grid,
+                    output_dir, total_started, timings, checkpoints, budget, preflight)
             stage = perf_counter()
             batch = database.query([layer], box).materialize()
             _finish_stage(timings, checkpoints, "roi_materialize", stage)
@@ -413,6 +563,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 def print_text(result: dict[str, Any]) -> None:
     """以紧凑中文输出主要计数、性能和产物路径。"""
+    if result["status"] == "macro_verified":
+        tiling, verification = result["tiling"], result["verification"]
+        print(f"Macro/Tile：{tiling['macro_count']}/"
+              f"{tiling['tile_columns'] * tiling['tile_rows']}")
+        print(f"栅格不一致像素：{verification['raster_mismatch_pixels']}  "
+              f"重复 owned 边段：{verification['duplicate_owned_segments']}")
+        print(f"JSON：{result['artifacts']['json']}")
+        return
     if result["status"] != "completed":
         preflight = result["preflight"]
         print(f"状态：{result['status']}  原因：{preflight['reason']}")

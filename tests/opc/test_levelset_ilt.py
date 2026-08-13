@@ -149,6 +149,26 @@ def test_levelset_runner_accepts_gds_and_saves_complete_artifacts(tmp_path: Path
         assert data["best_parameters"].shape == (256, 256)
 
 
+def test_ilt_layout_input_does_not_call_edge_macro_preparation(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ILT 仍应使用精确像素 ROI，不得依赖 MB-OPC 的边段 macro 准备。"""
+    layout = kdb.Layout(); layout.dbu = 0.001
+    layer_index = layout.layer(1, 0); top = layout.create_cell("TOP")
+    top.shapes(layer_index).insert(kdb.Box(-8, 8, 40, 40))
+    source = tmp_path / "pixel-only.gds"; layout.write(str(source))
+
+    def forbidden_prepare(*args: object, **kwargs: object) -> None:
+        """若像素 ILT 错误进入边段准备就立即失败。"""
+        raise AssertionError("ILT 不应调用 prepare_macro")
+
+    monkeypatch.setattr("opc.input.edge.prepare_macro", forbidden_prepare)
+    summary = run_ilt(
+        source, tmp_path / "pixel-output", method="levelset", iterations=1,
+        device="cpu", save_png=False, layer=LayerSpec(1, 0),
+        box=(0, 0, 64, 64), pixel_nm=1.0, canvas=256)
+    assert summary["status"] == "completed"
+
+
 def test_levelset_cli_runs_from_outside_repository(tmp_path: Path) -> None:
     """用户应能在仓库外直接运行主文件，并从 JSON 取得完整产物位置。"""
     layout = kdb.Layout(); layout.dbu = 0.001

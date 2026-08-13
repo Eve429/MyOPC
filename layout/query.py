@@ -32,7 +32,15 @@ class ShapeQuery:
     preserve_properties: bool = False
 
     def materialize(self, diagnostics: bool = False) -> RegionBatch:
-        """通过 KLayout C++ 迭代器按层物化可转为 Polygon 的图形。"""
+        """物化相交图形并精确裁到查询框，供显示、像素 ROI 和普通查询使用。"""
+        return self._materialize(diagnostics, clip=True)
+
+    def materialize_intersecting(self, diagnostics: bool = False) -> RegionBatch:
+        """物化与查询框相交的完整图形，供裁剪前提取真实物理边。"""
+        return self._materialize(diagnostics, clip=False)
+
+    def _materialize(self, diagnostics: bool, *, clip: bool) -> RegionBatch:
+        """在一次原生层级遍历中批量物化，并按调用语义选择是否裁剪。"""
         db = self.database
         layout, native_cell = db._native_layout, db._native_cell(self.cell)
         native_box = self.box.to_native()
@@ -42,26 +50,30 @@ class ShapeQuery:
         started = perf_counter() if diagnostics else 0.0
         for layer in self.layers:
             index = db._native_layer_index(layer)
-            # 关键性能路径：递归迭代、实例变换和 Region 构造都在 KLayout C++ 内完成。
-            # 解释器每层只发起一次批量调用，不逐个图形读取坐标，也不展开完整层级。
+            # 关键性能路径：层级筛选、实例变换和 Region 构造均在 KLayout C++
+            # 内完成；Python 每层只发起一次批量调用，不逐 occurrence 读取坐标。
             iterator = kdb.RecursiveShapeIterator(layout, native_cell, index, native_box, True)
-            # 必须在原生迭代器侧限制图形类型。未过滤的 ROI 迭代器可能让 Text 进入
-            # 原生区域计数，但其多边形遍历又会忽略文本，造成计数不一致。
-            # 在这里过滤既保证语义一致，也避免为过滤类型增加 Python 逐图形循环。
+            # 原生侧只接纳可转换为面积 Polygon 的类型，避免 Text/Edge 进入 Region
+            # 计数但不进入轮廓；诊断需要这些类型时另走按需统计，不污染热路径。
             iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
             if self.preserve_properties:
-                # 这里只启用属性导入，不叠加 SProperties。后者在 KLayout 中表示
-                # “只选择带属性的图形”，会错误丢弃同一 ROI 内没有属性的有效几何。
+                # enable_properties 只导入属性，不使用 SProperties 过滤器；后者会把
+                # 同一 ROI 内无属性的正常几何错误排除。
                 iterator.enable_properties()
-            # RecursiveShapeIterator 的 ROI 只筛选相交候选，跨边界图形仍保留完整
-            # Polygon。这里每层一次原生 Region 相交，统一保证所有消费者拿到的
-            # 都是精确 planner ROI；避免 CLI、MB-OPC 等入口各自决定是否再裁剪。
+            # iterator 的 ROI 只筛相交候选，不裁图形；是否精确裁剪由此处唯一参数
+            # 决定，普通像素/显示与 macro 真实提边不会维护两套层级遍历逻辑。
             region = kdb.Region(iterator)
-            # KLayout 的普通 `&` 会主动丢弃 Polygon 属性；属性模式必须显式使用
-            # NoPropertyConstraint，含义是几何仍与裁剪框求交，但结果继承左侧原图
-            # 属性。两条路径都在 C++ 内批量执行，不增加逐 Polygon Python 循环。
-            regions[layer] = (region.and_(clip_region, kdb.Region.NoPropertyConstraint)
-                              if self.preserve_properties else region & clip_region)
+            if clip:
+                # 普通 `&` 会丢 Polygon 属性；属性模式以 NoPropertyConstraint 求交，
+                # 几何仍精确裁到 ROI，结果继承左侧原图属性。
+                regions[layer] = (region.and_(clip_region, kdb.Region.NoPropertyConstraint)
+                                  if self.preserve_properties else region & clip_region)
+            else:
+                # 未裁剪 deep Region 借用 LayoutDB，必须在关闭前原生展平。KLayout
+                # flatten 会静默丢属性，因此属性模式用 merged 并保持不同属性的
+                # shape class；无属性 OPC 热路径继续使用开销更直接的 flatten。
+                regions[layer] = (region.merged(False, 0, False)
+                                  if self.preserve_properties else region.flatten())
             if diagnostics:
                 diagnostic_map[layer] = self._collect_shape_stats(layout, native_cell, index, native_box)
         stats = MaterializationStats(perf_counter() - started, diagnostic_map) if diagnostics else None

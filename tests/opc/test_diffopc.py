@@ -234,7 +234,7 @@ def test_direct_gds_runner_saves_geometry_metrics_and_final_lithography(
     output = tmp_path / "output"
     summary = run_diffopc(
         source, output, iterations=1, pixel_nm=1.0,
-        tile_size_nm=128.0, halo_nm=32.0, corner_nm=8.0,
+        tile_size_nm=128.0, tile_halo_nm=32.0, corner_nm=8.0,
         segment_nm=16.0, max_displacement_nm=8.0,
         epe_distance_nm=4.0, batch_size=1, raster_chunk_size=4,
         device="cpu", layer=LayerSpec(1, 0), box=(0, 0, 128, 128),

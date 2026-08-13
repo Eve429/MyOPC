@@ -112,7 +112,8 @@ def preflight_layout(
         corner_dbu: float | None = None, maximum_segment_dbu: float | None = None,
         grid: RectilinearCoreGrid | None = None, memory_budget_bytes: int,
         max_file_bytes: int | None = None, max_shape_occurrences: int | None = None,
-        max_source_vertices: int | None = None) -> dict[str, int | bool | str]:
+        max_source_vertices: int | None = None,
+        include_layout_load_bytes: bool = True) -> dict[str, int | bool | str]:
     """扫描指定层级 ROI，并在任何完整 Region 或边段数组分配前返回容量判断。"""
     source = database.source_path
     file_bytes = source.stat().st_size
@@ -120,6 +121,9 @@ def preflight_layout(
         raise ValueError(f"版图文件 {file_bytes / _GIB:.3f} GiB 超过读取上限")
     if not isinstance(memory_budget_bytes, Integral) or memory_budget_bytes <= 0:
         raise ValueError("memory_budget_bytes 必须是正整数")
+    if not isinstance(include_layout_load_bytes, bool):
+        raise TypeError("include_layout_load_bytes 必须是 bool")
+    estimated_file_bytes = file_bytes if include_layout_load_bytes else 0
     if (corner_dbu is None) != (maximum_segment_dbu is None):
         raise ValueError("边段预检必须同时提供 corner_dbu 和 maximum_segment_dbu")
     if corner_dbu is not None and (corner_dbu <= 0.0 or maximum_segment_dbu <= 0.0):
@@ -154,9 +158,9 @@ def preflight_layout(
                 memberships += _membership_upper_bound(
                     points[valid], ends[valid], counts, grid)
         prepare_bytes = estimate_prepare_peak_bytes(
-            file_bytes, shapes, vertices, segments, memberships)
+            estimated_file_bytes, shapes, vertices, segments, memberships)
         solver_bytes = estimate_solver_peak_bytes(
-            file_bytes, shapes, vertices, segments, memberships)
+            estimated_file_bytes, shapes, vertices, segments, memberships)
         # 已经超过预算或 int32 后，当前统计就是足以拒绝的严格下界。立即停止层级
         # 展开可避免仅为得到更大的数字而扫描数亿 occurrence；摘要显式标记未完成。
         if (max(prepare_bytes, solver_bytes) > memory_budget_bytes or
@@ -164,9 +168,9 @@ def preflight_layout(
             scan_complete = False
             break
     prepare_bytes = estimate_prepare_peak_bytes(
-        file_bytes, shapes, vertices, segments, memberships)
+        estimated_file_bytes, shapes, vertices, segments, memberships)
     solver_bytes = estimate_solver_peak_bytes(
-        file_bytes, shapes, vertices, segments, memberships)
+        estimated_file_bytes, shapes, vertices, segments, memberships)
     int32_ok = segments <= _INT32_MAX and memberships <= _INT32_MAX
     memory_ok = max(prepare_bytes, solver_bytes) <= memory_budget_bytes
     accepted = scan_complete and int32_ok and memory_ok

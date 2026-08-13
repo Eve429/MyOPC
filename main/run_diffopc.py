@@ -42,7 +42,7 @@ from opc.iteration.diffopc import DiffOPCConfig, optimize  # noqa: E402
 def _load_problem(
         input_path: str | Path, *, layer: object = None,
         top_cell: str | None = None, box: tuple[int, int, int, int] | None = None,
-        tile_size_nm: float = 1024.0, halo_nm: float = 512.0,
+        tile_size_nm: float = 1024.0, tile_halo_nm: float = 512.0,
         corner_nm: float = 16.0, segment_nm: float = 32.0,
         max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
         max_shapes: int = 5_000_000, max_vertices: int = 20_000_000,
@@ -57,7 +57,7 @@ def _load_problem(
     return materialize_segment_input(
         source, layer=layer,
         top_cell=top_cell, box=box, tile_size_nm=tile_size_nm,
-        halo_nm=halo_nm, corner_nm=corner_nm, segment_nm=segment_nm,
+        tile_halo_nm=tile_halo_nm, corner_nm=corner_nm, segment_nm=segment_nm,
         max_displacement_nm=max_displacement_nm, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shapes, max_source_vertices=max_vertices,
         max_estimated_gib=max_estimated_gib, polarity=polarity,
@@ -74,7 +74,7 @@ def run_diffopc(
         device: str = "auto", save_preview: bool = True,
         save_final_lithography_png: bool = True, layer: object = None,
         top_cell: str | None = None, box: tuple[int, int, int, int] | None = None,
-        tile_size_nm: float = 1024.0, halo_nm: float = 512.0,
+        tile_size_nm: float = 1024.0, tile_halo_nm: float = 512.0,
         corner_nm: float = 16.0, segment_nm: float = 32.0,
         max_displacement_nm: float | None = None, max_file_gib: float = 4.0,
         max_shapes: int = 5_000_000, max_vertices: int = 20_000_000,
@@ -101,7 +101,7 @@ def run_diffopc(
     # 走经安全预检的唯一正式前端内存层，不复制 Layer/ROI、不写临时 NPZ。
     problem, metadata = _load_problem(
         source, layer=layer, top_cell=top_cell, box=box,
-        tile_size_nm=tile_size_nm, halo_nm=halo_nm, corner_nm=corner_nm,
+        tile_size_nm=tile_size_nm, tile_halo_nm=tile_halo_nm, corner_nm=corner_nm,
         segment_nm=segment_nm, max_displacement_nm=direct_limit_nm,
         max_file_gib=max_file_gib, max_shapes=max_shapes,
         max_vertices=max_vertices, max_estimated_gib=max_estimated_gib,
@@ -251,7 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview", action=argparse.BooleanOptionalAction)
     parser.add_argument("--no-final-lithography-png", action="store_true")
     parser.add_argument("--tile-size-nm", type=float)
-    parser.add_argument("--halo-nm", type=float)
+    parser.add_argument("--tile-halo-nm", type=float)
     parser.add_argument("--corner-nm", type=float)
     parser.add_argument("--segment-nm", type=float)
     parser.add_argument("--max-displacement-nm", type=float)
@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             save_final_lithography_png=not args.no_final_lithography_png,
             layer=args.layer, top_cell=args.top_cell,
             box=None if args.box is None else tuple(args.box),
-            tile_size_nm=args.tile_size_nm, halo_nm=args.halo_nm,
+            tile_size_nm=args.tile_size_nm, tile_halo_nm=args.tile_halo_nm,
             corner_nm=args.corner_nm, segment_nm=args.segment_nm,
             max_displacement_nm=args.max_displacement_nm,
             max_file_gib=args.max_file_gib, max_shapes=args.max_shapes,

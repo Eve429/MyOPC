@@ -133,7 +133,7 @@ def test_strict_shape_guard_runs_before_region_materialization(
         prepare_segment_input(
             source, tmp_path / "too_complex.npz", layer=LayerSpec(1, 0),
             box=DbuBox(0, 0, 512, 256), tile_size_nm=128.0,
-            halo_nm=64.0, max_shape_occurrences=1)
+            tile_halo_nm=64.0, max_shape_occurrences=1)
 
 
 def test_segment_round_trip_preserves_cross_core_topology(tmp_path: Path) -> None:
@@ -142,7 +142,7 @@ def test_segment_round_trip_preserves_cross_core_topology(tmp_path: Path) -> Non
     archive = prepare_segment_input(
         source, tmp_path / "segments.npz", layer=LayerSpec(1, 0),
         box=DbuBox(0, 0, 512, 256), tile_size_nm=128.0,
-        halo_nm=64.0, corner_nm=8.0, segment_nm=16.0,
+        tile_halo_nm=64.0, corner_nm=8.0, segment_nm=16.0,
         max_displacement_nm=16.0)
     problem, metadata = load_segment_input(archive)
     zero = np.zeros(problem.segments.segment_count, dtype=np.float64)
@@ -163,7 +163,7 @@ def test_segment_loader_rejects_missing_and_out_of_range_members(
     archive = prepare_segment_input(
         source, tmp_path / "valid.npz", layer=LayerSpec(1, 0),
         box=DbuBox(0, 0, 256, 128), tile_size_nm=128.0,
-        halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
+        tile_halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
     missing = _rewrite_npz(archive, tmp_path / "missing.npz", "edge_next_ids", None)
     with pytest.raises(ValueError, match="缺少字段"):
         load_segment_input(missing)
@@ -183,7 +183,7 @@ def test_segment_loader_rejects_v1_with_regeneration_message(tmp_path: Path) -> 
     archive = prepare_segment_input(
         source, tmp_path / "version_v2.npz", layer=LayerSpec(1, 0),
         box=DbuBox(0, 0, 256, 128), tile_size_nm=128.0,
-        halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
+        tile_halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
     missing_v2_field = _rewrite_npz(
         archive, tmp_path / "version_v1_fields.npz", "edge_next_ids", None)
     legacy = _rewrite_npz(
@@ -199,7 +199,7 @@ def test_segment_loader_normalizes_invalid_count_metadata(tmp_path: Path) -> Non
     archive = prepare_segment_input(
         source, tmp_path / "metadata_valid.npz", layer=LayerSpec(1, 0),
         box=DbuBox(0, 0, 256, 128), tile_size_nm=128.0,
-        halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
+        tile_halo_nm=64.0, corner_nm=8.0, segment_nm=16.0)
     with np.load(archive, allow_pickle=False) as data:
         metadata = json.loads(str(data["metadata_json"].item()))
     metadata["counts"] = {"segments": 1}
@@ -261,7 +261,7 @@ def test_mbopc_runner_optimizes_loaded_cross_core_problem(tmp_path: Path) -> Non
     archive = prepare_segment_input(
         source, tmp_path / "opc_input.npz", layer=LayerSpec(1, 0),
         box=DbuBox(0, 0, 256, 128), tile_size_nm=128.0,
-        halo_nm=64.0, corner_nm=8.0, segment_nm=16.0,
+        tile_halo_nm=64.0, corner_nm=8.0, segment_nm=16.0,
         max_displacement_nm=16.0)
     output = tmp_path / "mbopc"
     result = run_mbopc_iteration_test(

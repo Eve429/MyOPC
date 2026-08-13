@@ -27,7 +27,7 @@ def test_direct_runner_writes_all_artifacts_and_validates_round_trips(tmp_path: 
     for path in result["artifacts"].values():
         assert Path(path).is_file()
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
-    assert summary["counts"]["updated_segments"] == 2
+    assert summary["counts"]["updated_segments"] == summary["counts"]["cores"]
     with np.load(tmp_path / "segments.npz", allow_pickle=False) as arrays:
         assert len(arrays["segment_edge_ids"]) == summary["counts"]["segments"]
         assert "segment_keys" not in arrays.files
@@ -159,3 +159,53 @@ def test_real_frontend_preflight_only_and_low_budget_rejection(
     assert rejected["status"] == "rejected"
     assert rejected["preflight"]["memory_budget_ok"] is False
     assert rejected["preflight"]["recommended_mode"] == "sharded_required"
+
+
+def test_macro_frontend_keeps_crossing_hierarchy_and_matches_tile_rasters(
+        tmp_path: Path) -> None:
+    """层级跨 macro 图形应保留真实边，逐 tile 栅格必须与精确 ROI 路径一致。"""
+    source = tmp_path / "macro-crossing.gds"
+    native = kdb.Layout(); native.dbu = 0.001
+    layer_index = native.layer(kdb.LayerInfo(1, 0))
+    child = native.create_cell("CHILD")
+    child.shapes(layer_index).insert(kdb.Box(-20, 20, 220, 180))
+    top = native.create_cell("TOP"); top.insert(kdb.CellInstArray(child.cell_index(), kdb.Trans()))
+    native.write(str(source))
+    result = run(build_parser().parse_args([
+        str(source), "--layer", "1/0", "--box", "0", "0", "200", "200",
+        "--tile-size-nm", "50", "--tile-halo-nm", "10",
+        "--roi-halo-nm", "18", "--macro-size-nm", "100", "--pixel-nm", "2",
+        "--max-displacement-nm", "8", "--macro-verify",
+        "--output-dir", str(tmp_path / "macro-output"),
+    ]))
+    assert result["status"] == "macro_verified"
+    assert result["tiling"]["macro_count"] == 4
+    assert result["verification"] == {
+        "raster_mismatch_pixels": 0, "duplicate_owned_segments": 0,
+        "materialization_mode": "complete_intersecting_shapes",
+    }
+    assert set(result["memory_checkpoints"]) == {
+        "start", "layout_open", "preflight", "macro_peak", "total"}
+
+
+def test_macro_frontend_rejects_missing_layout_and_short_roi_halo(tmp_path: Path) -> None:
+    """macro 模式必须具有真实源版图，且 ROI halo 要覆盖 tile halo 与最大位移。"""
+    with pytest.raises(ValueError, match="必须提供真实"):
+        run(build_parser().parse_args([
+            "--macro-verify", "--output-dir", str(tmp_path / "missing")]))
+    source = write_advanced_layout(tmp_path / "short-halo.gds")
+    args = build_parser().parse_args([
+        str(source), "--layer", "1/0", "--tile-size-nm", "128",
+        "--tile-halo-nm", "32", "--roi-halo-nm", "39",
+        "--macro-size-nm", "256", "--pixel-nm", "8",
+        "--max-displacement-nm", "8", "--macro-verify",
+        "--output-dir", str(tmp_path / "short"),
+    ])
+    with pytest.raises(ValueError, match="roi-halo-nm 过小"):
+        run(args)
+
+
+def test_old_halo_option_is_rejected_instead_of_silently_reinterpreted() -> None:
+    """旧含糊参数必须明确迁移，不能同时保留两套 halo 含义。"""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--halo-nm", "32"])

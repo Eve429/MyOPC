@@ -312,7 +312,7 @@ def materialize_segment_input(
         layout_path: str | Path, *,
         layer: LayerSpec | None = None, top_cell: str | None = None,
         box: DbuBox | tuple[int, int, int, int] | None = None,
-        tile_size_nm: float = 1024.0, halo_nm: float = 512.0,
+        tile_size_nm: float = 1024.0, tile_halo_nm: float = 512.0,
         corner_nm: float = 16.0, segment_nm: float = 32.0,
         max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
@@ -332,7 +332,7 @@ def materialize_segment_input(
         dbu_um, source_bytes = database.dbu_um, source.stat().st_size
         dbu_nm = dbu_um * 1000.0
         tile_dbu = exact_dbu(tile_size_nm, dbu_nm, "tile_size_nm")
-        halo_dbu = exact_dbu(halo_nm, dbu_nm, "halo_nm", allow_zero=True)
+        halo_dbu = exact_dbu(tile_halo_nm, dbu_nm, "tile_halo_nm", allow_zero=True)
         config = FragmentationConfig(
             float(exact_dbu(corner_nm, dbu_nm, "corner_nm")),
             float(exact_dbu(segment_nm, dbu_nm, "segment_nm")),
@@ -380,7 +380,7 @@ def materialize_segment_input(
             "miter_limit": config.miter_limit,
         },
         "tiling": {"tile_size_nm": float(tile_size_nm), "tile_dbu": tile_dbu,
-                   "halo_nm": float(halo_nm), "halo_dbu": halo_dbu,
+                   "tile_halo_nm": float(tile_halo_nm), "tile_halo_dbu": halo_dbu,
                    "columns": grid.column_count, "rows": grid.row_count},
         "counts": {"polygons": contours.polygon_count, "rings": contours.ring_count,
                    "edges": len(contours.vertices), "segments": segments.segment_count,
@@ -395,7 +395,7 @@ def prepare_segment_input(
         layout_path: str | Path, output_path: str | Path, *,
         layer: LayerSpec | None = None, top_cell: str | None = None,
         box: DbuBox | tuple[int, int, int, int] | None = None,
-        tile_size_nm: float = 1024.0, halo_nm: float = 512.0,
+        tile_size_nm: float = 1024.0, tile_halo_nm: float = 512.0,
         corner_nm: float = 16.0, segment_nm: float = 32.0,
         max_displacement_nm: float = 24.0, max_file_gib: float = 4.0,
         max_shape_occurrences: int = 5_000_000,
@@ -407,7 +407,7 @@ def prepare_segment_input(
     """物化边段问题并保存可严格恢复的版本化离线归档。"""
     problem, metadata = materialize_segment_input(
         layout_path, layer=layer, top_cell=top_cell, box=box,
-        tile_size_nm=tile_size_nm, halo_nm=halo_nm,
+        tile_size_nm=tile_size_nm, tile_halo_nm=tile_halo_nm,
         corner_nm=corner_nm, segment_nm=segment_nm,
         max_displacement_nm=max_displacement_nm, max_file_gib=max_file_gib,
         max_shape_occurrences=max_shape_occurrences,
@@ -598,7 +598,7 @@ def build_parser() -> argparse.ArgumentParser:
     segments = commands.add_parser("segments", help="保存完整可恢复 MBOPCProblem")
     _add_common_arguments(segments)
     segments.add_argument("--tile-size-nm", type=float)
-    segments.add_argument("--halo-nm", type=float)
+    segments.add_argument("--tile-halo-nm", type=float)
     segments.add_argument("--corner-nm", type=float)
     segments.add_argument("--segment-nm", type=float)
     segments.add_argument("--max-displacement-nm", type=float)
@@ -627,7 +627,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             output = prepare_segment_input(
                 args.layout, args.output, tile_size_nm=args.tile_size_nm,
-                halo_nm=args.halo_nm, corner_nm=args.corner_nm,
+                tile_halo_nm=args.tile_halo_nm, corner_nm=args.corner_nm,
                 segment_nm=args.segment_nm,
                 max_displacement_nm=args.max_displacement_nm, **common)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:

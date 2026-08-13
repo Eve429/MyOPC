@@ -71,3 +71,22 @@ def test_process_memory_snapshot_uses_stable_nonnegative_fields() -> None:
         "system_available_bytes",
     }
     assert all(isinstance(value, int) and value >= 0 for value in snapshot.values())
+
+
+def test_macro_preflight_excludes_already_resident_layout_load_cost(tmp_path: Path) -> None:
+    """逐 macro 预检不得重复计入已经由同一 LayoutDB 持有的整个源文件解析成本。"""
+    source = _write_rectangle(tmp_path / "resident.gds")
+    box = DbuBox(0, 0, 1000, 1000)
+    grid = RectilinearCoreGrid(np.array([0, 1000]), np.array([0, 1000]))
+    with LayoutDB.open(source) as database:
+        regular = preflight_layout(
+            database, layer=LayerSpec(1, 0), box=box, corner_dbu=8.0,
+            maximum_segment_dbu=32.0, grid=grid,
+            memory_budget_bytes=1024 ** 3)
+        resident = preflight_layout(
+            database, layer=LayerSpec(1, 0), box=box, corner_dbu=8.0,
+            maximum_segment_dbu=32.0, grid=grid,
+            memory_budget_bytes=1024 ** 3, include_layout_load_bytes=False)
+    assert regular["source_file_bytes"] == resident["source_file_bytes"]
+    assert regular["estimated_prepare_peak_bytes"] > resident[
+        "estimated_prepare_peak_bytes"]

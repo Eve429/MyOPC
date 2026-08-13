@@ -84,3 +84,38 @@ def test_preserve_properties_keeps_plain_and_tagged_geometry(tmp_path: Path) -> 
         assert properties == {"(5,0;10,10)": {}, "(20,0;25,10)": {7: "tagged"}}
         assert preserved_batch.stats is not None
         assert preserved_batch.stats.shapes[layer].polygon_like == 2
+
+
+def test_intersecting_materialization_keeps_full_crossing_shapes(tmp_path: Path) -> None:
+    """未裁剪物化应保留完整相交图形，而普通物化继续精确服从 ROI。"""
+    source = tmp_path / "crossing.gds"
+    native = kdb.Layout(); native.dbu = 0.001
+    index = native.layer(kdb.LayerInfo(1, 0)); top = native.create_cell("TOP")
+    top.shapes(index).insert(kdb.Box(-50, -20, 150, 80))
+    top.shapes(index).insert(kdb.Box(300, 300, 400, 400))
+    native.write(str(source))
+    layer, box = LayerSpec(1, 0), DbuBox(0, 0, 100, 50)
+    with LayoutDB.open(source) as database:
+        query = database.query([layer], box)
+        clipped = query.materialize().region(layer)
+        complete = query.materialize_intersecting().region(layer)
+    assert clipped.bbox() == kdb.Box(0, 0, 100, 50)
+    assert complete.bbox() == kdb.Box(-50, -20, 150, 80)
+    assert complete.count() == 1
+
+
+def test_intersecting_materialization_preserves_properties(tmp_path: Path) -> None:
+    """未裁剪物化启用属性时应保留完整几何及其属性。"""
+    source = tmp_path / "crossing-properties.gds"
+    native = kdb.Layout(); index = native.layer(kdb.LayerInfo(7, 0))
+    top = native.create_cell("TOP")
+    tagged = top.shapes(index).insert(kdb.Box(-20, 0, 80, 40))
+    tagged.set_property(7, "macro")
+    native.write(str(source))
+    layer, box = LayerSpec(7, 0), DbuBox(0, 10, 40, 30)
+    with LayoutDB.open(source) as database:
+        complete = database.query(
+            [layer], box, preserve_properties=True).materialize_intersecting().region(layer)
+    polygon = next(complete.each())
+    assert polygon.bbox() == kdb.Box(-20, 0, 80, 40)
+    assert polygon.properties() == {7: "macro"}

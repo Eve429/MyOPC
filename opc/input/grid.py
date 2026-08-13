@@ -91,13 +91,19 @@ class RectilinearCoreGrid:
 
     def cores(self) -> tuple[CoreSpec, ...]:
         """按先行后列的稳定顺序生成 core 和 halo 描述。"""
-        result: list[CoreSpec] = []
-        for row in range(self.row_count):
-            for column in range(self.column_count):
-                core = DbuBox(int(self.x_cuts[column]), int(self.y_cuts[row]),
-                              int(self.x_cuts[column + 1]), int(self.y_cuts[row + 1]))
-                result.append(CoreSpec(f"r{row}c{column}", core, core.expanded(self.halo_dbu)))
-        return tuple(result)
+        return tuple(self.core(index) for index in range(self.core_count))
+
+    def core(self, core_index: int) -> CoreSpec:
+        """按全局行优先索引即时构造一个 core，避免展开整张网格。"""
+        if (not isinstance(core_index, Integral) or isinstance(core_index, bool) or
+                core_index < 0 or core_index >= self.core_count):
+            raise IndexError("core index is out of range")
+        row, column = divmod(int(core_index), self.column_count)
+        ownership = DbuBox(
+            int(self.x_cuts[column]), int(self.y_cuts[row]),
+            int(self.x_cuts[column + 1]), int(self.y_cuts[row + 1]))
+        return CoreSpec(
+            f"r{row}c{column}", ownership, ownership.expanded(self.halo_dbu))
 
     def locate_points(self, points: object) -> Int32Array:
         """向量化返回点的 core 索引，范围外点使用 -1。"""

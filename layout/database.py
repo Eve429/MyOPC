@@ -15,7 +15,6 @@ from .errors import (
     LayerNotFoundError,
     LayoutOpenError,
 )
-from .hierarchy import HierarchySummary, build_hierarchy_summary
 from .query import ShapeQuery
 from .source import read_layout
 from .types import CellRef, DbuBox, LayerSpec
@@ -112,9 +111,20 @@ class LayoutDB:
         box = native.bbox()
         return None if box.empty() else DbuBox.from_native(box)
 
-    def hierarchy_summary(self) -> HierarchySummary:
-        """返回只读层级元数据，不物化任何图形。"""
-        return build_hierarchy_summary(self)
+    def cell_hierarchy(self) -> dict[str, tuple[str, ...]]:
+        """返回版图全部 Cell 到其直接子 Cell 名称的只读邻接表。"""
+        layout = self._native_layout
+        hierarchy: dict[str, tuple[str, ...]] = {}
+        # `each_child_cell()` 在 KLayout 原生层完成直接子 Cell 去重：同一父 Cell
+        # 中重复的 SREF 与大规模 AREF 都只产生一个关系，不按 occurrence 展开，
+        # 因而扫描成本只随 Cell 和直接引用关系增长。叶子 Cell 仍写入空元组，
+        # 调用方无需再查询缺失键来区分“叶子”与“未扫描”。
+        for cell in layout.each_cell():
+            children = (layout.cell(index).name for index in cell.each_child_cell())
+            # 子名称排序只作用于当前 Cell 的短邻接表，令测试、日志和人工检查
+            # 稳定；不复制图形，也不计算 bbox、实例数量或完整实例路径。
+            hierarchy[cell.name] = tuple(sorted(children))
+        return hierarchy
 
     def query(self, layers: tuple[LayerSpec | tuple[int, int], ...] | list[LayerSpec | tuple[int, int]],
               box: DbuBox, cell: CellRef | str | None = None,

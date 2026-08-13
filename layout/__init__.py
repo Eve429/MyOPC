@@ -9,7 +9,6 @@ from .errors import (
     LayoutError,
     LayoutOpenError,
 )
-from .hierarchy import CellInfo, HierarchySummary
 from .query import ShapeQuery
 from .types import (
     CellRef,
@@ -22,12 +21,10 @@ from .types import (
 
 __all__ = [
     "AmbiguousTopCellError",
-    "CellInfo",
     "CellNotFoundError",
     "CellRef",
     "ClosedLayoutError",
     "DbuBox",
-    "HierarchySummary",
     "LayerNotFoundError",
     "LayerShapeStats",
     "LayerSpec",

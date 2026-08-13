@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import klayout.db as kdb
 import pytest
 
 from layout import (
@@ -19,6 +20,26 @@ from layout import (
 from tests.fixtures.layout_factory import write_advanced_layout
 
 
+def _write_hierarchy_layout(path: Path) -> Path:
+    """写出覆盖共享子 Cell、重复引用、AREF、多顶层和叶子节点的层级版图。"""
+    layout = kdb.Layout(); layout.dbu = 0.001
+    layer = layout.layer(kdb.LayerInfo(1, 0))
+    leaf = layout.create_cell("LEAF"); leaf.shapes(layer).insert(kdb.Box(0, 0, 10, 10))
+    middle_a = layout.create_cell("MIDDLE_A")
+    middle_a.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0)))
+    middle_a.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(20, 0)))
+    middle_a.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 20),
+                                     kdb.Vector(20, 0), kdb.Vector(0, 20), 100, 100))
+    middle_b = layout.create_cell("MIDDLE_B")
+    middle_b.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0)))
+    top = layout.create_cell("TOP")
+    top.insert(kdb.CellInstArray(middle_b.cell_index(), kdb.Trans(0, 0)))
+    top.insert(kdb.CellInstArray(middle_a.cell_index(), kdb.Trans(0, 0)))
+    independent = layout.create_cell("INDEPENDENT")
+    independent.shapes(layer).insert(kdb.Box(100, 100, 110, 110))
+    layout.write(str(path)); return path
+
+
 def test_open_generated_layout_and_inspect_hierarchy(tmp_path: Path) -> None:
     """确定性版图应稳定给出数据库单位、顶层单元、图层、包围盒和子单元信息。"""
     source = write_advanced_layout(tmp_path / "advanced.gds")
@@ -27,10 +48,30 @@ def test_open_generated_layout_and_inspect_hierarchy(tmp_path: Path) -> None:
         assert db.top_cell.name == "TOP"
         assert db.layers() == (LayerSpec(1, 0), LayerSpec(2, 5))
         assert db.bbox() == DbuBox(-200, -200, 1000, 2700)
-        summary = db.hierarchy_summary()
-        top = next(info for info in summary.cells if info.ref.name == "TOP")
-        assert {child.name for child in top.child_cells} == {"LEAF"}
-        assert (top.instance_records, top.logical_instances) == (3, 8)
+        assert db.cell_hierarchy() == {"LEAF": (), "TOP": ("LEAF",)}
+
+
+def test_cell_hierarchy_returns_complete_dag_without_expanding_occurrences(tmp_path: Path) -> None:
+    """层级邻接表应覆盖全部 Cell，且重复 SREF/AREF 不得按实例数量展开。"""
+    source = _write_hierarchy_layout(tmp_path / "hierarchy.gds")
+    with LayoutDB.open(source, top_cell="TOP") as db:
+        hierarchy = db.cell_hierarchy()
+    # 邻接表描述的是版图 DAG 而不是从已选顶层展开的树：共享 LEAF 只存一份，
+    # 未被 TOP 引用的另一顶层仍保留；100×100 AREF 也不产生一万个条目。
+    assert type(hierarchy) is dict
+    assert hierarchy == {
+        "LEAF": (), "MIDDLE_A": ("LEAF",), "MIDDLE_B": ("LEAF",),
+        "TOP": ("MIDDLE_A", "MIDDLE_B"), "INDEPENDENT": (),
+    }
+    assert all(type(children) is tuple for children in hierarchy.values())
+
+
+def test_cell_hierarchy_requires_open_database(tmp_path: Path) -> None:
+    """关闭数据库后层级接口必须立即失败，不得返回可能过期的缓存。"""
+    database = LayoutDB.open(write_advanced_layout(tmp_path / "closed.gds"))
+    database.close()
+    with pytest.raises(ClosedLayoutError):
+        database.cell_hierarchy()
 
 
 def test_multiple_top_requires_explicit_selection(reticle_dir: Path) -> None:

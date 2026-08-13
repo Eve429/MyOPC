@@ -1,10 +1,10 @@
 # 大 Reticle 流式处理独立开发方案
 
-> 本文描述尚未实施的阶段 2。当前项目只完成容量预检、超限拒绝、进程时间/内存统计和 GPU core batch；不得把本文中的 macro、磁盘 shard、全局状态文件或流式输出描述为当前能力。
+> 当前已完成阶段 2 的前端基础：未裁剪相交物化、tile 对齐 macro planner、逐 macro 局部边段/owner/membership 准备、逐 tile 栅格对照和局部容量守卫。磁盘 shard、全局状态文件、多轮流式求解、恢复和流式最终输出仍未实现，不得描述为当前能力。
 
 ## 1. 当前能力、瓶颈与目标
 
-当前求解器已经让 GPU 只保存当前 batch 的 core+halo 张量，CPU 保存完整 ROI 的物理 `Region`、参考边段、membership、`d_current/d_next` 和拓扑；`gcd_45nm` 的 870 core 全流程已经验证。阶段 1 会在物化前估算层级图形、边段、membership 和准备峰值，超过 `int32` 或内存预算时安全拒绝，但通过预检后仍会一次物化整个 ROI。
+当前两个求解器仍让 CPU 保存完整 ROI 的物理 `Region`、参考边段、membership、`d_current/d_next` 和拓扑；GPU 只保存当前 batch 的 core+tile halo 张量。新增 macro 前端可在不构造完整 ROI Problem 的情况下逐 macro 验证几何和 raster，但尚未把这些局部问题接入多轮求解状态。
 
 因此 24 GiB GPU 不是整版运行的首要限制，64 GiB CPU 内存中的完整 `Region`、数十亿至百亿边段、membership 和全局重建才是阶段 2 要解决的问题。阶段 2 的目标不是让全部数据进入内存，而是只展开当前 macro 和当前 GPU batch；即使运行很慢，也必须在 24 GiB GPU、64 GiB CPU 和可配置本地磁盘空间内有界运行。
 
@@ -37,11 +37,11 @@
 - `ownership_box`：决定哪些参考区间、segment、指标和更新由该 macro 唯一发布；采用全局半开边界规则消除边界点双 owner；
 - `context_box`：`ownership_box` 向外扩展准备 halo，只负责提供邻域完整图形和只读光学上下文。
 
-现有 `ShapeQuery.materialize()` 返回精确裁到查询框的 `Region`。该语义适合版图显示、ROI 像素化和局部光刻画布，但裁剪会沿查询框生成额外轮廓；当前 `prepare_problem()` 无法区分原始边和裁剪边。因此阶段 2 不能把 `materialize(context_box)` 的结果直接交给 `extract_contour()`。
+`ShapeQuery.materialize()` 继续返回精确裁到查询框的 `Region`，适合显示、ILT 像素 ROI 和普通查询。`materialize_intersecting()` 已新增：它使用同一原生层级空间索引，只扁平化与查询框相交的完整 occurrence，不与框求交，因此查询框不会成为物理边。
 
 ### 4.2 真实边提取路径
 
-阶段 2 开发时，在取得用户逐次授权后，为 `layout` 增加一个最小的批量入口：返回“与 `context_box` 相交的完整 Box/Path/Polygon occurrence，并已变换到 top 全局坐标”，但不与查询框求交。现有 `materialize()` 的精确 ROI 行为保持不变，不增加会让调用方混淆的默认切换。
+当前 `run_mbopc_frontend.py --macro-verify` 已实际消费该入口；每个 macro 在物化前独立预检，完成准备和 tile raster 对照后立即释放。这个入口不生成 shard，也不会调用 simple MB-OPC/DiffOPC solver。
 
 单个 macro 的准备顺序固定为：
 
@@ -93,7 +93,7 @@
 
 1. **测量与契约基线**：选择真实大版图，记录 active core 密度、完整 Region、segment、membership、状态和磁盘估算；冻结一次性 prepare/迭代对照结果。
 2. **active core 与 shard 格式**：实现 shard-local 索引、全局 offset、原子 generation 和读取校验；先用现有完整问题生成 shard，验证存储层等价。
-3. **macro 参考准备**：取得 Layout 最小改动授权后实现未裁剪候选查询、真实边 owned 区间、跨 macro 去重和全局分段相位。
+3. **macro 参考准备（前端基础已完成）**：未裁剪候选查询、真实边局部分段、tile owner/membership 和单 macro/多 macro owned 集合对照已经实现；跨进程稳定身份与 shard 格式未实现。
 4. **RAM 状态流式迭代**：每轮逐 macro 加载、GPU core batch、owner scatter 和全局屏障；与一次性求解逐轮对照。
 5. **out-of-core 状态与恢复**：增加 memmap 双代状态、容量预检、checkpoint 和异常恢复；模拟中断验证上一代不损坏。
 6. **流式拓扑输出**：按 polygon owner 重建并写 GDS/OASIS，最后再评估超大单 polygon 精确切片。

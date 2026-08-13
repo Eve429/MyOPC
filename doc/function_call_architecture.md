@@ -231,7 +231,11 @@ flowchart TD
     A[main.run_mbopc_frontend.run] --> B[真实 GDS 元数据]
     B --> P[preflight_layout]
     P -->|拒绝/只预检| R[summary.json]
-    P -->|通过| C0[ShapeQuery.materialize]
+    P -->|普通小版图| C0[ShapeQuery.materialize]
+    P -->|macro-verify| M[macro_boxes]
+    M --> MI[materialize_intersecting]
+    MI --> MP[prepare_macro]
+    MP --> MR[逐 tile 栅格后立即释放]
     A --> S[合成 Region]
     C0 --> C[prepare_problem]
     S --> C
@@ -245,6 +249,8 @@ flowchart TD
 ```
 
 `preflight_layout` 只扫描层级 occurrence 并返回普通字典，不产生第二种 problem。`_demo_displacements` 从每个 core 的 membership CSR 过滤唯一 owner，不再对每个 core 扫描全局 owner。NPZ 只服务显式人工验证，字段按相同全局顺序对齐且不含稳定 key。
+
+`--macro-verify` 是大版图前端的首阶段验证路径：macro ownership 框严格沿全局 tile 切线分组；查询范围再独立扩 `roi_halo_nm`，以 `materialize_intersecting()` 保留完整相交 occurrence；`prepare_macro()` 在裁剪前提取、切分真实边并计算全局 owner/局部 membership；最后仅在栅格化当前 tile context 时裁剪并与精确 ROI 像素结果比较。每个 macro 处理后立即释放，常驻状态只有 tile 覆盖位图和标量统计。该入口尚不运行多轮 OPC，也不等同于磁盘分片求解器。
 
 ## 9. 输出与诊断边界
 

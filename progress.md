@@ -300,3 +300,18 @@
 - 最终 AST 审计扫描 104 个第一方 Python 文件：中文模块/函数 docstring 缺失 0、完全重复函数体 0；正式代码旧私有跨模块 API 和重复 helper 调用点归零，`geometry/` 零修改，`layout/` 仅有授权的 14 行只读扫描入口。
 - 生产模块运行期依赖图 61 个节点、循环 0；Markdown 本地链接缺失 0。pytest-cov 在 Windows 收集期复现既有 NumPy/PyTorch 重复加载问题，未执行测试体且不计作覆盖率结果。
 - 阶段 93 完成：开发/测试手册、接口参考、调用关系、架构评审状态、专项开发/测试报告和三份规划记录全部同步；P1/P2 已完成，P3 保持未实施，准备最终本地关键提交。
+
+# 2026-08-13
+
+- 开始阶段 94–97：实现 Macro 未裁剪相交物化与独立 ROI/tile halo；工作树已有用户修改 `.vscode/launch.json` 和 `config/mbopc.toml`，必须保留并排除覆盖。
+- 完成只读现状审计：确认虚假边根因、现有 core 正确性及 ILT 与边段 OPC 的复用边界；后续复核纠正了“35×35 频域 Hopkins 核等于 17 pixel 空间影响半径”的错误解释，不据此设置 halo 下限。
+- 两次跨文件规划补丁因空 hunk/错误锚点原子拒绝，无文件变化；定位各文件真实末尾后改为独立精确追加并记录错误。
+- 新增未裁剪相交物化首测发现 deep Region 生命周期依赖；采用 KLayout 原生 `flatten()` 解除依赖，不增加逐 Polygon Python 循环。
+- 真实层级 macro 冒烟完成 60 macro/230 tile：栅格 mismatch 0、重复 owned segment 0；发现逐 macro 保存内存快照会让摘要随 macro 数增长，已收敛为单个峰值快照。
+- 双 halo 首轮迁移专项暴露旧冒烟的 tile+halo 超出模型 canvas；随后模型复核确认不能从 35×35 频域核推导 17 pixel 空间影响半径，已删除错误下限校验及回归，不留下伪契约。
+- Macro 入口专项 24 项中 23 项通过；唯一失败是旧测试写死 2×1 默认网格的两段更新，已按用户现有 2×2 配置改为不耦合默认值的不变量。
+- 首次全仓 246 项中 245 项通过；异常入口审计由测试捕获 `run_layout_geometry --json` 的既有无条件层级调试打印，已删除并以原直接入口测试回归。
+- 精简后核心定向 39 项通过（40.24 秒）；属性保持回归后 Layout/Macro/入口 30 项通过；最终加入 ROI 外只读 halo 边和按需 core 回归后，全仓 248 项通过（81.83 秒）。
+- `simple.gds` 真实 macro 冒烟为 8 macro/28 tile、885 owned segment、1399 membership、栅格差异 0、重复 owner 0；macro 准备与栅格 0.452 秒，总计 0.574 秒。
+- 最终静态审计扫描 107 个第一方 Python 文件：中文模块/函数 docstring 缺失 0；生产重复函数体 0，唯一重复为两个测试假模型的简单构造函数。45 份 doc Markdown 围栏奇数 0、本地链接缺失 0，`geometry/` 零差异。
+- 全目录 Ruff、compileall 与 `git diff --check` 通过；正式代码/配置中的旧 `halo_nm` 调用点为 0，仅保留一项明确拒绝旧 CLI 的回归。

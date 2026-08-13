@@ -147,6 +147,10 @@ GDS/OASIS 或 raster NPZ
 
 输出 `RegionBatch` 中的坐标已经变换到所选 cell 的统一坐标系并精确裁到 ROI。精确裁剪可能在 ROI 框上形成新的轮廓边，因此该接口适合局部显示/计算，但未来 macro 提边不能把这些裁剪边误当物理边。
 
+#### `ShapeQuery.materialize_intersecting(diagnostics=False) -> RegionBatch`
+
+只用查询框筛选相交 occurrence，不与框做布尔相交；完整图形已变换到所选 cell 坐标，不相交图形不加载。deep Region 在原生端一次展平，所以结果可在 `LayoutDB` 关闭后消费；属性模式使用保持 shape class 的原生 `merged`，避免 `flatten()` 静默丢属性。该接口只供边段 macro 提取真实边；显示、ILT 像素 ROI 和普通查询继续使用精确 `materialize()`。
+
 ### 2.5 [`layout/hierarchy.py`](../layout/hierarchy.py)
 
 - `CellInfo`：`ref`、可选 `bbox`、直接 `child_cells`、实例记录数 `instance_records`、展开阵列后的逻辑实例数 `logical_instances`。
@@ -273,6 +277,7 @@ GDS/OASIS 或 raster NPZ
 | `halo_dbu` | 非负整数 |
 | `column_count`, `row_count`, `core_count` | 从 cuts 推导，不常驻 CoreSpec 列表 |
 | `bounds` | 全部 ownership 的整体 `DbuBox` |
+| `core(index)` | O(1) 按全局行优先索引即时构造一个 `CoreSpec`，不展开整张网格 |
 | `cores()` | 按先行后列生成 `tuple[CoreSpec,...]`，context 为 core 四向扩 halo |
 | `locate_points(points)` | 输入有限 `[N,2]`，输出 `int32[N]` owner；范围外为 -1 |
 
@@ -392,6 +397,14 @@ membership 由参考 segment bbox 四向扩 halo 后与规则 core 范围相交�
 组合顺序为 `normalize_physical_mask -> extract_contour -> fragment_edges -> _build_ownership`。省略 grid 时创建覆盖查询框的 1×1 规则网格。该函数不生成探针、PNG、NPZ 或 GDS；返回问题可在 LayoutDB 关闭后用于多轮计算。
 
 当前实现会完整物化所选 ROI 的 Region、轮廓、segment 和 membership 到 CPU 内存。preflight 能提前拒绝超限输入，但不会分批展开另一部分。
+
+#### Macro 前端接口
+
+`macro_boxes(tile_grid, maximum_span_dbu)` 只选择已有 tile 切线，返回行优先 macro ownership 框；不会切开 tile。
+
+`prepare_macro(...) -> MacroPreparation` 接收未裁剪完整候选，返回当前 macro 生命周期内的真实 `segments`、活跃 segment/全局 tile owner、当前 macro 的 tile ID 和局部 membership CSR。处理 ROI 外但进入 tile halo 的真实边保留为 `owner=-1` 的固定只读 context；`owned_segments()` 只按需推导当前 macro 的唯一可发布集合，不常驻重复数组。它不定义磁盘 shard、跨进程稳定 ID 或多轮状态，不能替代完整 `MBOPCProblem`。
+
+`preflight_layout(..., include_layout_load_bytes=True)` 默认把一次源版图加载的保守成本计入预算；同一个已打开 `LayoutDB` 的逐 macro 局部预检传 `False`，避免把相同文件解析成本重复计入每个 macro。该开关只改变内存估算，不跳过文件大小上限或层级扫描。
 
 ### 5.5 [`opc/input/edge/sampling.py`](../opc/input/edge/sampling.py)
 

@@ -120,7 +120,7 @@ CPU batch 中始终保持 `uint8`，只在一次性送到模型设备时转为 `
 
 ## 6. 光刻与评价替换
 
-`LithographyModel` 是零运行期开销的结构化 Protocol，只要求 `device`、`config.canvas/print_threshold`、`condition()` 和 `forward_many()`；求解器依赖该能力契约，runner 仍明确构造 `ICCAD13Lithography`，没有注册器或工厂。`ProcessCondition(name, kernel, dose)` 表示一次独立工艺条件；`forward(mask, condition)` 返回一张连续 wafer，`forward_many(mask, conditions)` 返回按名称索引的结果。后者只共享本次调用的 mask FFT，并对相同 kernel bank 复用单位剂量强度；条件之间没有固定三元组绑定。全部传播由普通 PyTorch 复数 FFT、乘法、绝对值平方和 sigmoid 构成，原生 autograd 可处理任意上游梯度，可同时服务 MB-OPC 的 `no_grad`、梯度 OPC 和 ILT。
+`LithographyModel` 是零运行期开销的结构化 Protocol，只要求 `device`、`config.canvas/print_threshold`、`condition()` 和 `forward_many()`；求解器依赖该能力契约，runner 仍明确构造 `ICCAD13Lithography`，没有注册器或工厂。`ProcessCondition(name, kernel, dose)` 表示一次独立工艺条件；全部传播保留原生 autograd，可同时服务 MB-OPC、梯度 OPC 和 ILT。ICCAD13 的 35×35 数据是频域 Hopkins 核，不能把数组半宽误当成有限空间影响半径；`tile_halo_nm` 是用户按精度验证选取的有效光学截断范围。
 
 `evaluate_binary_l2` 与 `evaluate_pvband` 采用 OpenILT 的二值语义，只在 ownership 像素累计不一致像素数；函数不会原位阈值化输入。`evaluate_edge_probes` 根据 target 的内外语义产生 `-1/0/+1` 法向移动方向；同一 probe 同时触发相反要求时记为 ambiguous 且不移动。simple MB-OPC 只用 EPE 决定更新和最佳轮次，L2/PVBand 仅记录诊断。`estimate_rectangular_shots` 在显式固定分辨率上逐行合并相同水平 run，提供确定、无随机和无 OpenCV/adabox 依赖的矩形 shot 估计；它不是最小 shot 数证明。
 
@@ -169,7 +169,7 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 详细字段、内存边界和设计审计见 [离线工作台开发报告](offline_workbench_development_report.md)。
 
-本轮函数与内存收敛见[代码优化开发报告](code_optimization_development_report.md)；尚未实施的大 reticle 稀疏/macro 路径见[独立开发方案](large_reticle_streaming_plan.md)。
+本轮函数与内存收敛见[代码优化开发报告](code_optimization_development_report.md)；macro 前端实现见[专项开发报告](macro_materialization_development_report.md)，仍未实现的多轮 shard 求解边界见[独立开发方案](large_reticle_streaming_plan.md)。
 
 ## 11. 物化前容量预检与资源统计
 
@@ -178,12 +178,22 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 ```powershell
 # 只做完整层级容量扫描，不物化 Region/边段
 python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
-  --tile-size-nm 1024 --halo-nm 512 --preflight-only --json
+  --tile-size-nm 1024 --tile-halo-nm 512 --preflight-only --json
 
 # 完成前端几何验证，但跳过大 NPZ/GDS/PNG
 python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
-  --tile-size-nm 1024 --halo-nm 512 --skip-artifacts --json
+  --tile-size-nm 1024 --tile-halo-nm 512 --skip-artifacts --json
 ```
+
+逐 CPU macro 验证未裁剪提边与栅格化时裁剪：
+
+```powershell
+python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
+  --tile-size-nm 1024 --tile-halo-nm 512 --roi-halo-nm 536 `
+  --macro-size-nm 8192 --pixel-nm 8 --macro-verify --json
+```
+
+`roi_halo_nm` 与 `tile_halo_nm` 是独立参数：前者控制 CPU macro 加载完整相交图形，后者控制光刻 tile context。默认可接近，但 ROI halo 还必须覆盖最大允许边位移。macro 模式只交付前端验证，不生成 shard、不运行多轮 OPC。
 
 摘要 `memory_checkpoints` 使用进程 RSS/USS/private/peak working set，能覆盖 NumPy 与 KLayout 原生内存；`memory.problem_persistent_bytes` 只统计 problem 自有 NumPy 数组，两者不能混为同一指标。详细设计见[容量预检开发报告](frontend_preflight_development_report.md)。
 

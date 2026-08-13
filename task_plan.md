@@ -397,3 +397,19 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | 阶段 88 一次 `rg` 再次把 `main/run_*.py` 当作 Windows 路径 | 1 | 前置只读结果有效，末项未执行；后续只传 `main` 目录并用 `--glob 'run_*.py'` 过滤 |
 | 阶段 90 首个 P1 原子补丁使用了不匹配的 `LayoutDB.query` 签名上下文 | 1 | 原子补丁整体失败且无文件变化；读取精确实现后按依赖、Layout、Protocol 拆分短补丁 |
 | 阶段 90 首个 P1 测试补丁使用了不存在的生命周期断言锚点 | 1 | 原子补丁整体失败；读取真实测试尾部后追加独立回归，不猜测测试内容 |
+| 阶段 94 两次规划记录补丁错误复用跨文件锚点 | 2 | 两次均原子拒绝且无文件变化；定位各文件真实末尾后改用独立精确追加 |
+| 未裁剪 `Region(iterator)` 在关闭 LayoutDB 后变空 | 1 | 确认其为借用数据库的 deep region；在原生端显式 `flatten()` 并保留关闭后消费回归 |
+| 未裁剪属性回归发现 KLayout `Region.flatten()` 丢失属性 | 1 | 属性模式改用原生 `merged(False, 0, False)` 保持 shape class；无属性性能路径继续 `flatten()` |
+| 双 halo 迁移时曾把 35×35 频域 Hopkins 核误解为空间半径 17 px | 1 | 复核频域实现后删除错误 Protocol/下限校验/测试；保留用户经收敛验证选择 tile halo 的真实契约 |
+| frontend 合成产物测试写死默认 2×1 网格的两段更新 | 1 | 用户已把默认网格改为 2×2；断言改为每个有 owner core 更新一段，避免耦合可配置默认值 |
+| ILT 独立性回归把 LevelSet 迭代设为 0 | 1 | LevelSet 配置按设计要求正迭代；测试改为最低 1 轮，不修改求解器或增加特殊分支 |
+| macro/full 对照把超出处理框的完整 Region 直接交给旧全局 Problem | 1 | 旧 Problem 正确拒绝无 owner 边；基线改为现有精确处理 ROI，再比较 ownership 内边段 |
+| 旧精确 ROI 与完整 occurrence 的长边分段坐标不相等 | 1 | 确认为裁剪端点起算与真实端点起算的预期差异；真值改为同一完整 occurrence 的单 macro/多 macro owned 分区 |
+| 全仓测试发现 layout runner 的 `--json` 前无条件打印层级对象 | 1 | 单测稳定复现；删除唯一调试打印，既有直接入口 JSON 测试作为回归，不增加兼容分支 |
+
+# 2026-08-13：阶段 94–97 Macro 未裁剪物化与双上下文
+
+- 阶段 94 已完成：实现与扩展 ROI 相交的完整图形物化、CPU macro ownership/context 和独立 `roi_halo_nm` / `tile_halo_nm` 契约；`layout/` 只有授权的最小接口修改，`geometry/` 零修改。
+- 阶段 95 已完成：`run_mbopc_frontend.py` 交付逐 macro 准备、逐 tile 栅格对照和即时释放验证；明确未接入磁盘 shard、memmap 或完整逐 macro 多轮求解。
+- 阶段 96 已完成：覆盖跨 macro 矩形、斜边、孔洞、窄环、重叠图形、层级 occurrence、属性生命周期、双 halo 校验和 ILT 精确像素路径隔离。
+- 阶段 97 已完成：手册、专项开发/测试报告和规划记录已同步；248 项全量测试、Ruff、compileall、docstring、重复实现、调用点、Markdown 与保护目录审计通过，完成最终差异确认并进入本地关键提交。

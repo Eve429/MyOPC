@@ -62,7 +62,7 @@ psutil；开发验收另外使用 pytest、pytest-cov 和 Ruff。
   --output-dir .benchmarks\gcd_mbopc --preview --json
 ```
 
-完整入口只输出 `summary.json`、结果 GDS 和可选 PNG，不输出 NPZ。`--box` 可选择 DBU ROI；`--tile-size-nm` 和 `--halo-nm` 必须能由版图 DBU 精确表示且满足像素对齐。显存不足优先降低 `--batch-size`，不会改变 owner 和轮次屏障语义。
+完整入口只输出 `summary.json`、结果 GDS 和可选 PNG，不输出 NPZ。`--box` 可选择 DBU ROI；`--tile-size-nm` 和 `--tile-halo-nm` 必须能由版图 DBU 精确表示且满足像素对齐。tile halo 还必须覆盖光学核半径、最大位移和 EPE 探针读域。显存不足优先降低 `--batch-size`，不会改变 owner 和轮次屏障语义。
 
 ## 4. 自动测试与静态检查
 
@@ -117,7 +117,7 @@ psutil；开发验收另外使用 pytest、pytest-cov 和 Ruff。
 
 ```powershell
 D:\app\miniforge\envs\myopc\python.exe -m pytest tests/opc/test_diffopc.py -q
-D:\app\miniforge\envs\myopc\python.exe main/run_diffopc.py TestReticle/simple.gds --layer 1/0 --box -520 -20 -180 320 --tile-size-nm 256 --halo-nm 32 --corner-nm 8 --segment-nm 32 --max-displacement-nm 8 --pixel-nm 2 --epe-distance-nm 8 --iterations 2 --batch-size 2 --raster-chunk-size 4 --device cuda --no-preview --no-final-lithography-png --output-dir output/diffopc_phase4_cuda
+D:\app\miniforge\envs\myopc\python.exe main/run_diffopc.py TestReticle/simple.gds --layer 1/0 --box -520 -20 -180 320 --tile-size-nm 256 --tile-halo-nm 64 --corner-nm 8 --segment-nm 32 --max-displacement-nm 8 --pixel-nm 2 --epe-distance-nm 8 --iterations 2 --batch-size 2 --raster-chunk-size 4 --device cuda --no-preview --no-final-lithography-png --output-dir output/diffopc_phase4_cuda
 ```
 
 专项 14 项必须覆盖：软栅格零位移严格一致与非饱和点中心有限差分；外轮廓/孔洞法向；左下原点像素中心 probe；batch 大小和 1-core/2-core 划分不变性；best 记录与位移快照一致；孔洞、斜边、跨 core membership；全局非法几何整轮回滚；资源配置拒绝；直接 GDS 的结果 NPZ、GDS、JSON 与最终光刻 manifest。正式入口的逐轮 `records` 同时保存连续训练损失和二值 L2/PVBand/EPE 诊断，二者不可混为同一单位。
@@ -213,8 +213,21 @@ FAQ 契约专项回归：
   output\workbench\raster_input.npz --box -2000 -1100 -200 948 `
   --pixel-nm 8 --canvas 256
 & $python main\offline_inputs.py segments TestReticle\simple.gds `
-  output\workbench\mbopc_input.npz --tile-size-nm 1024 --halo-nm 512
+  output\workbench\mbopc_input.npz --tile-size-nm 1024 --tile-halo-nm 512
 ```
+
+Macro 前端专项运行：
+
+```powershell
+D:\app\miniforge\envs\myopc\python.exe main/run_mbopc_frontend.py INPUT.gds `
+  --layer 1/0 --tile-size-nm 128 --tile-halo-nm 32 `
+  --roi-halo-nm 40 --macro-size-nm 256 --pixel-nm 8 `
+  --max-displacement-nm 8 --macro-verify --json
+```
+
+检查 `raster_mismatch_pixels=0`、`duplicate_owned_segments=0`，并确认内存快照只含 `macro_peak` 而不是每个 macro 一项。多图形回归覆盖斜边、孔洞、窄环、重叠图形和层级 occurrence；ILT 回归确认直接版图路径不调用边段 macro 准备。
+
+完整矩阵与 `simple.gds` 实测数字见[Macro 未裁剪物化测试报告](macro_materialization_test_report.md)。
 
 独立运行模型或迭代：
 

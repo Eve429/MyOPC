@@ -431,3 +431,14 @@
 - P2 实施后 `offline_inputs.py` 只保留共享输入物化、归档版本/损坏校验和 CLI；所有 runner 改从 `main.artifacts` 使用公共原子产物函数，不再把下划线私有函数当 API。
 - SimpleILT 的兼容要求不需要第二个执行对象或 runner 基类：`run_ilt(return_result=True)` 返回同次执行的 result/summary，默认仍只返回 summary；`run_simpleilt` 只负责固定 `method="simple"` 和历史默认值。
 - 共享边段计数 helper 必须使用不会与 `fragment_edges` 内部展开数组冲突的动词名 `count_edge_fragments`；固定随机种子回归已证明其逐边计数与真实 SegmentBatch 相同。
+
+# 2026-08-13：Macro 物化现状与实施决策
+
+- 当前 `ShapeQuery.materialize()` 先用原生 ROI 迭代器取得相交候选，随后与查询框精确求交；把该结果逐 macro 送入 `prepare_problem()` 会把裁剪框线错误识别成可移动物理边。
+- 当前 core 路径没有虚假边，是因为完整处理 ROI 只提边一次，core 仅负责 segment owner/context；本次新增的是更外层 CPU macro 调度边界。
+- 用户确认物化规则为“只加载与 `macro ownership + roi_halo` 相交的完整图形”，完全不相交的图形不加载；栅格化时才裁到 tile context。
+- 用户选择首个可用 Macro 前端阶段：`run_mbopc_frontend.py` 验证逐 macro 物化、提边、ownership 和栅格拼接，不提前锁定磁盘 shard 格式，也不宣称现有求解器已支持 out-of-core 多轮。
+- 参数显式迁移为 `roi_halo_nm` 和 `tile_halo_nm`；用户授权 `layout/` 增加独立未裁剪批量物化入口，现有精确 `materialize()` 语义保持不变，`geometry/` 不修改。
+- ILT 不提边，精确裁剪不会产生可移动假边；未来大版图 ILT 仍需 tile 光学上下文和 ownership-only 像素提交，但不复用 SegmentBatch。
+- ICCAD13 资产的 35×35 数据是频域 Hopkins 核，不表示空间域只影响 17 pixel；不能据此承诺有限光学半径。`tile_halo` 是用户按精度收敛选取的有效截断范围，`roi_halo` 至少再覆盖最大允许边位移。
+- 小版图实测确认旧“完整 ROI 精确裁剪”与新“完整 occurrence”在处理框最外边缘的长边分段相位不同：旧路径从裁剪端点起算，新路径从真实图形端点起算。正确验收应比较同一完整 occurrence 的单 macro 与多 macro 分区，不得以带处理框假边的旧分段坐标为真值。

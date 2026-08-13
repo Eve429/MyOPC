@@ -66,7 +66,7 @@ CUDA 直接环境单测：1 passed in 9.56 s
 
 - `git diff --check`、旧符号搜索和公共调用点搜索通过；
 - 76 个第一方 Python 文件的中文模块/函数 docstring 检查零缺失；20 份 `doc/*.md` 没有断链或不平衡代码围栏；
-- 生产定义的零生产引用名称只有 `render_layout_region`、`hierarchy_summary`、`DbuBox.intersection` 和 `ICCAD13.forward`：前三者是有直接回归的公开接口，最后一个是 PyTorch 框架回调，不属于可删除死代码；
+- 本报告执行时，生产定义的零生产引用名称只有 `render_layout_region`、`hierarchy_summary`、`DbuBox.intersection` 和 `ICCAD13.forward`：前三者当时是有直接回归的公开接口，最后一个是 PyTorch 框架回调。2026-08-13 后 `hierarchy_summary` 已按用户确认替换为轻量 `LayoutDB.cell_hierarchy()`，本句仅保留历史审计证据；
 - 所有关键拓扑、内存和归属路径保留详细中文注释；
 - `layout/` 未修改；`geometry/` 仅包含用户授权的轮廓契约收敛和 `edge.py` 删除；
 - `doc/design_review.md` 保持历史原文；

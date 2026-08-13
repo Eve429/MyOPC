@@ -2,6 +2,8 @@
 
 当前全项目的结构、冗余与模块边界评审见[当前架构与精简性评审](current_architecture_review.md)。该文档区分确定问题、合理复杂度和需要用户授权的受保护目录改动；历史阶段报告不替代此当前结论。
 
+Layout 层级接口的本轮精简、性能边界和删除项见[Layout 层级接口轻量化开发报告](layout_hierarchy_simplification_development_report.md)。
+
 逐模块输入输出、数组 shape/dtype、坐标单位、异常和文件协议见[模块输入输出接口参考](module_interface_reference.md)；函数级入口、调用顺序和数据生命周期见[函数调用关系与数据流](function_call_architecture.md)。
 
 ## 1. 设计目标
@@ -24,7 +26,7 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 
 | 路径 | 当前职责 |
 |---|---|
-| `layout/` | 层级版图加载、Layer/ROI 查询 |
+| `layout/` | 层级版图加载、轻量 Cell 邻接查询、Layer/ROI 查询 |
 | `geometry/` | Region、两级 CSR 轮廓、栅格化、输出 patch |
 | `opc/input/` | 物理 mask、规则 core 网格等共享输入 |
 | `opc/input/edge/` | 边段切分、唯一 owner、探针坐标、全局矢量重建 |

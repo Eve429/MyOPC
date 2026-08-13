@@ -315,3 +315,12 @@
 - `simple.gds` 真实 macro 冒烟为 8 macro/28 tile、885 owned segment、1399 membership、栅格差异 0、重复 owner 0；macro 准备与栅格 0.452 秒，总计 0.574 秒。
 - 最终静态审计扫描 107 个第一方 Python 文件：中文模块/函数 docstring 缺失 0；生产重复函数体 0，唯一重复为两个测试假模型的简单构造函数。45 份 doc Markdown 围栏奇数 0、本地链接缺失 0，`geometry/` 零差异。
 - 全目录 Ruff、compileall 与 `git diff --check` 通过；正式代码/配置中的旧 `halo_nm` 调用点为 0，仅保留一项明确拒绝旧 CLI 的回归。
+
+# 2026-08-13
+
+- 开始阶段 98–100：用户要求删除独立层级模块和两个元数据结构体，将完整 Cell DAG 轻量合并到 `LayoutDB.cell_hierarchy()`；明确保留全部 Cell、不展开共享 occurrence、删除全部统计字段。
+- 工作树开始时仅有用户的 `.vscode/launch.json` 和 `config/mbopc.toml` 2×2 网格修改，继续保留并排除在本轮提交之外。
+- 阶段 98 完成并提交 `ae2a2a2`：删除独立层级文件和两个数据类，`LayoutDB.cell_hierarchy()` 直接返回完整 DAG 普通字典；`geometry/` 零修改。
+- 阶段 99 完成：9 项 LayoutDB 定向测试通过，覆盖共享/三级/重复 SREF、100×100 AREF、多 top、叶节点和关闭生命周期。
+- 阶段 100 门禁通过：250 项全仓测试（94.55 秒）、Ruff、compileall、diff whitespace 全部成功；106 个 Python 文件中文 docstring 缺失 0、重复函数体 0，47 份 Markdown 围栏/本地链接错误 0。
+- 旧层级符号生产/测试调用点为 0；未保留兼容分支、旧包装、缓存或为修错新增的无调用函数。专项开发/测试报告与主手册已同步，用户两项工作树修改继续排除。

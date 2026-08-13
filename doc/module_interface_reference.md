@@ -60,7 +60,7 @@ GDS/OASIS 或 raster NPZ
 
 ### 2.1 [`layout/__init__.py`](../layout/__init__.py)
 
-包级导出 `LayoutDB`、`ShapeQuery`、`DbuBox`、`LayerSpec`、`CellRef`、`RegionBatch`、层级/诊断数据类和全部 Layout 异常。上层模块应从 `layout` 导入这些对象，不依赖 KLayout cell/layer index 的内部表示。
+包级导出 `LayoutDB`、`ShapeQuery`、`DbuBox`、`LayerSpec`、`CellRef`、`RegionBatch`、诊断数据类和全部 Layout 异常。Cell 层级直接由 `LayoutDB.cell_hierarchy()` 返回普通字典，不再额外导出层级结构体。上层模块应从 `layout` 导入这些对象，不依赖 KLayout cell/layer index 的内部表示。
 
 ### 2.2 [`layout/types.py`](../layout/types.py)
 
@@ -127,7 +127,7 @@ GDS/OASIS 或 raster NPZ
 | `layers()` | 无 | 排序后的现有 `LayerSpec` | 否 |
 | `cell(name)` | cell 名 | `CellRef` | 否 |
 | `bbox(cell=None)` | 可选 `CellRef` | 层级 bbox `DbuBox`；空 cell 为 `None` | 否 |
-| `hierarchy_summary()` | 无 | `HierarchySummary` | 否 |
+| `cell_hierarchy()` | 无 | `dict[str, tuple[str, ...]]`，全部 Cell 的直接子 Cell 邻接表 | 否 |
 | `query(layers, box, cell=None, preserve_properties=False)` | Layer 列表、ROI、可选 cell | 惰性 `ShapeQuery` | 否 |
 | `close()` | 无 | `None` | 释放原生数据库 |
 
@@ -151,13 +151,9 @@ GDS/OASIS 或 raster NPZ
 
 只用查询框筛选相交 occurrence，不与框做布尔相交；完整图形已变换到所选 cell 坐标，不相交图形不加载。deep Region 在原生端一次展平，所以结果可在 `LayoutDB` 关闭后消费；属性模式使用保持 shape class 的原生 `merged`，避免 `flatten()` 静默丢属性。该接口只供边段 macro 提取真实边；显示、ILT 像素 ROI 和普通查询继续使用精确 `materialize()`。
 
-### 2.5 [`layout/hierarchy.py`](../layout/hierarchy.py)
+`cell_hierarchy()` 遍历文件内全部 Cell，而非只展开当前选择的 top。键是 Cell 名称；值是按名称排序、经 KLayout 原生去重的直接子 Cell 名称元组；叶 Cell 明确映射到 `()`。共享 Cell 只在字典中定义一次，但可以同时出现在多个父 Cell 的值中，因此返回的是 DAG 邻接表，不是 occurrence 树。重复 SREF 和 AREF 均不展开，也不计算 bbox、实例数、逻辑阵列数或 top 列表。数据库关闭后调用抛 `ClosedLayoutError`；方法不缓存结果。
 
-- `CellInfo`：`ref`、可选 `bbox`、直接 `child_cells`、实例记录数 `instance_records`、展开阵列后的逻辑实例数 `logical_instances`。
-- `HierarchySummary`：`top_cells` 和全部 `cells` 的不可变元组。
-- `build_hierarchy_summary(db) -> HierarchySummary`：只遍历 cell/instance 元数据，不复制或扁平化图形。它是模块级实现函数，公共调用优先使用 `db.hierarchy_summary()`。
-
-### 2.6 [`layout/errors.py`](../layout/errors.py)
+### 2.5 [`layout/errors.py`](../layout/errors.py)
 
 `LayoutError(RuntimeError)` 是统一基类；细分为打开失败、top 歧义、cell 不存在、Layer 不存在和数据库已关闭。命令行入口通常捕获 `LayoutError` 并返回退出码 2。
 
@@ -810,7 +806,7 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 
 本文已覆盖全部当前生产 Python 模块：
 
-- `layout`：`__init__`、`types`、`database`、`query`、`hierarchy`、`errors`；
+- `layout`：`__init__`、`types`、`database`、`query`、`errors`；
 - `geometry`：`__init__`、`contour`、`patch`、`raster`、`validate`、`errors`；
 - `opc`：`__init__`、`errors`、`diagnostics`；
 - `opc.input`：`__init__`、`_arrays`、`grid`、`mask`、`raster`、`preflight`；
@@ -826,7 +822,7 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 
 | 包 | 公共符号 |
 |---|---|
-| `layout` | `AmbiguousTopCellError`、`CellInfo`、`CellNotFoundError`、`CellRef`、`ClosedLayoutError`、`DbuBox`、`HierarchySummary`、`LayerNotFoundError`、`LayerShapeStats`、`LayerSpec`、`LayoutDB`、`LayoutError`、`LayoutOpenError`、`MaterializationStats`、`RegionBatch`、`ShapeQuery` |
+| `layout` | `AmbiguousTopCellError`、`CellNotFoundError`、`CellRef`、`ClosedLayoutError`、`DbuBox`、`LayerNotFoundError`、`LayerShapeStats`、`LayerSpec`、`LayoutDB`、`LayoutError`、`LayoutOpenError`、`MaterializationStats`、`RegionBatch`、`ShapeQuery` |
 | `geometry` | `ContourBatch`、`GeometryError`、`GeometryPatch`、`PatchConflictError`、`PatchSet`、`PatchWriter`、`RasterizationError`、`ValidationIssue`、`ValidationReport`、`contours_to_region`、`extract_contour`、`extract_contours`、`iter_region_coverage_tiles`、`render_layout_region`、`render_region_batch`、`validate_contours` |
 | `opc` | `OPCError`、`OwnershipError`、`PhysicalMaskError`、`ReconstructionError` |
 | `opc.input` | `CoreSpec`、`PhysicalMask`、`RectilinearCoreGrid`、`default_memory_budget_bytes`、`normalize_physical_mask`、`preflight_layout`、`process_memory_snapshot`、`resolve_memory_budget_bytes` |

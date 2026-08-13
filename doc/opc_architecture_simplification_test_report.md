@@ -54,7 +54,7 @@ GPU 峰值 271,544,320 bytes 与历史一致；授权精简后总耗时 85.892 s
 
 诊断代码只有根入口显式调用；输入包不再导出诊断函数。后续审计删除了 `EdgeBatch`、`OwnershipBatch` 和重复几何入口，剩余结构体均有当前生产调用方。未发现为了旧错误保留的 wrapper、v1 兼容分支或变量。
 
-同时确认生产代码不再引用固定 backend、`GeometryEngine`、`UniformGridIndex`、`CoordinateSystemError`、edge bbox 或 `DbuBox.overlaps`。历史 `design_review.md` 保留为修改前的审计记录，不当作当前 API 手册。`hierarchy_summary` 是明确交付的只读层级检查能力，有外部 planner 使用价值且无热路径成本，因此保留。
+同时确认生产代码不再引用固定 backend、`GeometryEngine`、`UniformGridIndex`、`CoordinateSystemError`、edge bbox 或 `DbuBox.overlaps`。历史 `design_review.md` 保留为修改前的审计记录，不当作当前 API 手册。本报告执行时曾保留 `hierarchy_summary`；2026-08-13 用户重新确认真实需求后，它已由更轻量的 `LayoutDB.cell_hierarchy()` 取代，本句不再描述当前 API。
 
 ## 8. 风险与后续
 

@@ -2,6 +2,8 @@
 
 全项目结构审查的证据、问题分级和后续架构门禁见[当前架构与精简性评审](current_architecture_review.md)。评审本身不修改生产代码；后续实施去重时必须继续执行本手册的全量数值与真实入口回归。
 
+本轮 Cell DAG 接口的场景矩阵和门禁证据见[Layout 层级接口轻量化测试报告](layout_hierarchy_simplification_test_report.md)。
+
 ## 1. 环境与直接运行
 
 仓库不需要安装为 Python 包。当前已验证解释器：
@@ -20,6 +22,14 @@ $python = 'D:\app\miniforge\envs\myopc\python.exe'
 后者继续声明 Python 3.12 及以上和项目元数据。源码仍从仓库根目录直接运行，不需要
 把 MyOPC 自身执行 `pip install`。运行依赖为 KLayout、NumPy、Pillow、PyTorch 和
 psutil；开发验收另外使用 pytest、pytest-cov 和 Ruff。
+
+层级接口专项回归：
+
+```powershell
+& $python -m pytest tests\layout\test_database.py -q
+```
+
+该组测试验证 `LayoutDB.cell_hierarchy()` 覆盖文件内全部 Cell，以普通字典表达共享 DAG；叶节点为空元组，重复 SREF 和 100×100 AREF 不展开，关闭数据库后不返回过期结果。
 
 ## 2. 前端输入验证
 

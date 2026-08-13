@@ -413,3 +413,15 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - 阶段 95 已完成：`run_mbopc_frontend.py` 交付逐 macro 准备、逐 tile 栅格对照和即时释放验证；明确未接入磁盘 shard、memmap 或完整逐 macro 多轮求解。
 - 阶段 96 已完成：覆盖跨 macro 矩形、斜边、孔洞、窄环、重叠图形、层级 occurrence、属性生命周期、双 halo 校验和 ILT 精确像素路径隔离。
 - 阶段 97 已完成：手册、专项开发/测试报告和规划记录已同步；248 项全量测试、Ruff、compileall、docstring、重复实现、调用点、Markdown 与保护目录审计通过，完成最终差异确认并进入本地关键提交。
+
+# 2026-08-13：阶段 98–100 Layout 层级接口轻量化
+
+- 阶段 98 已完成：删除 `CellInfo`/`HierarchySummary` 和独立 `layout/hierarchy.py`，完整 Cell DAG 已收进 `LayoutDB.cell_hierarchy()`；关键代码提交 `ae2a2a2`。
+- 阶段 99 已完成：覆盖三级层级、共享 Cell、重复 SREF/AREF、多 top、叶节点和关闭生命周期，100×100 AREF 不展开物理 occurrence。
+- 阶段 100 已完成：同步当前手册、专项报告与规划记录；250 项全量、Ruff、compileall、旧符号、中文 docstring、重复实现、Markdown、保护目录与用户文件审计通过，进入文档提交。
+
+### 阶段 98–100 约束
+
+- 用户明确授权本轮修改 `layout/`；`geometry/` 保持零修改。
+- 返回值固定为 `dict[str, tuple[str, ...]]`：包含文件内全部 Cell，叶节点值为空元组，共享子 Cell 只保存一次定义。
+- 删除旧方法、旧类型和兼容包装；不保留 bbox、实例记录数、阵列展开数或 top 列表，不新增缓存和结构体。

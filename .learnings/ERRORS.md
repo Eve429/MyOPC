@@ -2096,3 +2096,29 @@ raster 修复后的首条 pytest 命令引用了不存在的 `tests/opc/test_dia
 此 Windows/KLayout 环境不把 `pytest-cov` 作为发布阻断门禁；覆盖率采样应放在隔离进程或无 KLayout 导入的测试子集执行。
 
 ---
+
+## [ERR-20260813-001] 再次使用默认 Python 执行项目门禁
+
+**Logged**: 2026-08-13
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+已存在明确项目解释器记录，但本阶段首轮测试仍调用默认 Miniforge base，重复触发 pytest 与 Ruff 缺失。
+
+### Error
+`D:\app\miniforge\python.exe: No module named pytest`；`No module named ruff`。
+
+### Resolution
+后续门禁显式使用 `D:\app\miniforge\envs\myopc\python.exe`，不修改依赖或生产代码。
+
+### Prevention
+MyOPC 的测试、Ruff、compileall 和项目行为探针一律直接使用已确认的 myopc 环境解释器；执行前不再依赖 shell 的 `python` 解析结果。
+
+### Metadata
+- Reproducible: yes
+- Related Files: `.learnings/ERRORS.md`
+- See Also: ERR-20260812-004, ERR-20260812-008, ERR-20260812-012
+
+---

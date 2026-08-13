@@ -32,6 +32,8 @@ flowchart TD
 - [MB-OPC 求解器](../opc/iteration/mbopc/solver.py)
 - [诊断输出](../opc/diagnostics.py)
 
+Cell 层级检查是 `LayoutDB` 的旁路只读能力：`LayoutDB.cell_hierarchy()` 一次遍历全部 Cell，通过 KLayout 原生 `each_child_cell()` 得到去重后的直接关系，返回 `dict[str, tuple[str, ...]]`。它不进入 ROI 物化、OPC 输入或迭代调用链，不展开 SREF/AREF occurrence，也不建立额外层级对象。
+
 ## 2. 完整入口 `main.run_mbopc.run`
 
 ```mermaid

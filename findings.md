@@ -441,4 +441,14 @@
 - 参数显式迁移为 `roi_halo_nm` 和 `tile_halo_nm`；用户授权 `layout/` 增加独立未裁剪批量物化入口，现有精确 `materialize()` 语义保持不变，`geometry/` 不修改。
 - ILT 不提边，精确裁剪不会产生可移动假边；未来大版图 ILT 仍需 tile 光学上下文和 ownership-only 像素提交，但不复用 SegmentBatch。
 - ICCAD13 资产的 35×35 数据是频域 Hopkins 核，不表示空间域只影响 17 pixel；不能据此承诺有限光学半径。`tile_halo` 是用户按精度收敛选取的有效截断范围，`roi_halo` 至少再覆盖最大允许边位移。
+
+# 2026-08-13：Layout 层级接口轻量化决策
+
+- `layout/hierarchy.py` 只有 `LayoutDB.hierarchy_summary()` 和一项直接测试消费；OPC、runner 和当前 planner 均不读取这些 dataclass。
+- 用户确认删除 bbox、实例记录数和阵列展开数，只保留完整 Cell 层级；返回文件内全部 Cell，不限于当前选中 top。
+- GDS Cell 层级是 DAG。共享 Cell 采用邻接字典保存：每个 Cell 只定义一次，可同时出现在多个父 Cell 的子列表中；不展开 SREF/AREF occurrence，避免阵列导致内存膨胀。
+- KLayout `Cell.each_child_cell()` 原生返回去重后的直接子 Cell 索引，适合一次遍历生成 `dict[str, tuple[str, ...]]`，无需逐实例统计。
+- 实现回归确认 100×100 AREF 与同父 Cell 重复 SREF 均只生成一个直接子名称；完整字典同时包含当前选择 top 之外的独立 Cell，叶节点明确为 `()`。
+- 最终调用点审计确认旧层级模块/类型/方法在生产代码和测试中零匹配；历史报告只保留修改前证据并标注不再代表当前 API。
+- 本轮没有新增缓存、兼容包装或 planner 专用对象；低引用扫描未发现因修复测试而遗留的辅助函数。
 - 小版图实测确认旧“完整 ROI 精确裁剪”与新“完整 occurrence”在处理框最外边缘的长边分段相位不同：旧路径从裁剪端点起算，新路径从真实图形端点起算。正确验收应比较同一完整 occurrence 的单 macro 与多 macro 分区，不得以带处理框假边的旧分段坐标为真值。

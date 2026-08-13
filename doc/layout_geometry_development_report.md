@@ -61,7 +61,7 @@ GDS/OASIS
 
 批量 Region 能力没有重新包装成另一组无调用方函数；实际调用点直接使用 KLayout 原生集合运算。未来出现第二个真实后端或任意 edge-neighbor 查询消费者时，再从真实需求提取接口。
 
-`LayoutDB.hierarchy_summary` 作为早期明确交付的只读层级检查 API 保留：它不复制图形、不进入迭代热路径，也没有并列实现；外部 planner 可直接消费该公共结果。
+后续轻量化阶段已删除独立 `layout/hierarchy.py`、`CellInfo` 与 `HierarchySummary`。当前只读层级接口为 `LayoutDB.cell_hierarchy()`：直接返回全部 Cell 的 DAG 邻接字典，不复制图形、不展开 occurrence、不计算无人消费的 bbox/实例统计，也不进入迭代热路径。详见 `layout_hierarchy_simplification_development_report.md`。
 
 ## 4. 性能设计
 

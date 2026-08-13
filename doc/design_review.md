@@ -21,7 +21,7 @@
 | 4.7 求解器/模型/指标 | **已落地（首版）** | `opc/iteration/mbopc/`（流式 simple solver）+ `lithography/iccad13.py`（OpenILT ICCAD13 Hopkins 三工艺角）+ `evaluation/metrics.py`（L2/PVBand/EPE），三者经 `MBOPCProblem` 与输入前端交互，未下沉进 `opc.input`（`7485204` + `6cf885a`） |
 | 4.8 checkpoint 读回端 | **未处置** | NPZ 写出迁移至 `opc/diagnostics.py:save_problem_npz`，仍无加载器/续算路径 |
 | 4.9 多层假设 | **未处置** | `prepare_problem` 仍接受单个 `layer` |
-| 3.5 `HierarchySummary` planner | **未处置** | planner 仍不存在；`6a2f353` 的“统一 ROI 语义”调整了 layout 查询，但层级仍只用于统计 |
+| 3.5 `HierarchySummary` planner | **已处置** | 删除独立模块和统计结构体；当前 `LayoutDB.cell_hierarchy()` 只返回完整 Cell DAG 邻接字典，不展开 occurrence |
 
 ### 0.2 复核新发现（本轮新增，原文档未涉及）
 
@@ -57,7 +57,7 @@
 | 过度设计 | `UniformGridIndex` 空间索引 | 高 | 零生产调用方，仅被自身单元测试引用 |
 | 过度设计 | `OwnershipPolicy` Protocol + 显式 core 路径 | 中 | 只有一个实现，显式路径基本只服务单 core 默认值 |
 | 过度设计（前置投资） | 128 位稳定 key 的“跨进程/checkpoint”用途 | 中 | 机制在进程内被用，但所述跨进程/checkpoint 场景尚不存在 |
-| 过度设计（轻） | `HierarchySummary` 的 planner 用途 | 中 | 没有 planner，层级信息只用于诊断 |
+| 已处置的过度设计 | `HierarchySummary` 的 planner 用途 | 高 | 已删除专用结构体与统计字段，收敛为 `LayoutDB.cell_hierarchy()` 普通邻接字典 |
 | 缺失 | 分块/流式编排层 | 高 | `prepare_problem` 是单批单层一次性管线，无法装下整张 reticle |
 | 缺失 | 跨 tile 共享 `d_current`/`d_next` + owner-only 写入 | 高 | 位移是单次 `run()` 内的局部数组，无跨 tile 状态 |
 | 缺失 | 几何安全 / 位移可行性层 | 高 | 自交、hole 包含、最小宽度、左右穿越均未保证 |
@@ -111,6 +111,8 @@
 - 调用点：`LayoutDB.hierarchy_summary()`（`database.py:120`）被 `run_layout_geometry.py` 与 `tests/layout/test_database.py` 调用，**OPC 不读**。
 - 这与第 4 节“层级未被利用”是一体两面：层级被**读取统计**了，却没有被**计算利用**。统计对象本身不算冗余，但其存在理由（planner）尚不存在。
 - **处置建议**：保留对象；真正的处置是第 4.6 节——让 OPC 实际利用层级，而非删除统计。
+
+**2026-08-13 处置**：用户确认当前只需要轻量完整 Cell 层级，不需要 bbox、实例统计或 planner 专用对象。已删除 `layout/hierarchy.py`、`CellInfo`、`HierarchySummary` 与旧方法，在 `LayoutDB` 内收敛为普通 `dict[str, tuple[str, ...]]` 邻接表。该变化只精简层级检查接口，不代表第 4.6 节的 source occurrence 追溯已经实现。
 
 ## 4. 缺失 / 需要增加
 

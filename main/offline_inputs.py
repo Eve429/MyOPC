@@ -42,6 +42,7 @@ from opc.input.preflight import estimate_prepare_peak_bytes  # noqa: E402
 from main.configuration import (  # noqa: E402
     ConfiguredArgumentParser,
     exact_dbu,
+    fragmentation_dbu,
     glp_layer_map,
     parse_glp_layer,
     parse_layer_spec,
@@ -333,11 +334,8 @@ def materialize_segment_input(
         dbu_nm = dbu_um * 1000.0
         tile_dbu = exact_dbu(tile_size_nm, dbu_nm, "tile_size_nm")
         halo_dbu = exact_dbu(tile_halo_nm, dbu_nm, "tile_halo_nm", allow_zero=True)
-        config = FragmentationConfig(
-            float(exact_dbu(corner_nm, dbu_nm, "corner_nm")),
-            float(exact_dbu(segment_nm, dbu_nm, "segment_nm")),
-            float(exact_dbu(
-                max_displacement_nm, dbu_nm, "max_displacement_nm", allow_zero=True)))
+        config = FragmentationConfig(*fragmentation_dbu(
+            corner_nm, segment_nm, max_displacement_nm, dbu_nm))
         grid = RectilinearCoreGrid(
             axis_cuts_by_size(selected_box.left, selected_box.right, tile_dbu),
             axis_cuts_by_size(selected_box.bottom, selected_box.top, tile_dbu), halo_dbu)

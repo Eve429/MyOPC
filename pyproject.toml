@@ -3,9 +3,9 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "myopc-layout-geometry"
+name = "myopc"
 version = "0.1.0"
-description = "High-performance hierarchical layout and geometry foundation for OPC"
+description = "Modular lithography, OPC and ILT workflows for large hierarchical layouts"
 requires-python = ">=3.12"
 dependencies = [
     "klayout>=0.30.10,<0.31",

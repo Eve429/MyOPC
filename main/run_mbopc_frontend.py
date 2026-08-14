@@ -20,7 +20,8 @@ import numpy as np
 from layout import CellRef, DbuBox, LayerSpec, LayoutDB, LayoutError, RegionBatch
 from main.artifacts import atomic_json
 from main.configuration import (
-    ConfiguredArgumentParser, exact_dbu, glp_layer_map, parse_glp_layer, parse_layer_spec,
+    ConfiguredArgumentParser, exact_dbu, fragmentation_dbu, glp_layer_map,
+    parse_glp_layer, parse_layer_spec,
 )
 from opc import OPCError
 from opc.diagnostics import (
@@ -164,8 +165,8 @@ def _problem_configuration(
     grid = RectilinearCoreGrid(
         x_cuts, y_cuts,
         exact_dbu(args.tile_halo_nm, dbu_nm, "tile-halo-nm", allow_zero=True))
-    config = FragmentationConfig(args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
-                                 args.max_displacement_nm / dbu_nm)
+    config = FragmentationConfig(*fragmentation_dbu(
+        args.corner_nm, args.segment_nm, args.max_displacement_nm, dbu_nm))
     return config, grid
 
 

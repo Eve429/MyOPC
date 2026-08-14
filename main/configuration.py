@@ -34,6 +34,18 @@ def exact_dbu(value_nm: float, dbu_nm: float, name: str,
     return int(rounded)
 
 
+def fragmentation_dbu(
+        corner_nm: float, segment_nm: float, max_displacement_nm: float,
+        dbu_nm: float) -> tuple[float, float, float]:
+    """换算分段参数，并强制几何分段长度落在整数 DBU 格点上。"""
+    # corner 与 segment 决定实际切分端点，非整数 DBU 会引入不可表示的版图坐标；
+    # 最大位移只参与连续优化和重建上限，可以保留小数 DBU，避免无意义量化步长。
+    corner = exact_dbu(corner_nm, dbu_nm, "corner_nm")
+    segment = exact_dbu(segment_nm, dbu_nm, "segment_nm")
+    displacement = float(max_displacement_nm) / dbu_nm
+    return float(corner), float(segment), displacement
+
+
 def _config_path(argv: Sequence[str]) -> tuple[list[str], Path | None]:
     """从任意参数位置提取唯一 `--config`，其余参数原样交回 argparse。"""
     cleaned: list[str] = []

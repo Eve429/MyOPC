@@ -93,6 +93,22 @@ def test_soft_raster_zero_is_exact_and_gradient_matches_finite_difference() -> N
     assert float(displacement.grad.item()) == pytest.approx(numeric, rel=3e-3, abs=3e-3)
 
 
+def test_soft_raster_hot_path_does_not_synchronize_tensor_values(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """合法内部输入的软栅格热路径不得用 Tensor.item 强制设备同步。"""
+    def reject_item(self: torch.Tensor) -> object:
+        """只要生产路径读取设备标量就立刻暴露性能回归。"""
+        raise AssertionError("软栅格热路径不应调用 Tensor.item")
+
+    monkeypatch.setattr(torch.Tensor, "item", reject_item)
+    result = rasterize_soft_edges(
+        np.zeros((8, 8), dtype=np.float32), [[4.0, 1.0]], [[4.0, 7.0]],
+        [[1.0, 0.0]], torch.zeros(1), pixel_dbu=1, temperature=1.0,
+        origin_dbu=(0, 0), chunk_size=1)
+    assert result.shape == (8, 8)
+    assert torch.count_nonzero(result) == 0
+
+
 def test_soft_raster_outward_motion_adds_outer_occupancy_for_hull_and_hole() -> None:
     """外轮廓与孔洞法向相反时，正位移都应沿各自外法向增加占据。"""
     reference = np.zeros((32, 32), dtype=np.float32)

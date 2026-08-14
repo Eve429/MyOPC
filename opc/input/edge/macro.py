@@ -10,8 +10,6 @@ from numpy.typing import NDArray
 from geometry import extract_contour
 from layout import DbuBox, LayerSpec, RegionBatch
 from opc.input import MaskPolarity, PhysicalMask, RectilinearCoreGrid, normalize_physical_mask
-from opc.input._arrays import as_vector
-
 from .fragmentation import FragmentationConfig, SegmentBatch, fragment_edges
 
 
@@ -27,45 +25,15 @@ class MacroPreparation:
     core_offsets: NDArray[np.int64]
     member_segment_indices: NDArray[np.int32]
 
-    def __post_init__(self) -> None:
-        """校验当前 macro 的全局 segment ID、tile owner 和 CSR 对齐关系。"""
-        active = as_vector(self.active_segment_indices, np.dtype(np.int32),
-                           "active_segment_indices")
-        owners = as_vector(self.active_owner_indices, np.dtype(np.int32),
-                           "active_owner_indices")
-        cores = as_vector(self.core_indices, np.dtype(np.int32), "core_indices")
-        offsets = as_vector(self.core_offsets, np.dtype(np.int64), "core_offsets")
-        members = as_vector(self.member_segment_indices, np.dtype(np.int32),
-                            "member_segment_indices")
-        segment_count = self.segments.segment_count
-        if len(owners) != len(active):
-            raise ValueError("macro owner_indices 必须与 active segment 对齐")
-        for name, values in (("active", active), ("member", members)):
-            if len(values) and (np.any(values < 0) or np.any(values >= segment_count)):
-                raise ValueError(f"macro {name} segment ID 超出范围")
-        if len(active) > 1 and np.any(np.diff(active) <= 0):
-            raise ValueError("macro active segment ID 必须严格递增")
-        if len(owners) and np.any(owners < -1):
-            raise ValueError("macro active segment owner 只能是全局 tile 或 -1")
-        if (len(offsets) != len(cores) + 1 or offsets[0] != 0 or
-                offsets[-1] != len(members) or np.any(np.diff(offsets) < 0)):
-            raise ValueError("macro tile membership CSR 无效")
-        for name, value in (
-            ("active_segment_indices", active), ("active_owner_indices", owners),
-            ("core_indices", cores),
-            ("core_offsets", offsets), ("member_segment_indices", members),
-        ):
-            object.__setattr__(self, name, value)
-
     def segments_for_core(self, local_core_index: int) -> NDArray[np.int32]:
-        """返回当前 macro 内一个 tile 可读取的原始 segment ID 视图。"""
+        """返回一个 tile 可读取的当前 Macro SegmentBatch 局部下标视图。"""
         if local_core_index < 0 or local_core_index >= len(self.core_indices):
             raise IndexError("macro local core index 超出范围")
         start, end = self.core_offsets[local_core_index:local_core_index + 2]
         return self.member_segment_indices[start:end]
 
     def owned_segments(self) -> NDArray[np.int32]:
-        """按需返回 owner tile 落在当前 macro 内的原始 segment ID。"""
+        """按需返回 owner tile 落在当前 macro 内的局部 segment 下标。"""
         # owned 集合只在发布或诊断时需要；不常驻一份可由两个短向量推导的副本。
         # core 数通常远小于 segment 数，np.isin 在 C 端批量完成，不增加 Python 热循环。
         return self.active_segment_indices[np.isin(

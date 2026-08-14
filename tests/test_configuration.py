@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from main.configuration import fragmentation_dbu
 from main.run_lithography import build_parser
 
 
@@ -54,3 +55,16 @@ def test_missing_custom_config_fails_before_input_open(tmp_path: Path) -> None:
         build_parser().parse_args([
             "input.gds", "--config", str(tmp_path / "missing.toml")])
     assert raised.value.code == 2
+
+
+def test_fragmentation_conversion_keeps_continuous_displacement() -> None:
+    """分段长度必须是整数 DBU，但最大位移应允许小数 DBU。"""
+    assert fragmentation_dbu(4.0, 12.0, 2.5, 2.0) == (2.0, 6.0, 1.25)
+
+
+@pytest.mark.parametrize("corner,segment", [(3.0, 12.0), (4.0, 11.0)])
+def test_fragmentation_conversion_rejects_fractional_grid_lengths(
+        corner: float, segment: float) -> None:
+    """会产生非格点切分端点的 corner 或 segment 参数必须立即拒绝。"""
+    with pytest.raises(ValueError, match="不能由当前"):
+        fragmentation_dbu(corner, segment, 2.5, 2.0)

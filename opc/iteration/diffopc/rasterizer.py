@@ -45,24 +45,14 @@ def rasterize_soft_edges(
         raise TypeError("displacements 必须是浮点 Tensor")
     dtype = displacements.dtype
     base = torch.as_tensor(reference_mask, device=displacements.device, dtype=dtype)
-    if (base.ndim != 2 or displacements.ndim != 1 or
-            not bool(torch.all(torch.isfinite(base)).item()) or
-            not bool(torch.all(torch.isfinite(displacements)).item())):
-        raise ValueError("reference_mask 必须是有限二维数组且 displacements 必须是有限一维 Tensor")
+    if base.ndim != 2 or displacements.ndim != 1:
+        raise ValueError("reference_mask 必须是二维数组且 displacements 必须是一维 Tensor")
     start = torch.as_tensor(np.asarray(starts), device=base.device, dtype=dtype)
     end = torch.as_tensor(np.asarray(ends), device=base.device, dtype=dtype)
     normal = torch.as_tensor(np.asarray(normals), device=base.device, dtype=dtype)
     if (start.ndim != 2 or start.shape[1:] != (2,) or start.shape != end.shape or
-            start.shape != normal.shape or start.shape[0] != displacements.numel() or
-            not bool(torch.all(torch.isfinite(start)).item()) or
-            not bool(torch.all(torch.isfinite(end)).item()) or
-            not bool(torch.all(torch.isfinite(normal)).item())):
+            start.shape != normal.shape or start.shape[0] != displacements.numel()):
         raise ValueError("边段数组必须与 displacement 数量一致")
-    lengths = torch.linalg.vector_norm(end - start, dim=1)
-    normal_lengths = torch.linalg.vector_norm(normal, dim=1)
-    if (bool(torch.any(lengths <= 0.0).item()) or
-            bool(torch.any(torch.abs(normal_lengths - 1.0) > 1e-4).item())):
-        raise ValueError("边段长度必须为正且法向必须是单位向量")
     height, width = base.shape
     if relative_pixel_centers is None:
         yy, xx = torch.meshgrid(

@@ -22,8 +22,8 @@ from layout import DbuBox, LayerSpec, LayoutDB, LayoutError
 from lithography import ICCAD13Lithography
 from main.artifacts import atomic_json, save_final_lithography_tiles
 from main.configuration import (
-    ConfiguredArgumentParser, exact_dbu, glp_layer_map, parse_glp_layer,
-    parse_layer_spec,
+    ConfiguredArgumentParser, exact_dbu, fragmentation_dbu, glp_layer_map,
+    parse_glp_layer, parse_layer_spec,
 )
 from opc import OPCError
 from opc.diagnostics import render_boundary_overlay, write_debug_gds
@@ -155,9 +155,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         grid = RectilinearCoreGrid(
             axis_cuts_by_size(box.left, box.right, tile_dbu),
             axis_cuts_by_size(box.bottom, box.top, tile_dbu), halo_dbu)
-        fragmentation = FragmentationConfig(
-            args.corner_nm / dbu_nm, args.segment_nm / dbu_nm,
-            args.max_displacement_nm / dbu_nm)
+        fragmentation = FragmentationConfig(*fragmentation_dbu(
+            args.corner_nm, args.segment_nm, args.max_displacement_nm, dbu_nm))
         preflight_started = perf_counter()
         # 阶段③容量预检。物化任何 Region/边段前估算边段数与准备阶段峰值内存；
         # 超预算则返回 rejected，或在 --preflight-only 时只报告估算而跳过物化。
@@ -218,8 +217,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # 放置误差）方向驱动位移；owner 方向先暂存到 next，只有整轮评价完成且全局
     # 轮廓拓扑合法才跨越屏障发布为下一轮的 current，因此 tile 顺序不会提前改变
     # 后续边段看到的状态。
-    # optimize 对所有 batch 只读同一 current，并把 owner 方向暂存到 next；只有整轮
-    # 评价完成且全局轮廓合法才跨越屏障发布，因此 tile 顺序不会提前改变后续边段。
     optimized = optimize(problem, model, iteration)
     iterated = perf_counter()
 
@@ -229,8 +226,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # core 从不裁最终 Polygon，所以跨 core 与斜边不会产生两套取整端点；halo 也
     # 从不回写。shot（掩膜矩形碎块）估算只在最终几何上以固定 512² 画布做一次，
     # 既不进入迭代，也不让整张 reticle 高分辨率像素图常驻。
-    # 最佳状态在所有 tile 完成后只做一次全局矢量重建。core 从不裁最终 Polygon，
-    # 所以跨 core 与斜边不会产生两套取整端点；halo 也从不回写。
     reconstructed = reconstruct_region(problem, optimized.best_displacements)
     final_lithography = save_final_lithography_tiles(
         output_dir / "final_lithography", reconstructed, problem.grid, model,

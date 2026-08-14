@@ -9,9 +9,5 @@ class PhysicalMaskError(OPCError):
     """物理 mask 无法规范化为合法边界时抛出。"""
 
 
-class OwnershipError(OPCError):
-    """core 归属、上下文或更新提交不一致时抛出。"""
-
-
 class ReconstructionError(OPCError):
     """移动边段无法重建为合法闭合图形时抛出。"""

@@ -170,6 +170,22 @@ def test_single_iteration_publishes_and_evaluates_one_legal_update() -> None:
     assert result.records[1].step_dbu == 0.0
 
 
+def test_epe_probe_coordinates_match_raster_pixel_centers() -> None:
+    """位于右上像素中心的探针必须映射到有效数组索引而非越界半格。"""
+    region = kdb.Region(kdb.Box(0, 0, 8, 8))
+    grid = RectilinearCoreGrid(np.array([0, 32]), np.array([0, 32]))
+    problem = prepare_problem(
+        _batch(region), _batch(region).layers[0], FragmentationConfig(1, 2, 1), grid)
+    config = SimpleMBOPCConfig(
+        iterations=1, initial_step_dbu=1.0, decay_every=1,
+        epe_distance_dbu=1.0, pixel_dbu=8, canvas=4, batch_size=1)
+    result = optimize(problem, _RecordingZeroModel(canvas=4), config)
+    # 8 DBU 像素中心位于 4、12、20、28 DBU；probe 转数组索引必须减 0.5。
+    # 图形仅占一个像素，20 个短 segment 中有 10 个满足 target 的内外语义；旧
+    # 公式会把 probe 整体偏移半格并得到 0 个有效探针，故这里锁定精确数量。
+    assert result.records[0].valid_probes == 10
+
+
 def test_zero_local_tile_preserves_unquantized_reference_raster() -> None:
     """局部零位移快路必须保留原 current mask 覆盖率，不得偷换成 uint8 target。"""
     problem, _ = _rectangle_problem()

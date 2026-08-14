@@ -203,8 +203,8 @@ def optimize(problem: MBOPCProblem, model: LithographyModel,
                 context = cores[core_index].context_box
                 origin = np.array([context.left, context.bottom], dtype=np.float64)
                 probe_batches.append(np.full(len(indices), local_index, dtype=np.int64))
-                probe_inner.append((inner - origin) / config.pixel_dbu)
-                probe_outer.append((outer - origin) / config.pixel_dbu)
+                probe_inner.append((inner - origin) / config.pixel_dbu - 0.5)
+                probe_outer.append((outer - origin) / config.pixel_dbu - 0.5)
                 probe_segments.append(indices)
             if probe_segments:
                 with torch.no_grad():

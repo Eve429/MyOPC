@@ -1,5 +1,7 @@
 # MyOPC 开发手册
 
+本文是项目**当前架构事实源**；架构职责、数据所有权、性能边界和扩展约束以本文及当前源码为准。逐函数 API 事实以[模块输入输出接口参考](module_interface_reference.md)为准，阶段报告只保存当时的实施证据。
+
 当前全项目的结构、冗余与模块边界评审见[当前架构与精简性评审](current_architecture_review.md)。该文档区分确定问题、合理复杂度和需要用户授权的受保护目录改动；历史阶段报告不替代此当前结论。
 
 Layout 层级接口的本轮精简、性能边界和删除项见[Layout 层级接口轻量化开发报告](layout_hierarchy_simplification_development_report.md)。
@@ -90,6 +92,8 @@ layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc
 
 `edge_probe_points(starts, ends, normals, distance_dbu)` 是求解器和诊断共用的唯一探针坐标实现：以当前 segment 中点为基准，`inner = midpoint - normal * distance`，`outer = midpoint + normal * distance`。探针距离来自迭代配置，不与角段长度绑定。
 
+公共 raster 的像素 `[row=0,column=0]` 中心位于 `box.left/bottom + 0.5*pixel_dbu`。因此 MB-OPC 把全局 probe 转成数组连续索引时统一使用 `(probe-origin)/pixel_dbu-0.5`；该半像素偏移是坐标定义，不是插值补偿。
+
 `reconstruct_contours(problem, displacements)` 从固定参考边和位移生成 ring；相邻段位移不同时生成 jog，拐角优先解析 miter，超限时使用 bevel。`reconstruct_region` 再验证 ring 和孔洞关系并返回全局 Region。core 只分配计算和更新权，不裁剪最终矢量，因此跨多个 core 的斜边不会因多次整数裁剪出现 33/34 DBU 接缝差异。
 
 ## 5. simple MB-OPC 迭代
@@ -173,6 +177,8 @@ NPZ 是当前进程中 problem 的快照，不是跨 remesh、跨版本的持久
 
 本轮函数与内存收敛见[代码优化开发报告](code_optimization_development_report.md)；macro 前端实现见[专项开发报告](macro_materialization_development_report.md)，仍未实现的多轮 shard 求解边界见[独立开发方案](large_reticle_streaming_plan.md)。
 
+像素中心、DiffOPC 同步检查、分段单位与死抽象的本轮修正见[当前规则符合性修正开发报告](current_rule_compliance_fix_development_report.md)。
+
 ## 11. 物化前容量预检与资源统计
 
 真实版图根入口必须先调用 `preflight_layout(database, layer, box, ...)`，通过后才能调用 `ShapeQuery.materialize()`。默认 CPU 预算是启动时系统可用内存的 70%；显式 `--memory-budget-gib` 只改变本次任务预算。超过预算或 `int32` 容量时返回 `sharded_required`，当前版本不会尝试继续分配。
@@ -196,6 +202,8 @@ python main/run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 `
 ```
 
 `roi_halo_nm` 与 `tile_halo_nm` 是独立参数：前者控制 CPU macro 加载完整相交图形，后者控制光刻 tile context。默认可接近，但 ROI halo 还必须覆盖最大允许边位移。macro 模式只交付前端验证，不生成 shard、不运行多轮 OPC。
+
+`MacroPreparation` 的 segment 下标只在当前 macro 自己的 `SegmentBatch` 内有效；只有 tile ID 来自全局网格。对象全部字段由 `prepare_macro` 一次构造，内部不重复执行面向外部任意输入的数组校验。
 
 摘要 `memory_checkpoints` 使用进程 RSS/USS/private/peak working set，能覆盖 NumPy 与 KLayout 原生内存；`memory.problem_persistent_bytes` 只统计 problem 自有 NumPy 数组，两者不能混为同一指标。详细设计见[容量预检开发报告](frontend_preflight_development_report.md)。
 

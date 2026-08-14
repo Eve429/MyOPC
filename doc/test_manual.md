@@ -205,7 +205,7 @@ FAQ 契约专项回归：
 
 重点确认公共 raster 数组都以最低 Y 为第 0 行、PNG 仅在输出边界翻转，以及 `iterations=1` 确实提交并评价一次合法 MB-OPC 更新。详细矩阵见 [FAQ 契约修复测试报告](faq_contract_fix_test_report.md)。
 
-## 12. 极性、GLP 与配置专项
+## 10. 极性、GLP 与配置专项
 
 ```powershell
 & $python -m pytest tests\layout\test_glp.py tests\opc\test_polarity.py `
@@ -214,7 +214,7 @@ FAQ 契约专项回归：
 
 必须覆盖 clear/opaque 透光互补、opaque halo 框外为零、法向反转和源几何输出；GLP 的真实 `EQUIV ... +X,+Y`、RECT/PGON、显式层映射、未使用辅助 LEVEL 与非法语句；TOML 的五级优先级、相对路径、未知键/类型和外部工作目录启动。详细数据见[专项测试报告](polarity_glp_config_test_report.md)。
 
-## 10. 离线光刻与迭代专项测试
+## 11. 离线光刻与迭代专项测试
 
 准备一次输入：
 
@@ -271,8 +271,6 @@ D:\app\miniforge\envs\myopc\python.exe main/run_mbopc_frontend.py INPUT.gds `
 
 ```powershell
 & $python -m pytest tests\workbench\test_offline_workbench.py -q
-& $python -m pytest tests\workbench\test_offline_workbench.py `
-  --cov=tests.workbench --cov-branch --cov-report=term-missing -q
 ```
 
 当前工作台回归包含光刻、MB-OPC 与 SimpleILT 三个真实模型成功路径、版图/NPZ 像素一致性、直接版图光刻结果一致性、直接版图 SimpleILT，以及四个 `main/` 工作台脚本的仓库外启动。详细矩阵与真实数据见 [离线工作台测试报告](offline_workbench_test_report.md)和[可微光刻/ILT 测试报告](lithography_ilt_evaluation_test_report.md)。
@@ -283,7 +281,7 @@ SimpleILT 兼容入口和统一入口现在共同写 `ilt_result.npz`；回归�
 
 本轮完整矩阵、性能和真实版图数据见[代码优化测试报告](code_optimization_test_report.md)。
 
-## 11. 容量预检与资源统计测试
+## 12. 容量预检与资源统计测试
 
 ```powershell
 & $python -m pytest tests\opc\test_preflight.py `
@@ -294,3 +292,13 @@ SimpleILT 兼容入口和统一入口现在共同写 `ilt_result.npz`；回归�
 必须覆盖：小版图完整扫描、低预算拒绝、百亿 segment 只估算不分配、正式求解预检不加载光刻模型、`skip-artifacts` 不生成大型文件、阶段时间非负和所有内存检查点字段完整。真实 `gcd_45nm` 还需比较预检/实际 segment，检查零位移 XOR、core 缺口和重叠均为 0。当前完整结果见[容量预检测试报告](frontend_preflight_test_report.md)。
 
 最终光刻结果还需检查 MB-OPC 的 final_lithography/manifest.json、ownership-only tile NPZ 和 PNG，以及 SimpleILT 的 final_lithography.npz 和四张 final_*.png。使用 --no-final-lithography-png 验证 NPZ-only 路径。
+
+## 13. 当前规则符合性专项
+
+```powershell
+& $python -m pytest tests\test_configuration.py tests\opc\test_diffopc.py `
+  tests\opc\test_simple_mbopc.py tests\opc\test_macro_preparation.py `
+  tests\workbench\test_offline_workbench.py -q
+```
+
+重点检查：MB-OPC probe 使用 `(probe-origin)/pixel_dbu-0.5`；DiffOPC 合法软栅格路径不调用 `Tensor.item()`；corner/segment 必须是整数 DBU 而最大位移允许小数 DBU；删除 Macro 二次校验后所有真实边、owner 和 CSR 结果不变。完整结果见[当前规则符合性修正测试报告](current_rule_compliance_fix_test_report.md)。

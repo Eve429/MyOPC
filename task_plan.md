@@ -1,7 +1,7 @@
-# Layout / Geometry Development Plan
+# MyOPC 开发计划
 
 ## Goal
-Build a high-performance, extensible layout and geometry foundation for multiple OPC methods, with complete tests, benchmarks, local Git milestone commits, and reports under `doc/`.
+持续构建高性能、可扩展且可直接运行的 MyOPC 光刻、OPC 与 ILT 工程，并用完整测试、性能基准、本地关键提交和 `doc/` 报告保证交付质量。
 
 ## User Requirements
 - Preserve speed: load each layout once, retain hierarchy, query by ROI, batch all Python/native crossings.
@@ -292,7 +292,7 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 | float64 位移与强制 float32 几何使零位移软栅格残留约 4e-8 | 1 | 所有软栅格计算跟随 displacement dtype，并保留有限差分回归 |
 | 有限差分测试 dtype 短补丁多出一级缩进 | 1 | 修正后先 compileall，再执行专项回归 |
 
-| 64. OpenILT ILT and DiffOPC migration | in progress | Phase 1 LevelSet quality complete; later CurvMulti, Multilevel and DiffOPC acceptance remain |
+| 64. OpenILT ILT and DiffOPC migration | complete | LevelSet、CurvMulti、Multilevel 与 DiffOPC 四阶段均已完成专项验收 |
 | 65. LevelSetILT quality closure | complete | Exact SDF, strict contracts, correct curvature, complete runner artifacts and dedicated tests |
 
 ## 阶段 66–69：第二阶段 CurvMultiILT
@@ -425,3 +425,15 @@ Build a high-performance, extensible layout and geometry foundation for multiple
 - 用户明确授权本轮修改 `layout/`；`geometry/` 保持零修改。
 - 返回值固定为 `dict[str, tuple[str, ...]]`：包含文件内全部 Cell，叶节点值为空元组，共享子 Cell 只保存一次定义。
 - 删除旧方法、旧类型和兼容包装；不保留 bbox、实例记录数、阵列展开数或 top 列表，不新增缓存和结构体。
+
+# 2026-08-14：阶段 101–103 当前规则符合性修正
+
+- 阶段 101 已完成：修正 MB-OPC 像素中心探针映射、DiffOPC 热路径设备同步、分段单位换算及确定死代码；代码与回归测试提交为 `1aaf413`，未修改 `layout/`、`geometry/`。
+- 阶段 102 已完成：专项 70 项、全仓 255 项和基础层 branch coverage 255 项均通过，总覆盖率 90%；Ruff、compileall、中文 docstring、重复实现、私有单引用、异常入口、Markdown、保护目录和差异审计通过。
+- 阶段 103 已完成：当前架构/API 事实源、历史手册导航、测试手册、专项开发/测试报告及规划记录已同步；代码提交为 `1aaf413`，文档提交在最终审计后完成。
+
+### 阶段 101–103 错误记录
+
+| 错误 | 次数 | 处理 |
+|---|---:|---|
+| 首版像素中心回归误认为 20 个短边探针都满足 target 内外语义 | 1 | 实测修正后为 10 个、旧映射为 0 个；断言改为精确有效数，不修改生产逻辑 |

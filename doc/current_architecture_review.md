@@ -231,3 +231,9 @@ Simple MB-OPC 的 `_owner_indices()` 和 DiffOPC 的 `_owner_segments()` 语义�
 本报告第 4、5 节已按用户授权实施：`psutil` 转为运行依赖；LayoutDB 提供受控只读层级扫描；求解器依赖最小 `LithographyModel` Protocol；真实入口传递 membership 容量上限。入口层新增单一 `main/artifacts.py`，Layer/DBU 转换、ILT 张量 helper、owner 查询和边段计数公式均已去重，SimpleILT 兼容脚本只委托统一 `run_ilt`。
 
 本轮没有实施第 6 节 P3：`MBOPCProblem`/归档不改名，项目元数据身份、`OwnershipError` 与已跟踪产物不在此次修改范围。核心数据面没有新增结构体、runner 基类、注册器或工厂；`geometry/` 保持零修改。
+
+## 12. 当前规则符合性修正状态（2026-08-14）
+
+在不执行 `MBOPCProblem`/归档改名、也不处理已跟踪历史产物的前提下，已完成第 6 节中可独立落地的精简项：删除零抛出点、零捕获点的 `OwnershipError`；项目元数据由早期 `myopc-layout-geometry` 更新为 `myopc`，描述覆盖当前 lithography、OPC 与 ILT；当前架构/API 事实源已明确，历史超长手册降级为导航材料。阶段 64 状态漂移同步修正。
+
+同时删除 `MacroPreparation` 对唯一内部构造结果的第二遍数组校验，不新增工厂或包装层。`layout/`、`geometry/` 均未修改；`MBOPCProblem`、归档格式和已跟踪产物仍按本报告原结论保持不动。

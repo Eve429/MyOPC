@@ -1,6 +1,6 @@
 # MyOPC 模块输入输出接口参考
 
-本文以当前源码为准，逐模块说明 MyOPC 的输入、输出、数据形状、坐标与单位、对象生命周期、异常和性能边界。它回答“一个模块接收什么、返回什么、谁负责保存、哪些数据可以复用”，不把尚未实现的大 reticle macro/shard 方案描述为当前能力。
+本文是项目**当前 API 事实源**，以当前源码为准，逐模块说明 MyOPC 的输入、输出、数据形状、坐标与单位、对象生命周期、异常和性能边界。它回答“一个模块接收什么、返回什么、谁负责保存、哪些数据可以复用”，不把尚未实现的大 reticle macro/shard 方案描述为当前能力。
 
 调用顺序图见[函数调用关系与数据流](function_call_architecture.md)，开发约束见[开发手册](development_manual.md)。
 
@@ -398,7 +398,7 @@ membership 由参考 segment bbox 四向扩 halo 后与规则 core 范围相交�
 
 `macro_boxes(tile_grid, maximum_span_dbu)` 只选择已有 tile 切线，返回行优先 macro ownership 框；不会切开 tile。
 
-`prepare_macro(...) -> MacroPreparation` 接收未裁剪完整候选，返回当前 macro 生命周期内的真实 `segments`、活跃 segment/全局 tile owner、当前 macro 的 tile ID 和局部 membership CSR。处理 ROI 外但进入 tile halo 的真实边保留为 `owner=-1` 的固定只读 context；`owned_segments()` 只按需推导当前 macro 的唯一可发布集合，不常驻重复数组。它不定义磁盘 shard、跨进程稳定 ID 或多轮状态，不能替代完整 `MBOPCProblem`。
+`prepare_macro(...) -> MacroPreparation` 接收未裁剪完整候选，返回当前 macro 生命周期内的真实 `segments`、活跃 segment/全局 tile owner、当前 macro 的全局 tile ID 和局部 membership CSR。`active_segment_indices`、`member_segment_indices` 及 `owned_segments()` 的返回值都是**当前 macro 的 SegmentBatch 局部下标**，不同 macro 之间不可直接比较；全局身份只适用于 tile。处理 ROI 外但进入 tile halo 的真实边保留为 `owner=-1` 的固定只读 context。对象由该函数内部一次性构造，不为不存在的外部构造路径重复校验；它不定义磁盘 shard、跨进程稳定 ID 或多轮状态，不能替代完整 `MBOPCProblem`。
 
 `preflight_layout(..., include_layout_load_bytes=True)` 默认把一次源版图加载的保守成本计入预算；同一个已打开 `LayoutDB` 的逐 macro 局部预检传 `False`，避免把相同文件解析成本重复计入每个 macro。该开关只改变内存估算，不跳过文件大小上限或层级扫描。
 
@@ -588,6 +588,8 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 前置约束：每个 core 的 context 按 `pixel_dbu` 计算后必须装入固定 canvas；solver canvas 不得超过模型 canvas。
 
+EPE probe 从全局 DBU 转为 raster 连续索引时使用 `(probe-origin)/pixel_dbu-0.5`，因为数组索引 0 对应第一个像素中心而不是像素左下角。nearest/bilinear 评价均基于这一坐标契约。
+
 状态与更新接口语义：
 
 1. CPU 的 `current: float64[S]` 是本轮只读全局绝对位移；
@@ -603,15 +605,15 @@ target、可选 initial/optimization mask 和独立工艺条件契约与 CurvMul
 
 ### 8.8 [`opc/iteration/diffopc/`](../opc/iteration/diffopc)
 
-包级原型导出为 `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult` 和 `optimize`。`contracts.py` 保存配置/记录/结果；`rasterizer.py` 的 `rasterize_soft_edges` 以参考 mask、`[S,2]` 起终点/法向和 `[S]` 位移生成可微软 mask；`solver.py` 在现有 `MBOPCProblem` 上优化全局位移。
+包级导出 `DiffOPCConfig`、`DiffOPCIterationRecord`、`DiffOPCResult` 和 `optimize`。`contracts.py` 保存配置/记录/结果；`rasterizer.py` 的 `rasterize_soft_edges` 以参考 mask、`[S,2]` 起终点/法向和 `[S]` 位移生成可微软 mask；`solver.py` 在现有 `MBOPCProblem` 上优化全局位移。owner-only 计分、逐 batch backward、最佳快照、全局拓扑屏障和正式 GDS/NPZ/JSON/最终光刻产物均已验收。
 
-这些符号已有测试和 runner 调用方，因此保留在当前目录，但尚未通过后续阶段的连续 EPE、MRC/SRAF、大图内存和完整产物验收。当前接口参考只记录原型现实，不把它声明为生产完成能力。
+软栅格器只做参数、dtype、shape 和 device 等结构检查；边段有限性、正长度、单位法向及位移有限性由已准备问题和优化器状态保证。热路径不读取设备标量做重复 value 校验，避免每个 tile 触发 CPU/GPU 同步。动态 SRAF 和 CPU macro shard 仍是未来能力。
 
 ## 9. `opc` 异常与显式诊断
 
 ### 9.1 [`opc/errors.py`](../opc/errors.py) 与 [`opc/__init__.py`](../opc/__init__.py)
 
-`OPCError(Exception)` 是基类；`PhysicalMaskError`、`OwnershipError`、`ReconstructionError` 分别表示物理 mask、归属/提交和重建失败。当前 `OwnershipError` 是公共领域异常，但多数数组不变量由数据类直接抛 `ValueError`。
+`OPCError(Exception)` 是基类；`PhysicalMaskError` 表示物理 mask 规范化失败，`ReconstructionError` 表示移动边段无法重建为合法闭合图形。owner、membership 和配置不变量直接抛 `ValueError`；项目不保留没有真实抛出点的独立 ownership 异常。
 
 ### 9.2 [`opc/diagnostics.py`](../opc/diagnostics.py)
 
@@ -824,7 +826,7 @@ result = optimize(problem, model, SimpleMBOPCConfig(
 |---|---|
 | `layout` | `AmbiguousTopCellError`、`CellNotFoundError`、`CellRef`、`ClosedLayoutError`、`DbuBox`、`LayerNotFoundError`、`LayerShapeStats`、`LayerSpec`、`LayoutDB`、`LayoutError`、`LayoutOpenError`、`MaterializationStats`、`RegionBatch`、`ShapeQuery` |
 | `geometry` | `ContourBatch`、`GeometryError`、`GeometryPatch`、`PatchConflictError`、`PatchSet`、`PatchWriter`、`RasterizationError`、`ValidationIssue`、`ValidationReport`、`contours_to_region`、`extract_contour`、`extract_contours`、`iter_region_coverage_tiles`、`render_layout_region`、`render_region_batch`、`validate_contours` |
-| `opc` | `OPCError`、`OwnershipError`、`PhysicalMaskError`、`ReconstructionError` |
+| `opc` | `OPCError`、`PhysicalMaskError`、`ReconstructionError` |
 | `opc.input` | `CoreSpec`、`PhysicalMask`、`RectilinearCoreGrid`、`default_memory_budget_bytes`、`normalize_physical_mask`、`preflight_layout`、`process_memory_snapshot`、`resolve_memory_budget_bytes` |
 | `opc.input.edge` | `FragmentationConfig`、`MBOPCProblem`、`SegmentBatch`、`SegmentGeometry`、`edge_probe_points`、`fragment_edges`、`prepare_problem`、`reconstruct_contours`、`reconstruct_region` |
 | `opc.iteration.ilt` | `CurvMultiConfig`、`ILTIterationRecord`、`LevelSetConfig`、`SimpleILTConfig`、`SimpleILTResult`、`optimize`、`optimize_curvmulti`、`optimize_levelset`、`signed_distance_initialization` |

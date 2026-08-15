@@ -2122,3 +2122,28 @@ MyOPC 的测试、Ruff、compileall 和项目行为探针一律直接使用已�
 - See Also: ERR-20260812-004, ERR-20260812-008, ERR-20260812-012
 
 ---
+
+## [ERR-20260815-001] defuddle CLI 未安装
+
+**Logged**: 2026-08-15
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+读取用户提供的 GitHub 页面时，网页提取技能指定的 `defuddle` CLI 在当前 Windows 环境不可用。
+
+### Error
+`defuddle : The term 'defuddle' is not recognized as the name of a cmdlet`
+
+### Resolution
+不安装或修改用户环境，改用 GitHub 官方页面/API 与仓库原始源码完成只读评审。
+
+### Prevention
+调用 defuddle 前先检查命令是否存在；缺失时直接使用官方站点的只读接口，不重复失败命令。
+
+### Metadata
+- Reproducible: yes
+- Related Files: `.learnings/ERRORS.md`
+
+---

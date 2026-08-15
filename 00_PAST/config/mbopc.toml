@@ -24,7 +24,7 @@ preflight_only = false
 polarity = "clear"
 
 [entry.mbopc_frontend]
-grid = [2, 1]
+grid = [2, 2]
 tile_halo_nm = 200.0
 roi_halo_nm = 224.0
 macro_size_nm = 4096.0

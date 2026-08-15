@@ -1,0 +1,13 @@
+# Python 缓存和本地测试产物。
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# 本地基准测试中间结果；最终可读报告统一放入 doc/。
+.benchmarks/
+output/

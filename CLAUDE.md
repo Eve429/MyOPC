@@ -2,109 +2,76 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What this project is
+## 项目是什么
 
-MyOPC is a high-performance **hierarchical layout and geometry foundation for OPC** (Optical Proximity Correction, used in semiconductor lithography). The implemented layer today is the **MB-OPC frontend** (`opc/input/edge/`): it turns a GDS/OASIS layout into compact, batch-oriented numpy structures that a future model-based solver can iterate on. The actual optical model, optimizer, and lithography/evaluation layers are **not yet implemented** — those directories (`lithography/`, `evaluation/`, `opc/iteration/`) are intentionally empty placeholders.
+MyOPC：面向 OPC（光学邻近效应校正，半导体光刻）的层级版图与几何基础库。旧系统（AI 编写）包含 MB-OPC 前端、三种求解器（mbopc / diffopc / ilt）、ICCAD13 Hopkins 光刻模型与评价指标。
 
-Runtime: Python ≥ 3.12. Hard dependencies: `klayout`, `numpy`, `pillow`. The verified interpreter is the `myopc` conda env (`D:\app\miniforge\envs\myopc\python.exe`). **The project is not installed as a package** — it runs via direct Python file entries from the repo root (see `run_mbopc_frontend.py`, `run_layout_geometry.py`).
+## 当前工作状态：用户自迁移（每个会话必读）
 
-## Authoritative project rules (read these first)
+**整个旧代码库已整体归档到 `00_PAST/`（只读参照，内含完整旧仓库：源码、tests/、doc/、config/、.learnings/、规划文件）。仓库根目录从零开始，当前分支 `migration`。**
 
-`AGENTS.md` is the binding development manual. The rules below are non-obvious and frequently violated — follow them exactly:
+- **迁移方式**：用户（项目所有者）本人逐模块手工迁移/过滤，按依赖顺序 `layout → geometry → lithography → evaluation → opc.input → opc.input.edge → opc.iteration → main`。旧库规模约 11k 行生产代码 + 4k 行测试。
+- **Claude 的角色**：答疑与验证——解释 `00_PAST/` 旧实现的契约与历史决策、按需运行验证门禁、评审用户迁移后的代码。**默认不主动替用户编写新模块**；仅当用户对某个具体任务明确要求时才动手写代码。
+- **权威参照文档**：`00_PAST/doc/function_call_architecture.md`（旧系统调用图与数据流，重点第 2–4、10 节）。
+- **已知过滤决策点**（迁移到时提醒用户决策，勿自行处理）：
+  - `00_PAST/layout/hierarchy.py`（HierarchySummary/CellInfo/build_hierarchy_summary）——零生产调用方的死代码；
+  - `00_PAST/geometry/raster.py` 的 `render_layout_region`——零生产引用但有直接回归测试。
 
-- **All source comments and docstrings must be written in Chinese (中文).** Comments must *start* with a Chinese word, not an English API name (e.g. write "原生栅格接口" not "rasterize"); technical terms may appear mid-sentence. Comment the *why* — coordinate directions, data invariants, performance paths, memory bounds, boundary ownership, exception reasons — placed before compact logic blocks, not line-by-line syntax restatement.
-- **Do not modify `layout/` or `geometry/` without explicit per-task user approval.** New OPC work must build only on their existing public interfaces. If that is impossible, stop and state the necessity, impact, and minimal change before touching them. This was escalated from user feedback and promoted into `AGENTS.md` (`.learnings/LEARNINGS.md` `LRN-20260809-005`).
-- **No automatic formatting.** Preserve the hand-tuned compact layout. The `[tool.black]` block in `pyproject.toml` is *not* used — see `ERR-20260809-011`. Quality gates are Ruff rule-checks, `compileall`, and tests only.
-- **Every bug fix ships a reproducible regression test**, and after fixing you must search call sites and delete any function/wrapper/branch/variable that existed only to serve the old bug.
-- **No speculative abstractions** — new interfaces, registries, or empty directories must have a current caller; do not scaffold for hypothetical future methods.
-- **Final-delivery audit** (before declaring done): full diff review, unused-function scan, duplicate-implementation check, exception-entry check, coverage-missed-branch check. Record the cleanup in the relevant report under `doc/`.
-- **Each feature must update**: dev manual, test manual, the specialized dev/test report, and the planning files `task_plan.md` / `findings.md` / `progress.md`. Use the `planning-with-files` workflow for multi-step work.
-- **Git**: local commits only at key stages; never push to remote without explicit authorization. Exclude user GDS files, images, and unrelated worktree changes from feature commits. Recent commits use conventional prefixes (`docs:`, `refactor:`, `perf:`).
-- Track errors/learnings/feature-requests in `.learnings/` with the existing `ERR-`/`LRN-`/`FEAT-` id convention.
+## 绑定规则
 
-## Commands
+`AGENTS.md`（2026-08 重写版）是最高开发手册，与其他规则冲突时以它为准。要点：
 
-The docs use PowerShell; this environment is bash on Windows, so use forward slashes. Substitute the project's `python` (the `myopc` env).
+- 所有 docstring 与注释用中文且以中文词开头，注释解释 why（坐标方向、数据不变量、性能路径、内存上界、边界归属、异常原因），置于紧凑逻辑块之前。
+- 未经用户逐次确认不得修改 `layout/` 与 `geometry/`——**对用户新迁移出的同名目录同样适用，它们是用户手工迁移的领地**。
+- 禁止自动格式化，保持紧凑排版；质量门禁 = ruff 规则检查 + compileall + pytest。
+- 每个 bug 修复必须带可复现回归测试；修复后搜索调用点，删除仅服务旧 bug 的函数/包装/分支/变量。
+- 禁止投机抽象：新接口必须有当前调用方。
+- 本地 commit 为主，未经明确授权不 push；`TestReticle/*.gds` 用户回归数据与 `Test/klayout.ipynb` 不在修改范围。
+
+## 环境与命令
+
+- 解释器固定为 myopc conda env：`D:/app/miniforge/envs/myopc/python.exe`（Python ≥ 3.12；依赖 klayout / numpy / pillow / torch）。
+- Bash on Windows：路径用正斜杠。
+- 新树尚未建立完整包结构前，门禁按已迁移模块子集运行：
 
 ```bash
-# Fastest functional smoke test (synthetic multi-polygon case; writes to .benchmarks/mbopc_frontend_demo/)
-python run_mbopc_frontend.py
-
-# Real GDS verification
-python run_mbopc_frontend.py TestReticle/gcd_45nm.gds --layer 11/0 --grid 2 1 --skip-geometry-suite --json
-
-# Tests
-python -m pytest -q                              # full repo regression
-python -m pytest -q tests/opc                    # OPC-only
-python -m pytest -q tests/opc/test_fragment.py   # single file
-python -m pytest -q tests/opc/test_fragment.py -k test_name   # single test
-python -m pytest --cov=opc --cov-branch --cov-report=term-missing -q tests/opc   # coverage
-
-# Lint — NOTE the explicit scope: never run `ruff check .` (the pre-existing Test/klayout.ipynb user notebook is out of scope)
-python -m ruff check layout geometry opc tests benchmarks/benchmark_layout_geometry.py benchmarks/benchmark_mbopc_frontend.py run_layout_geometry.py run_mbopc_frontend.py
-
-# Byte-compile gate
-python -m compileall -q layout geometry opc tests run_layout_geometry.py run_mbopc_frontend.py
-
-# Strict performance benchmark (returns non-zero if regressions; gates memory savings ≥40%, lookup/materialize timing, halo not degrading to dense matrix)
-python benchmarks/benchmark_mbopc_frontend.py --strict
+python -m compileall -q <已迁移模块>
+python -m ruff check <已迁移模块>        # 绝不 ruff check .（范围必须显式）
+python -m pytest -q tests/<对应子集>
 ```
 
-`pyproject.toml` configures pytest (`testpaths=["tests"]`, `addopts="-ra"`) and coverage (`branch=true`, `source=["layout","geometry","opc"]`).
+- 参照运行旧管线（完整旧仓库，可独立执行）：
 
-## Architecture
-
-### Layered dependency (one-directional, never reversed)
-
-```
-layout  ->  geometry  ->  opc.input  ->  opc.input.edge
-                                     <- opc.iteration.<method>   (future)
-                                     <- lithography, evaluation  (future)
+```bash
+cd 00_PAST && python main/run_mbopc_frontend.py        # 合成冒烟
+cd 00_PAST && python main/run_layout_geometry.py TestReticle/simple.gds --layer 1/0 --arrays
 ```
 
-- **`layout/`** — read-only hierarchical GDS/OASIS via `LayoutDB.open(...)`. ROI/layer queries (`ShapeQuery`) return native KLayout `Region`s. Never flattens hierarchy; materializes only shapes intersecting a local ROI.
-- **`geometry/`** — method-agnostic Region↔contour↔edge conversion, Patch clip/stitch (`PatchSet`), rasterization.
-- **`opc/input/`** — shared by MB-OPC and future ILT: `PhysicalMask`, `RectilinearCoreGrid`, sampling templates.
-- **`opc/input/edge/`** — MB-OPC specific: fragmentation, ownership, update merge, contour reconstruction, sampling, artifacts, visualization, verification. Public entry point is `prepare_problem()`.
-- **`opc/iteration/`, `lithography/`, `evaluation/`** — empty. The future solver loop belongs in `opc.iteration.<method>`; the optical model in `lithography`; metrics in `evaluation`. Do **not** put optical/optimizer code in `opc.input`.
+## 迁移中必须保持的核心不变量（从旧库蒸馏，评审新代码的对照基准）
 
-`doc/function_call_architecture.md` is the authoritative call-graph and data-flow reference — read sections 2–4 and 10 before touching the frontend.
+| 不变量 | 内容 |
+|---|---|
+| 左下原点 | 所有版图/模型数组第 0 行 = 最低 Y；PNG/显示仅在 I/O 边界 flipud |
+| Region 生命周期 | `materialize()` 与 `prepare_problem()` 必须在 `with LayoutDB.open(...)` 内执行，否则得到空 Region |
+| 固定参考 vs 迭代态 | `problem.*` 参考数组只读；迭代状态只有一维 `displacements` 数组；重建仅用于最终输出，不进热路径 |
+| owner 唯一写 | 每个 segment 唯一 owner 写入，halo 只读提供上下文，全部 core 评价完经屏障后才发布 |
+| 光刻画布契约 | canvas 256²、Hopkins 核 35×35×24、tile 1024nm + halo 512nm + pixel 8nm 恰满画布；FFT 循环卷积的边界污染由 halo 吸收，仅 core 像素计分（ownership_canvas） |
+| 极性约定 | 透光率 1 恒为透光；opaque = field − coverage，外法向随之翻转 |
+| 几何断言 | 零位移 XOR == 0、segment key 唯一、segment 长度 ≤ 配置、法向单位向量、owner 唯一 |
+| nm→DBU 换算 | 严格整数换算（exact_dbu），tile/halo 必须是 pixel 整数倍 |
 
-### `prepare_problem()` is the architecture center
+## 测试与数据
 
-`prepare_problem(batch, layer, config, cores)` runs **once per layer/ROI/config** and produces an `MBOPCProblem` (frozen dataclass) holding four *fixed reference* objects reused across the whole optimization:
-
-| Object | Holds | Lifetime |
-|---|---|---|
-| `PhysicalMask` | merged Region + `ContourBatch` + `EdgeBatch` | fixed |
-| `SegmentBatch` | edge-id + `t0/t1` params + normals + stable 128-bit keys (splitmix64) | fixed |
-| `OwnershipBatch` | unique `owner` per segment + CSR halo `memberships` | fixed |
-| `BoundarySampleTemplate` | line indices / tangential pos / normal offset (no coordinates) | fixed |
-
-Per-iteration state is just a `displacements` numpy array. The intended hot path: `merge_owner_updates()` → `SegmentBatch.materialize()` → `sample_lines()` → (future) optical model → repeat. Reuse the sorted-key lookup index and output buffers; never rebuild per iteration. Section 10 of the architecture doc gives the solver skeleton.
-
-### Native Region lifetime (critical invariant)
-
-`ShapeQuery.materialize()` returns a KLayout `Region` that is still tied to the open database. Therefore **`materialize()` and `prepare_problem()` must both run inside the `with LayoutDB.open(...)` context.** After `prepare_problem` builds the independent numpy/Region data, the DB may close and all subsequent iteration/output never touches the source file. Violating this yields empty/zero-count Regions (see `.learnings/ERRORS.md` `ERR-...025`, `ERR-...009`).
-
-### Reference vs. iteration state
-
-`MBOPCProblem` is frozen but its numpy arrays are mutable memory. Treat `problem.*` reference arrays as **read-only**; keep all optimization state in a separate `displacements` array. Reconstruction (`reconstruct_region`) is only for final/diagnostic output — do not put it in the per-iteration hot path.
-
-## Testing and fixtures
-
-- `TestReticle/*.gds` (`simple.gds`, `gcd_45nm.gds`, `JustPoly.gds`, `test1.gds`) are **user-editable regression data**. Tests must **not** hardcode their exact coordinates/counts — use generated/deterministic GDS instead (`ERR-20260809-016`). These files must be preserved and excluded from feature commits.
-- `Test/klayout.ipynb` is a pre-existing user notebook — out of scope, do not modify.
-- New geometry logic must assert together: zero-displacement XOR == 0, segment keys unique, segment length ≤ config, normals are unit vectors, owner unique.
-- Test dirs use package markers and relative helpers (`tests/geometry/helpers.py`, `tests/fixtures/`); `conftest.py` provides `project_root` and `reticle_dir` session fixtures.
+- `00_PAST/TestReticle/*.gds`（simple / gcd_45nm / JustPoly / test1）是用户可编辑回归数据：测试不得硬编码其坐标/计数，新测试用生成式 GDS。
+- 旧测试套件（`00_PAST/tests/`）是迁移的规格书：实现迁移时对照移植测试，测试先行或同行。
+- 新几何逻辑必须成组断言：零位移 XOR == 0、segment key 唯一、法向单位向量、owner 唯一。
 
 ## Where to look
 
-| Need | Look in |
+| 需求 | 位置 |
 |---|---|
-| Binding rules | `AGENTS.md` |
-| Call graph / data flow / solver integration | `doc/function_call_architecture.md` |
-| Dev & test commands, deliverable definitions | `doc/development_manual.md`, `doc/test_manual.md` |
-| Per-feature reports | `doc/*_development_report.md`, `doc/*_test_report.md` |
-| Error/learning/feature history | `.learnings/` |
-| Active planning | `task_plan.md`, `findings.md`, `progress.md` |
+| 绑定规则 | `AGENTS.md` |
+| 旧系统调用图 / 数据流 / 求解器骨架 | `00_PAST/doc/function_call_architecture.md` |
+| 旧系统开发/测试手册与专项报告 | `00_PAST/doc/`（development_manual、test_manual、*_report.md） |
+| 历史错误 / 经验 / 需求 | `00_PAST/.learnings/`（ERR- / LRN- / FEAT- 编号） |
+| 旧规划文件 | `00_PAST/task_plan.md`、`00_PAST/findings.md`、`00_PAST/progress.md` |

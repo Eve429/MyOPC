@@ -1,6 +1,8 @@
 # Macro–Core 两级任务与双轮迭代重构计划
 
-> 状态：**等待用户审查，禁止开始实施**
+> 状态：**已批准实施，2026-08-16 完成并通过审查修复**（实施记录见
+> `macro_core_pipeline_development_report.md` 与 `..._test_report.md`；
+> 审查问题清单 `macro_core_pipeline_review_issues.md` 已逐项处理）
 > 本文件是后续实现的唯一决策依据。重开上下文后，只需读取本文件、仓库根目录
 > `AGENTS.md` 和实际代码即可实施。若实际代码与本文记录不一致，必须先报告差异，
 > 不得自行调整本文接口或扩大任务范围。
@@ -121,7 +123,7 @@ round_deltas_nm = [2, -2]         # 恰好两轮；第二轮结束累计位移�
 
 [output]
 work_dir = "../output/macro_pipeline"
-final_layout = "gcd_45nm_result.gds"
+final_layout = "../output/macro_pipeline/gcd_45nm_result.gds"
 final_cell_mode = "single_cell"  # single_cell 或 macro_cells
 ```
 

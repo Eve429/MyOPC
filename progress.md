@@ -2,6 +2,22 @@
 
 ## 会话记录
 
+### 2026-08-16（会话 4：审查清单处理 + layer_bbox 收尾）
+
+- `243a5fd`：`LayoutDB.layer_bbox`（原生 `bbox_per_layer`）取代 main 流式
+  bbox 扫描（用户授权修改 layout/）；用户修正 config final_layout 路径。
+- **审查清单逐项评估**（`doc/macro_core_pipeline_review_issues.md`）：全部
+  实质指控成立、无一误报；§5 已被 243a5fd 先行修复。
+- `fb80a4e`：契约冻结（macro_size>core、双轮 ±2nm）、空 membership 不变量
+  无条件检查、复杂几何矩阵 11 新用例、正逆序双轮完整对照、2/0 对照层、
+  阶段 0 零逐 shape 遍历守卫、三个嵌套函数 docstring。
+- **新测试暴露并修复两个真 bug**：斜边穿 x/y 切线交点 → 等值穿越点未去重
+  产生零长碎段；空 macro（查询框不接触图形）→ 切线分裂在空数组上崩溃。
+- 测试基线 116 → **135 passed**；coverage 84%（关键文件 88–95%，未命中以
+  防御守卫为主）；smoke 仍 XOR=0。文档/报告/规划同步（本次提交）。
+
+## 会话记录
+
 ### 2026-08-15（会话 3：Macro–Core 管线重构，Phase 4 完成）
 
 - 用户批准实施 `doc/macro_core_pipeline_design.md` 全部内容，并新增注释规则

@@ -69,10 +69,53 @@
 ## 6. 新增项目规则
 
 - `AGENTS.md`：`main/` 下文件每一行必须有中文短注释；其他目录维持文件级
-  docstring、函数 docstring 与分段注释。本重构全部新增代码已按此执行
-  （`run_macro_pipeline.py` 约 540 行逐行注释）。
+  docstring、函数 docstring 与分段注释。本重构全部新增代码已按此执行。
+  口径说明：`run_macro_pipeline.py` 的全部语句行（含导入、赋值、控制流、
+  dataclass 字段）均带注释；多行导入的续行、函数签名换行、字面量结束行
+  等纯语法行不单独注释，docstring 本身即该定义行的说明。
 
-## 7. 已知限制（继承设计文档 §20）
+## 7. 审查清单处理（2026-08-16，commit fb80a4e）
+
+`doc/macro_core_pipeline_review_issues.md` 的全部实质指控经逐项核实成立，
+处理结果：
+
+| 条目 | 处理 |
+|---|---|
+| §2 几何矩阵不全 | 补 11 个独立用例 + 共享不变量检查器（见测试报告 §3 覆盖表） |
+| §3.1 macro_size ≤ core 接受 | plan_macros 拒绝 `<=`，补边界测试 |
+| §3.2 双轮未冻结 | prepare_problems 校验 `[+2nm,-2nm]` 对应 DBU，补 3 类失败测试 |
+| §5 逐 shape 扫描 | 审查前已由 `243a5fd` 修复（`LayoutDB.layer_bbox` 原生路径）；残余的 AREF/R90/镜像 bbox 测试与"阶段 0 零逐 shape 遍历"守卫测试已补 |
+| §6.1 正逆序只查第一轮 | 重写为双轮完整对照（位移逐位一致 + 最终覆盖 XOR） |
+| §6.3 未处理层空验证 | 源 GDS 增加 2/0 对照层 |
+| §7 空 membership 漏洞 | `own⊆membership` 检查无条件执行，补正反两用例 |
+| §8/§9 文档与注释 | 本报告与测试报告同步；三个嵌套测试函数补 docstring |
+
+**审查修复中新发现的两个实现 bug**（新几何矩阵直接暴露，均已修复并成为
+回归用例）：
+
+1. 斜边精确穿过 x/y 切线交点时（如 (90,50)→(60,20) 在同一参数 t=1/3 处
+   同时穿过 x=80 与 y=40），两条切线各产生一个等值穿越点，拼接出零长碎段
+   被 `SegmentBatch` 拒绝 → 段内 `isclose` 去重。
+2. 空 macro（查询框完全不接触图形，如 SREF 用例的远端 macro）进入切线
+   分裂后在空数组上 `np.repeat` 崩溃 → 空批次原样返回。
+
+## 8. Coverage 审计（pytest --cov，135 用例，2026-08-16）
+
+| 文件 | 覆盖率 | 说明 |
+|---|---|---|
+| opc/input/edge/problem.py | 95% | 未命中主要为 load 的坏输入分支 |
+| opc/input/edge/reconstruction.py | 93% | 未命中为 bevel/平行退化路径的深部分支 |
+| opc/input/edge/fragmentation.py | 90% | 溢出守卫分支未命中 |
+| opc/input/grid.py | 90% | 非整数类型分支未命中 |
+| opc/input/mask.py | 94% | 无效 polygon 守卫未命中 |
+| opc/input/raster.py | 88% | 参数类型守卫未命中 |
+| main/run_macro_pipeline.py | 88% | main() CLI 分支与部分失败路径未命中 |
+| layout / geometry | 79%–100% | source.py 79%：GLP 分支主体未入本次范围 |
+| opc/input/edge/sampling.py | 21% | §14.4 保护文件，当前无消费方，如实记录 |
+| main/main_test_*.py | 0% | 演示脚本，不被测试导入，符合预期 |
+| **合计** | **84%** | 未命中以防御性类型/容量守卫为主 |
+
+## 9. 已知限制（继承设计文档 §20）
 
 - 巨大单 polygon 可能使单个 problem 超内存（本阶段不实现 polygon shard）；
 - `single_cell` 全局 merge 是最终内存峰值，超过物理内存时显式失败而非静默

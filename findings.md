@@ -85,6 +85,21 @@
 - 已知保留的零消费符号：`edge_probe_points`（sampling.py 文档保护）、
   `reconstruct_contours`（公共中间入口）、`rasterize_region_window`（底层，测试直用）。
 
+## 审查轮新事实（2026-08-16，commit fb80a4e）
+
+- **切线交点重复分裂点**：斜边精确穿过 x/y 切线交点时（同一参数 t 同时满足
+  两条切线），_split_segments_at_ownership_cuts 会产生两个等值穿越点拼接出
+  零长碎段；修复为段内 isclose 去重。构造此类几何的最小例子：边
+  (90,50)→(60,20) 在 t=1/3 处同时穿过 x=80 与 y=40。
+- **空 macro 是合法状态**：查询框不接触任何图形的 macro（如远端 SREF 场景）
+  产出空 SegmentBatch，切线分裂必须对空批次原样返回。
+- **契约冻结点**：macro_size 严格大于 core（等于即拒绝）；双轮位移必须是
+  [+2nm,-2nm] 的精确 DBU（和为零不够）。
+- **own⊆membership 检查不得被空 membership 短路**：空 CSR 下 seen 全 False，
+  恰好给出「全 -1 合法 / 有 owner 拒绝」的正确语义。
+- 测试对照层技巧：验证「未处理层不复制」时源 GDS 必须含非目标层，否则断言
+  是同义反复；验证位移生效时图形必须完全在层 bbox 内部（锚框撑 bbox）。
+
 ## 旧库规模（迁移批次预估基准）
 
 | 模块 | 行数 | 状态 |

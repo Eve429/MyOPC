@@ -32,10 +32,13 @@ canvas 对齐，迁移时以 `doc/macro_core_pipeline_design.md` §6 为准。
 - 依据 `doc/macro_core_pipeline_design.md`（用户批准实施），实施 A–E 五批本地提交：
   A 两级网格 + 居中 canvas → B 持久化 MacroProblem（删旧六文件）→
   C 双轮 ±2nm 迭代 → D 最终权威覆盖 + 双模式写出 → E 报告与简化审计。
-- 交付：`tests/opc/input/` 40 例 + `tests/main/` 23 例 + `PatchWriter.write_macro_results`；
+- 交付：`tests/opc/input/` 55 例 + `tests/main/` 26 例 + `PatchWriter.write_macro_results`；
   gcd_45nm 2×2 smoke：343018 段 / 8 macro GDS / 最终 XOR == 0 / 10.6s。
-- 2026-08-15 完成标准（设计文档 §21）逐项勾验通过；细节见
-  `doc/macro_core_pipeline_development_report.md` 与 `..._test_report.md`。
+- **审查轮（2026-08-16）**：用户审查清单 `doc/macro_core_pipeline_review_issues.md`
+  逐项核实全部成立，commit `fb80a4e` 落实契约冻结（macro>core、±2nm）、空
+  membership 不变量、复杂几何矩阵（11 新用例）、正逆序双轮对照、未处理层
+  对照、coverage 审计（84%），并连带修复两个新暴露 bug（切线交点重复分裂
+  点、空 macro 崩溃）。审查后 §21 完成标准逐项通过；细节见两份报告。
 
 ### Phase 5: lithography + evaluation — Status: pending
 - 318 + 153 行，纯消费者层；ICCAD13 画布契约（canvas 256、核 35×35×24、norm="forward"）。

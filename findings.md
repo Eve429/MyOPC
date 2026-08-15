@@ -61,6 +61,30 @@
 - opc 核心链与新 layout/geometry 兼容（RegionBatch 三参 OK）；
   `opc/diagnostics.py:15,125,233` 残留 CellRef + 四参构造，Phase 4 适配点。
 
+## Macro–Core 管线事实（Phase 4 重构产出，2026-08-15）
+
+- **两级网格**（`opc/input/grid.py`）：`plan_macros` 先切不重叠 macro（size 模式
+  名义整数倍 / count 模式按 core 单元均衡分配，较前 macro 多一单元），macro 内
+  再切 core；半开区间归右/上、最外沿归末行/列；`MacroSpec.locate_owned_points`
+  对 macro 外的点返回 **-1**（与全局网格的 clip 语义不同）。
+- **ownership 切线分裂**：斜边交点参数 t 必须由「原始整数端点 + 全局整数切线」
+  计算，共享边界两侧逐位一致；把边裁成整数短边再均分会产生 33/34 DBU 分歧。
+  分裂碎片沿用原段数学边号（edge_ids），否则 SegmentBatch 校验失败。
+- **单 macro membership**：context 是均匀扩张，候选 core 范围可由 searchsorted
+  精确求出；越出 macro 的远端段必须得到空范围而非 clip 到边界 core。
+- **居中 canvas**（`opc/input/raster.py`）：差值平均分配、奇数余量归高坐标侧；
+  全局 DBU→canvas 映射 `x_canvas = (x_dbu-context.left)/pixel - 0.5 + low_x`
+  固定在 ownership_canvas 注释中，后续 EPE/probe 必须复用。
+- **NPZ 契约**：problem format_version=1 不含 dbu_um（GDS 写出由调用方传入）；
+  result NPZ 记录 round_index 供合并期一致性校验。
+- **测试几何病态**：铺满层 bbox 的图形外扩位移全部落在 macro ownership 之外被
+  正确裁掉（第一轮 XOR==0 是正确行为）；证明 +2 生效需要「锚框撑 bbox + 完全
+  内部的动图形」布局。
+- **性能参考**（gcd_45nm 2×2）：准备 0.45s、每轮 ~4.9s、合并 0.17s、总 10.6s；
+  RSS 峰值 ~80MB；343018 段 / 722161 membership / 870 core。
+- 已知保留的零消费符号：`edge_probe_points`（sampling.py 文档保护）、
+  `reconstruct_contours`（公共中间入口）、`rasterize_region_window`（底层，测试直用）。
+
 ## 旧库规模（迁移批次预估基准）
 
 | 模块 | 行数 | 状态 |

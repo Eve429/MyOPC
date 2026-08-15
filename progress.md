@@ -2,6 +2,22 @@
 
 ## 会话记录
 
+### 2026-08-15（会话 3：Macro–Core 管线重构，Phase 4 完成）
+
+- 用户批准实施 `doc/macro_core_pipeline_design.md` 全部内容，并新增注释规则
+  （main/ 每行中文短注释；其他目录文件/函数/分段注释），规则已入 AGENTS.md。
+- 实施 A–E 五批本地提交：两级网格 + 居中 canvas（22 例）→ 持久化 MacroProblem
+  （删旧六文件，18 例）→ 双轮 ±2nm 迭代（23 例）→ 最终权威覆盖双模式写出
+  （+3 patch 例）→ 开发/测试报告 + 双手册 + 简化审计（旧符号/术语/投机抽象零残留）。
+- 开发中修两个自引入 bug：切线分裂 edge_ids 误传段号、np.where 越界索引。
+- 测试基线 49 → **115 passed**；gcd_45nm 2×2 smoke：8 macro GDS、
+  343018 段、总 10.6s、**最终 XOR == 0**。产物在 output/（不提交）。
+- 最小必要偏差（已记开发报告）：`_write_macro_gds` 增 dbu_um 参数；
+  merge RSS 为完成后即时采样。
+- Phase 4 置 complete；Next Step → Phase 5（lithography + evaluation）。
+
+## 会话记录
+
 ### 2026-08-15（会话 2：opc 批次开始）
 
 - 规划文件落地（task_plan / findings / progress），用户明令此后多步任务必须走 planning-with-files。
@@ -35,3 +51,5 @@
 |---|---|---|
 | 2026-08-15 | tests/layout | 27 passed |
 | 2026-08-15 | tests/layout + tests/geometry | 49 passed |
+| 2026-08-15 | 全量（layout 27 + geometry 25 + opc/input 40 + main 23） | 115 passed |
+| 2026-08-15 | gcd_45nm 2×2 smoke | 总 10.6s，最终 XOR 面积 = 0 |

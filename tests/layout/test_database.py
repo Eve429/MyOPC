@@ -165,6 +165,31 @@ def test_layer_bbox_filters_target_layer_and_subtree(tmp_path: Path) -> None:
         db.layer_bbox(LayerSpec(99, 0))
 
 
+def _write_transformed_layout(path: Path) -> Path:
+    """写出含 AREF、R90 旋转与镜像实例的目标层版图，坐标相互错开。"""
+    layout = kdb.Layout(); layout.dbu = 0.001
+    one = layout.layer(kdb.LayerInfo(1, 0))
+    unit = layout.create_cell("UNIT"); unit.shapes(one).insert(kdb.Box(0, 0, 10, 5))
+    top = layout.create_cell("TOP")
+    top.insert(kdb.CellInstArray(unit.cell_index(), kdb.Trans(100, 0),
+                                 kdb.Vector(20, 0), kdb.Vector(0, 10), 3, 2))
+    top.insert(kdb.CellInstArray(unit.cell_index(),
+                                 kdb.Trans(kdb.Trans.R90, 0, 100)))
+    top.insert(kdb.CellInstArray(unit.cell_index(),
+                                 kdb.Trans(kdb.Trans.M0, 50, 50)))
+    layout.write(str(path)); return path
+
+
+def test_layer_bbox_covers_aref_rotation_and_mirror_instances(tmp_path: Path) -> None:
+    """layer_bbox 正确展开 AREF、R90 旋转与镜像实例的层级包围盒。"""
+    source = _write_transformed_layout(tmp_path / "transformed.gds")
+    with LayoutDB.open(source) as db:
+        # AREF(100,0) 3×2 步长(20,10)→(100,0,150,15)；R90 于 (0,100) 把
+        # (0..10,0..5) 旋成 (-5..0,0..10) 平移后 (-5,100,0,110)；M0 于
+        # (50,50) 把 y 镜像成 -5..0 平移后 (50,45,60,50)。三者并集：
+        assert db.layer_bbox(LayerSpec(1, 0)) == DbuBox(-5, 0, 150, 110)
+
+
 def test_importing_layout_does_not_load_geometry() -> None:
     """基础版图层不得因公共导入而反向加载几何输出层。"""
     command = "import sys, layout; assert not any(n == 'geometry' or n.startswith('geometry.') for n in sys.modules)"

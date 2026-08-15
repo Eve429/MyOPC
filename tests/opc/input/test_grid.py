@@ -50,6 +50,23 @@ class TestMacroPlanningBySize:
                         core_size_dbu=10, context_dbu=0,
                         pixel_dbu=1, canvas_pixels=256)
 
+    def test_size_mode_rejects_macro_not_exceeding_core(self):
+        """macro 等于或小于 core 时失败：两级网格不得退化为单级 core 网格。"""
+        common = {"core_size_dbu": 40, "context_dbu": 0,
+                  "pixel_dbu": 1, "canvas_pixels": 256}
+        with pytest.raises(ValueError, match="exceed core size"):
+            plan_macros(DbuBox(0, 0, 80, 40), macro_size_dbu=40, **common)
+        with pytest.raises(ValueError, match="exceed core size"):
+            plan_macros(DbuBox(0, 0, 80, 40), macro_size_dbu=20, **common)
+
+    def test_size_mode_accepts_macro_above_core_multiple(self):
+        """macro 严格大于 core 且整除时成功（80/40 → 单 macro 双 core）。"""
+        macros = plan_macros(DbuBox(0, 0, 80, 40), macro_size_dbu=80,
+                             core_size_dbu=40, context_dbu=0,
+                             pixel_dbu=1, canvas_pixels=256)
+        assert len(macros) == 1
+        assert macros[0].core_count == 2
+
 
 class TestMacroPlanningByCount:
     """macro_grid 模式的均衡分配与校验。"""

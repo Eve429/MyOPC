@@ -203,8 +203,14 @@ def prepare_problems(config: PipelineConfig) -> dict:
         round_deltas_dbu = tuple(  # 双轮位移
             exact_dbu(value, dbu_nm, "round_deltas_nm")
             for value in config.round_deltas_nm)
-        if round_deltas_dbu[0] + round_deltas_dbu[1] != 0:  # 双轮累计必须回零
-            raise ValueError("round_deltas_nm 两轮累计必须为零")
+        # 双轮位移本阶段冻结为 [+2nm, -2nm] 对应 DBU（设计文档 §5.2）：只查
+        # 和为零会放行 [3,-3] 等配置，让「回零验证」失去对固定步长的约束力。
+        required_delta = exact_dbu(Decimal(2), dbu_nm, "round_deltas_nm")  # 2nm 常量
+        if round_deltas_dbu != (required_delta, -required_delta):  # 值不符即拒绝
+            raise ValueError(  # 报错列出实际值与冻结要求
+                f"round_deltas_nm 当前冻结为 [+2nm, -2nm]，"
+                f"实际换算为 {list(round_deltas_dbu)} DBU"
+                f"（要求 [{required_delta}, {-required_delta}]）")
         if max_displacement_dbu > context_dbu:  # context 必须覆盖最大位移
             raise ValueError("context_nm 必须不小于 max_displacement_nm")
         # 边段数值约束（正长度、segment≥2×corner、非负位移）由 FragmentationConfig

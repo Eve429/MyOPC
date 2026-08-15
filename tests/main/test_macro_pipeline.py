@@ -1,6 +1,6 @@
 """双轮 macro-core 迭代管线的配置校验与端到端生成式测试。"""
 
-import shutil
+from pathlib import Path
 
 import klayout.db as kdb
 import numpy as np
@@ -15,11 +15,12 @@ from opc.input.edge import MacroProblem, reconstruct_region
 
 
 def _write_gds(tmp_path):
-    """生成上下锚框加中间内条的 GDS 并返回路径。
+    """生成上下锚框加中间内条的双层 GDS 并返回路径。
 
     锚框只负责把层 bbox 撑到 (20,20)-(140,60)；内条与锚框不重叠且完全在
     bbox 内部——这是位移有效性的关键：铺满 bbox 的图形外扩会全部落在
     macro ownership 之外被正确裁掉，第一轮合并将看不到任何变化。
+    2/0 层是「未处理层不得复制」验证的对照层。
     """
     layout = kdb.Layout()  # 独立原生版图
     layout.dbu = 0.001  # 1 nm/DBU，配置数值直接等于 DBU
@@ -27,6 +28,7 @@ def _write_gds(tmp_path):
     top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 20, 140, 28))  # 下锚框
     top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 52, 140, 60))  # 上锚框
     top.shapes(layout.layer(1, 0)).insert(kdb.Box(60, 30, 100, 50))  # 内条（跨 macro 切线）
+    top.shapes(layout.layer(2, 0)).insert(kdb.Box(30, 32, 130, 38))  # 非目标对照层
     path = tmp_path / "reticle.gds"  # 输出路径
     layout.write(str(path))  # 写盘
     return path  # 返回路径
@@ -129,6 +131,29 @@ class TestConfigValidation:
         config = pipeline.load_config(  # context=2 < max_disp=8
             _write_config(tmp_path, gds, context_nm=2))  # 配置
         with pytest.raises(ValueError, match="max_displacement_nm"):  # 必须报错
+            pipeline.prepare_problems(config)  # 执行
+
+    def test_round_deltas_frozen_to_two_nm(self, tmp_path):
+        """双轮位移冻结为 [+2nm,-2nm]：其他幅值或不对称序列一律失败。"""
+        gds = _write_gds(tmp_path)  # 生成 GDS
+        for deltas in ("[3, -3]", "[2, -1]"):  # 幅值不符 / 不对称
+            config = pipeline.load_config(  # 加载
+                _write_config(tmp_path, gds, deltas=deltas))  # 覆盖序列
+            with pytest.raises(ValueError, match="冻结"):  # 必须报错
+                pipeline.prepare_problems(config)  # 执行
+
+    def test_two_nm_not_representable_fails_with_parameter_name(self, tmp_path):
+        """2 nm 无法精确换算到当前 DBU 时失败并保留参数名。"""
+        layout = kdb.Layout()  # 独立原生版图
+        layout.dbu = 0.0025  # 2.5 nm/DBU：2 nm 不是其整数倍
+        top = layout.create_cell("TOP")  # 顶层
+        top.shapes(layout.layer(1, 0)).insert(kdb.Box(0, 0, 30, 30))  # 目标层图形
+        gds = tmp_path / "odd_dbu.gds"  # 输出路径
+        layout.write(str(gds))  # 写盘
+        config = pipeline.load_config(_write_config(  # 全部参数取 2.5 的倍数
+            tmp_path, gds, pixel_nm=2.5, corner_nm=5, segment_nm=10,
+            max_displacement_nm=5))  # 只有 2nm 常量无法落格点
+        with pytest.raises(ValueError, match="round_deltas_nm"):  # 报错含参数名
             pipeline.prepare_problems(config)  # 执行
 
 
@@ -254,21 +279,54 @@ class TestTwoRounds:
                     DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
             assert int((batch.region(problem.layer) ^ reference).area()) == 0  # XOR 零
 
-    def test_iteration_order_does_not_change_results(self, prepared, tmp_path):
-        """macro 正序、逆序执行的两轮状态完全一致。"""
-        _, plan = prepared  # 解包
-        pipeline.run_round(plan, 1, 2)  # 正序第一轮
-        work = tmp_path / "work"  # 工作目录
-        reference_dir = work / "round_001" / "results"  # 正序产物目录
-        kept = {path.name: np.load(path, allow_pickle=False)[  # 保存正序位移
-            "segment_displacements"].copy() for path in reference_dir.glob("*.npz")}  # 复制
-        shutil.rmtree(reference_dir)  # 清空后重跑
-        reversed_plan = dict(plan)  # 浅拷贝计划
-        reversed_plan["macros"] = list(reversed(plan["macros"]))  # 逆序条目
-        pipeline.run_round(reversed_plan, 1, 2)  # 逆序第一轮
-        for name, expected in kept.items():  # 逐 macro 比较
-            with np.load(reference_dir / name, allow_pickle=False) as data:  # 打开
-                assert np.array_equal(data["segment_displacements"], expected)  # 一致
+    def test_iteration_order_does_not_change_results(self, tmp_path, monkeypatch):
+        """macro 正序与逆序执行的两轮位移与最终覆盖完全一致。"""
+        shared = tmp_path / "shared"  # 共用源版图目录
+        shared.mkdir()  # 创建
+        gds = _write_gds(shared)  # 生成一份源版图
+        finals = {}  # 顺序 → 最终版图路径
+        plans = {}  # 顺序 → 计划
+        real_plan_macros = pipeline.plan_macros  # 循环外捕获，闭包不绑定循环变量
+
+        def _reversed_macros(*args, **kwargs):
+            """反转 macro 规划顺序，验证迭代顺序无关性。"""
+            return tuple(reversed(real_plan_macros(*args, **kwargs)))
+        for tag, reverse in (("forward", False), ("reverse", True)):  # 两种顺序
+            base = tmp_path / tag  # 独立工作目录
+            base.mkdir()  # 创建
+            config = pipeline.load_config(_write_config(base, gds))  # 各自配置
+            if reverse:  # 逆序只在准备期反转 macro 规划顺序
+                monkeypatch.setattr(pipeline, "plan_macros", _reversed_macros)  # 替换
+                plans[tag] = pipeline.prepare_problems(config)  # 阶段 0/1
+                monkeypatch.undo()  # 立即恢复，后续阶段不受影响
+            else:  # 正序
+                plans[tag] = pipeline.prepare_problems(config)  # 阶段 0/1
+            plan = plans[tag]  # 当前计划
+            pipeline.run_round(plan, 1, plan["round_deltas_dbu"][0])  # 第一轮
+            pipeline.run_round(plan, 2, plan["round_deltas_dbu"][1])  # 第二轮
+            finals[tag] = pipeline.merge_final(plan, 2, base / "final.gds")  # 合并
+        # ① 两轮每 macro 的位移数组逐位一致（按 macro_id 配对，顺序不同）。
+        reverse_by_id = {e["macro_id"]: e for e in plans["reverse"]["macros"]}  # 索引
+        for entry_f in plans["forward"]["macros"]:  # 正序条目
+            entry_r = reverse_by_id[entry_f["macro_id"]]  # 同 macro 逆序条目
+            for round_name in ("round_001", "round_002"):  # 两轮
+                path_f = Path(entry_f["problem_file"].replace(  # 正序 result
+                    "problems", f"{round_name}/results"))  # 换算
+                path_r = Path(entry_r["problem_file"].replace(  # 逆序 result
+                    "problems", f"{round_name}/results"))  # 换算
+                with np.load(path_f, allow_pickle=False) as df, np.load(  # 同时打开
+                        path_r, allow_pickle=False) as dr:  # 打开
+                    assert np.array_equal(df["segment_displacements"],  # 比较
+                                          dr["segment_displacements"])  # 一致
+        # ② 最终顶层物理覆盖 XOR 为零（比较覆盖，不比较 GDS 字节）。
+        layer = LayerSpec(1, 0)  # 目标层
+        coverage = {}  # 顺序 → 覆盖 Region
+        for tag, path in finals.items():  # 两个最终版图
+            with LayoutDB.open(path) as database:  # 回读
+                coverage[tag] = database.query(  # 全框查询
+                    [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
+                ).materialize().region(layer)  # 物化
+        assert (coverage["forward"] ^ coverage["reverse"]).area() == 0  # XOR 零
 
     def test_stage_two_never_repeats_stage_one(self, prepared, monkeypatch):
         """阶段二不调用 LayoutDB 物化或 problem 准备（调用计数证明）。"""
@@ -276,14 +334,16 @@ class TestTwoRounds:
         calls = {"prepare": 0, "materialize": 0}  # 计数器
         real_prepare = pipeline.prepare_macro_problem  # 原函数
 
-        def _counting_prepare(*args, **kwargs):  # 计数包装
+        def _counting_prepare(*args, **kwargs):
+            """计数 problem 准备调用并透传，证明阶段二零调用。"""
             calls["prepare"] += 1  # 计数
             return real_prepare(*args, **kwargs)  # 透传
         monkeypatch.setattr(pipeline, "prepare_macro_problem", _counting_prepare)  # 替换入口
         from layout.query import ShapeQuery  # 物化入口类
         real_materialize = ShapeQuery.materialize_intersecting  # 原方法
 
-        def _counting_materialize(self, *args, **kwargs):  # 计数包装
+        def _counting_materialize(self, *args, **kwargs):
+            """计数物化调用并透传，证明阶段二零调用。"""
             calls["materialize"] += 1  # 计数
             return real_materialize(self, *args, **kwargs)  # 透传
         monkeypatch.setattr(ShapeQuery, "materialize_intersecting",  # 替换方法
@@ -291,6 +351,23 @@ class TestTwoRounds:
         pipeline.run_round(plan, 1, 2)  # 第一轮
         pipeline.run_round(plan, 2, -2)  # 第二轮
         assert calls == {"prepare": 0, "materialize": 0}  # 零调用
+
+    def test_prepare_never_iterates_shapes_in_python(self, tmp_path, monkeypatch):
+        """阶段 0 取层 bbox 走原生路径：全程不触碰公共 shape 迭代器。"""
+        gds = _write_gds(tmp_path)  # 生成 GDS
+        config = pipeline.load_config(_write_config(tmp_path, gds))  # 配置
+        from layout import LayoutDB as _LayoutDB  # 迭代器宿主类
+        real_iterate = _LayoutDB.recursive_polygon_shapes  # 原方法
+        calls = {"iterate": 0}  # 计数器
+
+        def _counting_iterate(self, *args, **kwargs):
+            """计数 shape 迭代器调用并透传，证明阶段 0 零逐 shape 遍历。"""
+            calls["iterate"] += 1  # 计数
+            return real_iterate(self, *args, **kwargs)  # 透传
+        monkeypatch.setattr(_LayoutDB, "recursive_polygon_shapes",  # 替换方法
+                            _counting_iterate)  # 完成
+        pipeline.prepare_problems(config)  # 执行阶段 0/1
+        assert calls["iterate"] == 0  # 层 bbox 全程来自原生 bbox_per_layer
 
 
 @pytest.fixture
@@ -402,8 +479,10 @@ class TestFinalMerge:
         with pytest.raises(ValueError, match="轮次"):  # 明确失败
             pipeline.merge_final(plan, 2, tmp_path / "final4.gds")  # 合并
 
-    def test_unprocessed_layers_are_not_copied(self, full):
-        """最终版图只含处理过的目标层，不复制其他 layer。"""
+    def test_unprocessed_layers_are_not_copied(self, full, tmp_path):
+        """源含 1/0 与 2/0 两层时，最终版图只保留处理过的目标层 1/0。"""
         _, summary = full  # 解包
+        with LayoutDB.open(tmp_path / "reticle.gds") as db:  # 回读源版图
+            assert db.layers() == (LayerSpec(1, 0), LayerSpec(2, 0))  # 源确有两层
         with LayoutDB.open(summary["final_layout"]) as db:  # 回读最终版图
-            assert db.layers() == (LayerSpec(1, 0),)  # 只有目标层
+            assert db.layers() == (LayerSpec(1, 0),)  # 只有目标层被复制

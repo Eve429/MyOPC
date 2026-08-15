@@ -79,17 +79,20 @@ class MacroProblem:
             raise ValueError("core membership offsets are invalid")
         if len(members) and (np.any(members < 0) or np.any(members >= segment_count)):
             raise ValueError("member_segment_indices 超出 segment 范围")
-        if len(members):
-            # own ⊆ membership：每个 owner>=0 的 segment 必然出现在其 owner 的
-            # CSR 区间内。逐条目比对 entry 所属 core 与该段 owner，标记命中后
-            # 与「owner>=0」全集比较，一次向量化完成，不进入 Python 循环。
-            entry_cores = np.repeat(
-                np.arange(core_count, dtype=np.int64), np.diff(offsets))
-            matched = owners[members] == entry_cores
-            seen = np.zeros(segment_count, dtype=np.bool_)
-            seen[members[matched]] = True
-            if not np.array_equal(seen, owners >= 0):
-                raise ValueError("owned segment missing from its owner membership")
+        # own ⊆ membership：每个 owner>=0 的 segment 必然出现在其 owner 的
+        # CSR 区间内。逐条目比对 entry 所属 core 与该段 owner，标记命中后
+        # 与「owner>=0」全集比较，一次向量化完成，不进入 Python 循环。
+        # 检查不能被「membership 为空」跳过：否则「有 owner 却无任何
+        # membership」的损坏对象（截断 NPZ 或手工构造）会被静默接受。
+        # 空 membership 下 seen 全 False，恰好与全 -1 的合法纯 context 状态
+        # 相等、与任何 owner>=0 的状态不等，语义自然正确。
+        entry_cores = np.repeat(
+            np.arange(core_count, dtype=np.int64), np.diff(offsets))
+        matched = owners[members] == entry_cores
+        seen = np.zeros(segment_count, dtype=np.bool_)
+        seen[members[matched]] = True
+        if not np.array_equal(seen, owners >= 0):
+            raise ValueError("owned segment missing from its owner membership")
         object.__setattr__(self, "polarity", polarity)
         object.__setattr__(self, "owner_indices", owners)
         object.__setattr__(self, "core_offsets", offsets)
@@ -216,6 +219,10 @@ def _split_segments_at_ownership_cuts(
 ) -> SegmentBatch:
     """在 macro/core ownership 切线交点处分裂控制段，保证一段不跨两个 owner。"""
     count = segments.segment_count
+    # 空 macro（查询框不接触任何图形）没有可分裂的段，原样返回；后续的
+    # repeat/bincount 展开都假设至少存在一个段。
+    if not count:
+        return segments
     edge_ids = segments.edge_ids
     vertices = segments.contours.vertices
     starts_v = vertices[edge_ids].astype(np.int64)
@@ -256,6 +263,13 @@ def _split_segments_at_ownership_cuts(
     # 段内按参数排序，保证分裂点单调递增且新段保持全局稳定顺序。
     order = np.lexsort((t_all, seg_all))
     seg_all, t_all = seg_all[order], t_all[order]
+    # 斜边精确穿过 x/y 切线交点时，两条切线会在同一参数处各产生一个穿越点；
+    # 重复分裂点必须去重，否则相邻碎段零长度并被 SegmentBatch 拒绝。
+    if len(t_all) > 1:
+        duplicate = ((seg_all[1:] == seg_all[:-1]) &
+                     np.isclose(t_all[1:], t_all[:-1], atol=1e-12, rtol=0.0))
+        keep = np.concatenate(([True], ~duplicate))
+        seg_all, t_all = seg_all[keep], t_all[keep]
     counts = np.bincount(seg_all, minlength=count)
     cross_starts = np.concatenate(([0], np.cumsum(counts)[:-1]))
     # 每段输出 counts+2 个边界点、counts+1 个新段；全零穿越时新批次与

@@ -203,8 +203,10 @@ def plan_macros(
     if macro_size_dbu is not None:
         if (not isinstance(macro_size_dbu, Integral) or macro_size_dbu <= 0):
             raise ValueError("macro_size_dbu must be a positive integer")
-        # 名义 macro 必须是 core 的整数倍，否则宏观边界会切进 core 内部，
-        # 与「先切 macro、macro 内切 core」的两级契约冲突。
+        # 名义 macro 必须严格大于 core 且为 core 的整数倍（设计文档 §5.3）：
+        # 等于 core 会让两级网格退化为纯 core 网格，宏观边界失去意义。
+        if macro_size_dbu <= core_size_dbu:
+            raise ValueError("macro size must exceed core size")
         if macro_size_dbu % core_size_dbu:
             raise ValueError("macro size must be a whole multiple of core size")
         x_macro = _cuts_by_size(bounds.left, bounds.right, macro_size_dbu)

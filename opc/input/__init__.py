@@ -1,24 +1,15 @@
 """MB-OPC、ILT 和后续方法可共同复用的 OPC 输入基础。"""
 
-from .grid import CoreSpec, RectilinearCoreGrid
-from .macro import macro_boxes
-from .mask import MaskPolarity, PhysicalMask, normalize_physical_mask
-from .preflight import (
-    default_memory_budget_bytes,
-    preflight_layout,
-    process_memory_snapshot,
-    resolve_memory_budget_bytes,
-)
+from .grid import CoreSpec, MacroSpec, plan_macros
+from .mask import MaskPolarity
+from .raster import ownership_canvas, rasterize_mask_canvas, rasterize_region_window
 
 __all__ = [
     "CoreSpec",
+    "MacroSpec",
     "MaskPolarity",
-    "PhysicalMask",
-    "RectilinearCoreGrid",
-    "default_memory_budget_bytes",
-    "macro_boxes",
-    "normalize_physical_mask",
-    "preflight_layout",
-    "process_memory_snapshot",
-    "resolve_memory_budget_bytes",
+    "ownership_canvas",
+    "plan_macros",
+    "rasterize_mask_canvas",
+    "rasterize_region_window",
 ]

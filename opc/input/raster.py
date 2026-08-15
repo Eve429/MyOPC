@@ -1,4 +1,4 @@
-"""为 OPC/ILT 的固定画布光刻输入提供原生 Region 栅格化。"""
+"""把局部 context 栅格化并居中放入 ICCAD13 固定 256 画布。"""
 
 from __future__ import annotations
 
@@ -14,22 +14,19 @@ from layout import DbuBox
 from .mask import MaskPolarity
 
 
-def rasterize_region_canvas(region: kdb.Region, box: DbuBox, pixel_dbu: int,
-                            canvas: int) -> NDArray[np.float32]:
-    """把全局 Region 的局部框栅格化到左下对齐的固定方形画布。"""
-    if (not isinstance(pixel_dbu, Integral) or pixel_dbu <= 0 or
-            not isinstance(canvas, Integral) or canvas <= 0):
-        raise ValueError("pixel_dbu 和 canvas 必须是正整数")
-    pixel_dbu, canvas = int(pixel_dbu), int(canvas)
+def rasterize_region_window(region: kdb.Region, box: DbuBox, pixel_dbu: int,
+                            ) -> NDArray[np.float32]:
+    """把物理 box 栅格为最小 H×W 覆盖率数组，不添加模型 canvas padding。"""
+    if (not isinstance(pixel_dbu, Integral) or pixel_dbu <= 0):
+        raise ValueError("pixel_dbu 必须是正整数")
+    pixel_dbu = int(pixel_dbu)
+    # 轴长不是 pixel 整数倍时按向上取整生成最小覆盖数组；边缘像素保留真实
+    # 面积覆盖率，不移动几何边界迎合 pixel 网格。
     width = (box.width + pixel_dbu - 1) // pixel_dbu
     height = (box.height + pixel_dbu - 1) // pixel_dbu
-    if width > canvas or height > canvas:
-        raise ValueError(
-            f"局部框需要 {width}x{height} 像素，超过 {canvas}x{canvas} 光刻画布")
-    result = np.zeros((canvas, canvas), dtype=np.float32)
-    # 公共底层分块输出保持左下原点；像素 [0,0] 的中心位于 box 原点加半个
-    # pixel，因此探针进入数组索引时必须使用 `(xy-origin)/pixel-0.5`。这里仅
-    # 负责固定 canvas 的 padding，不再维护第二份裁剪、合并和面积归一化逻辑。
+    result = np.zeros((height, width), dtype=np.float32)
+    # 底层分块输出保持左下原点：行 0 = 最低 Y；像素中心位于 box 原点加
+    # 半个 pixel。这里只负责窗口覆盖率本身，canvas 居中由上层负责。
     for y0, x0, areas in iter_region_coverage_tiles(
             region, box, pixel_dbu, (height, width), dtype=np.dtype(np.float32)):
         rows, columns = areas.shape
@@ -37,36 +34,97 @@ def rasterize_region_canvas(region: kdb.Region, box: DbuBox, pixel_dbu: int,
     return result
 
 
+def _center_padding(local_height: int, local_width: int,
+                    canvas_pixels: int) -> tuple[int, int, int, int]:
+    """返回低/高 y 和低/高 x 的居中零填充宽度。"""
+    if (not isinstance(local_height, Integral) or local_height <= 0 or
+            not isinstance(local_width, Integral) or local_width <= 0 or
+            not isinstance(canvas_pixels, Integral) or canvas_pixels <= 0):
+        raise ValueError("local dims and canvas must be positive integers")
+    if local_height > canvas_pixels or local_width > canvas_pixels:
+        raise ValueError("local window exceeds the fixed canvas")
+    # 差值平均分配到低/高两侧；奇数余量归高坐标侧，与旧模型 _prepare_mask 的
+    # 居中补零约定一致，保证同尺寸输入永远得到同一 canvas 布局。
+    low_y = (canvas_pixels - local_height) // 2
+    low_x = (canvas_pixels - local_width) // 2
+    return low_y, canvas_pixels - local_height - low_y, low_x, canvas_pixels - local_width - low_x
+
+
 def rasterize_mask_canvas(
-        region: kdb.Region, box: DbuBox, pixel_dbu: int, canvas: int, *,
-        polarity: MaskPolarity | str = MaskPolarity.CLEAR,
-        field_box: DbuBox | None = None) -> NDArray[np.float32]:
-    """把源多边形转换为统一的透光率画布，其中 1 始终表示透光。"""
+        region: kdb.Region, context_box: DbuBox, pixel_dbu: int,
+        canvas_pixels: int, *,
+        polarity: MaskPolarity | str,
+) -> NDArray[np.float32]:
+    """把 context 透光率居中放入固定 canvas，所有外围 padding 填 0。"""
     try:
-        normalized = polarity if isinstance(polarity, MaskPolarity) else MaskPolarity(polarity)
+        normalized = (polarity if isinstance(polarity, MaskPolarity)
+                      else MaskPolarity(polarity))
     except ValueError as exc:
         raise ValueError(f"不支持的 mask 极性：{polarity!r}") from exc
-    coverage = rasterize_region_canvas(region, box, pixel_dbu, canvas)
+    if (not isinstance(pixel_dbu, Integral) or pixel_dbu <= 0 or
+            not isinstance(canvas_pixels, Integral) or canvas_pixels <= 0):
+        raise ValueError("pixel_dbu 和 canvas_pixels 必须是正整数")
+    pixel_dbu, canvas_pixels = int(pixel_dbu), int(canvas_pixels)
+    # 先用纯算术检查窗口尺寸，超限在分配 canvas 数组之前失败；此时局部
+    # 栅格尚未发生，错误不会留下大数组等待回收。
+    local_width = (context_box.width + pixel_dbu - 1) // pixel_dbu
+    local_height = (context_box.height + pixel_dbu - 1) // pixel_dbu
+    if local_width > canvas_pixels or local_height > canvas_pixels:
+        raise ValueError(
+            f"局部窗口需要 {local_height}x{local_width} 像素，"
+            f"超过 {canvas_pixels}x{canvas_pixels} 固定画布")
+    coverage = rasterize_region_window(region, context_box, pixel_dbu)
+    low_y, _, low_x, _ = _center_padding(
+        int(coverage.shape[0]), int(coverage.shape[1]), canvas_pixels)
+    # 数组值在所有极性下遵守同一光学定义：1.0 = 透光、0.0 = 不透光。
+    # clear 时源 polygon coverage 即透光；opaque 时局部 context 背景先填 1
+    # 再减去 coverage（field − opaque 图形），两种极性 canvas 外围 padding
+    # 恒为 0，极性只改变「源 polygon 如何转换为透光率」。
+    canvas = np.zeros((canvas_pixels, canvas_pixels), dtype=np.float32)
     if normalized is MaskPolarity.CLEAR:
-        return coverage
-    if field_box is None:
-        raise ValueError("opaque 极性必须提供显式 field_box")
-    # 只在光学数组边界构造处理框 coverage。处理框绝不进入 ContourBatch，因此其
-    # 四条边不会成为虚假 OPC 边；box 跨越处理框时，框外 padding 保持不透光 0。
-    field = rasterize_region_canvas(kdb.Region(field_box.to_native()), box, pixel_dbu, canvas)
-    np.subtract(field, coverage, out=field)
-    np.clip(field, 0.0, 1.0, out=field)
-    return field
+        local = coverage
+    else:
+        local = 1.0 - coverage
+    h, w = local.shape
+    canvas[low_y:low_y + h, low_x:low_x + w] = local
+    return canvas
 
 
-def ownership_canvas(core: DbuBox, context: DbuBox, pixel_dbu: int,
-                     canvas: int) -> NDArray[np.bool_]:
-    """按像素中心生成 core 唯一计分区域，halo 像素保持 False。"""
-    if (context.left > core.left or context.bottom > core.bottom or
-            context.right < core.right or context.top < core.top):
-        raise ValueError("context 必须从四个方向完整包含 core")
-    xs = context.left + (np.arange(canvas, dtype=np.float64) + 0.5) * pixel_dbu
-    ys = context.bottom + (np.arange(canvas, dtype=np.float64) + 0.5) * pixel_dbu
-    x_owned = (xs >= core.left) & (xs < core.right)
-    y_owned = (ys >= core.bottom) & (ys < core.top)
-    return y_owned[:, None] & x_owned[None, :]
+def ownership_canvas(
+        ownership_box: DbuBox, context_box: DbuBox, pixel_dbu: int,
+        canvas_pixels: int,
+) -> NDArray[np.bool_]:
+    """返回与居中 mask canvas 对齐的唯一计分像素，context/padding 为 False。"""
+    if (not isinstance(pixel_dbu, Integral) or pixel_dbu <= 0 or
+            not isinstance(canvas_pixels, Integral) or canvas_pixels <= 0):
+        raise ValueError("pixel_dbu 和 canvas_pixels 必须是正整数")
+    pixel_dbu, canvas_pixels = int(pixel_dbu), int(canvas_pixels)
+    if (context_box.left > ownership_box.left or
+            context_box.bottom > ownership_box.bottom or
+            context_box.right < ownership_box.right or
+            context_box.top < ownership_box.top):
+        raise ValueError("context_box 必须从四个方向完整包含 ownership_box")
+    # 居中偏移必须与 rasterize_mask_canvas 完全一致，否则计分像素与 mask
+    # 像素错位；两者共用 _center_padding 是对齐的数值保证。
+    local_width = (context_box.width + pixel_dbu - 1) // pixel_dbu
+    local_height = (context_box.height + pixel_dbu - 1) // pixel_dbu
+    low_y, _, low_x, _ = _center_padding(
+        int(local_height), int(local_width), canvas_pixels)
+    # 全局 DBU 坐标映射到 canvas 像素（后续 EPE/probe 必须复用同一公式，
+    # 不能假设 context 位于 canvas 左下角）：
+    #   x_canvas = (x_dbu - context.left) / pixel_dbu - 0.5 + low_x
+    #   y_canvas = (y_dbu - context.bottom) / pixel_dbu - 0.5 + low_y
+    # 像素中心采样：canvas 第 j 列的中心位于 context.left + (j - low_x + 0.5)×pixel。
+    columns = np.arange(canvas_pixels, dtype=np.int64)
+    rows = np.arange(canvas_pixels, dtype=np.int64)
+    x_centers = (context_box.left +
+                 (columns - low_x + 0.5) * pixel_dbu).astype(np.float64)
+    y_centers = (context_box.bottom +
+                 (rows - low_y + 0.5) * pixel_dbu).astype(np.float64)
+    # 只有真实存在于局部窗口内、且中心落在 ownership 半开区间内的像素才计分；
+    # 窗口外的 padding 列/行中心会落到 context 之外，由有效区间掩码排除。
+    x_valid = ((columns >= low_x) & (columns < low_x + local_width) &
+               (x_centers >= ownership_box.left) & (x_centers < ownership_box.right))
+    y_valid = ((rows >= low_y) & (rows < low_y + local_height) &
+               (y_centers >= ownership_box.bottom) & (y_centers < ownership_box.top))
+    return y_valid[:, None] & x_valid[None, :]

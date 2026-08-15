@@ -8,8 +8,8 @@ import numpy as np
 from geometry import ContourBatch, contours_to_region, validate_contours
 from opc.errors import ReconstructionError
 
-from .builder import MBOPCProblem
 from .fragmentation import FragmentationConfig, SegmentBatch
+from .problem import MacroProblem
 
 
 def _ring_signed_areas2(contours: ContourBatch) -> np.ndarray:
@@ -76,9 +76,9 @@ def _validated_displacements(segments: SegmentBatch, displacements: object,
     return values
 
 
-def reconstruct_contours(problem: MBOPCProblem, displacements: object) -> ContourBatch:
+def reconstruct_contours(problem: MacroProblem, displacements: object) -> ContourBatch:
     """批量计算 junction，并重建保留 polygon/hole 拓扑的整数轮廓。"""
-    segments, config = problem.segments, problem.config
+    segments, config = problem.segments, problem.fragmentation
     # 检查 displacements 有效性
     values = _validated_displacements(segments, displacements, config)
     # 得到边段移动后的start、end
@@ -176,14 +176,14 @@ def reconstruct_contours(problem: MBOPCProblem, displacements: object) -> Contou
     contours = ContourBatch(vertices[keep], clean_offsets,
                             segments.contours.polygon_ring_offsets)
     _validate_reference_topology(segments.contours, contours)
-    report = validate_contours(contours, problem.physical_mask.layer)
+    report = validate_contours(contours, problem.layer)
     if not report.is_valid:
         codes = ", ".join(issue.code for issue in report.issues)
         raise ReconstructionError(f"reconstructed contours are invalid: {codes}")
     return contours
 
 
-def reconstruct_region(problem: MBOPCProblem, displacements: object) -> kdb.Region:
+def reconstruct_region(problem: MacroProblem, displacements: object) -> kdb.Region:
     """把重建轮廓转换为 KLayout Region，并拒绝原生无效 Polygon。"""
     region = contours_to_region(reconstruct_contours(problem, displacements))
     if not region.has_valid_polygons():

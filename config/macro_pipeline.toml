@@ -26,5 +26,5 @@ round_deltas_nm = [2, -2]         # 恰好两轮；第二轮结束累计位移�
 
 [output]
 work_dir = "../output/macro_pipeline"
-final_layout = "gcd_45nm_result.gds"
+final_layout = "../output/macro_pipeline/gcd_45nm_result.gds"
 final_cell_mode = "single_cell"  # single_cell 或 macro_cells

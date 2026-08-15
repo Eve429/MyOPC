@@ -111,6 +111,15 @@ class LayoutDB:
         box = native.bbox()
         return None if box.empty() else DbuBox.from_native(box)
 
+    def layer_bbox(self, layer: LayerSpec, cell: str | None = None) -> DbuBox | None:
+        """返回 Cell 内指定 Layer 的层级包围盒；该层在此子树无图形时返回 None。"""
+        native = self._native_cell(cell or self._top_cell)
+        # bbox_per_layer 在 KLayout 原生层完成层级展开与逐层过滤，等价于对
+        # recursive_polygon_shapes 全量扫描取极值，但不逐 shape 进入解释器，
+        # 也不物化 Region；层存在于版图却不在当前 Cell 子树时返回空框。
+        box = native.bbox_per_layer(self._native_layer_index(layer))
+        return None if box.empty() else DbuBox.from_native(box)
+
     def cell_hierarchy(self) -> dict[str, tuple[str, ...]]:
         """返回版图全部 Cell 到其直接子 Cell 名称的只读邻接表。"""
         layout = self._native_layout

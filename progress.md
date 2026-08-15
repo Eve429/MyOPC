@@ -15,6 +15,10 @@
 - 最小必要偏差（已记开发报告）：`_write_macro_gds` 增 dbu_um 参数；
   merge RSS 为完成后即时采样。
 - Phase 4 置 complete；Next Step → Phase 5（lithography + evaluation）。
+- **收尾修复（用户审查后提交 `107fb68`）**：`LayoutDB.layer_bbox` 用原生
+  `bbox_per_layer` 取代 main 里的流式 bbox 扫描（用户授权修改 layout/）；
+  用户修正 config 的 final_layout 相对路径（最终版图落回 output/）。
+  验证：pytest 116 passed，smoke 与改前逐位一致。
 
 ## 会话记录
 

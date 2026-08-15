@@ -164,31 +164,6 @@ def exact_dbu(value_nm: Decimal, dbu_nm: Decimal, name: str) -> int:
     return int(quotient)  # 精确整数 DBU
 
 
-def _layer_bounds(database: LayoutDB, layer: LayerSpec) -> DbuBox:
-    """流式扫描目标层的层级包围盒，不物化任何 Region。"""
-    # 阶段 0 的边界契约：确定网格前不物化图形。RecursiveShapeIterator 逐
-    # shape 流式访问，只累计四条坐标极值，峰值内存与形状数无关。
-    query_box = DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)  # 覆盖全版的查询框
-    iterator = database.recursive_polygon_shapes(layer, query_box)  # 只读流式迭代器
-    left = bottom = 10 ** 18  # 极小值哨兵
-    right = top = -10 ** 18  # 极大值哨兵
-    count = 0  # 形状计数，用于空层判定
-    while not iterator.at_end():  # 遍历全部层级形状
-        box = iterator.shape().bbox()  # shape 在其所属 Cell 内的包围盒
-        transform = iterator.trans()  # 当前实例变换；无实例时为 None
-        if transform is not None:  # 需要变换到全局坐标
-            box = box.transformed(transform)  # 应用实例变换
-        left = min(left, box.left)  # 累计左极值
-        right = max(right, box.right)  # 累计右极值
-        bottom = min(bottom, box.bottom)  # 累计下极值
-        top = max(top, box.top)  # 累计上极值
-        count += 1  # 计数
-        iterator.next()  # 前进到下一个形状
-    if count == 0 or right < left:  # 空层无法规划网格
-        raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
-    return DbuBox(left, bottom, right, top)  # 目标层整体包围盒
-
-
 def _atomic_write_json(path: Path, payload: dict) -> Path:
     """把 JSON 载荷经同目录临时文件原子写出，避免留下半截 plan。"""
     handle, temporary_name = tempfile.mkstemp(  # 与目标同目录同卷
@@ -213,7 +188,10 @@ def prepare_problems(config: PipelineConfig) -> dict:
     with LayoutDB.open(config.layout_path, config.top_cell) as database:  # 打开并自动关闭
         top_cell_name = database.top_cell_name  # 在库存活期内捕获顶层名
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
-        bounds = _layer_bounds(database, config.layer)  # 目标层整体 bbox（不物化）
+        bounds = database.layer_bbox(config.layer)  # 目标层整体 bbox（原生逐层，不物化）
+        if bounds is None:  # 目标层在顶层子树内无图形
+            raise ValueError(  # 空层无法规划网格
+                f"目标层 {config.layer.layer}/{config.layer.datatype} 不含任何图形")  # 报层号
         # 全部 nm 参数精确换算：不能整除直接失败，不四舍五入吸收误差。
         core_dbu = exact_dbu(config.core_size_nm, dbu_nm, "core_size_nm")  # core
         context_dbu = exact_dbu(config.context_nm, dbu_nm, "context_nm")  # context

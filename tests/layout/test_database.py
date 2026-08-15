@@ -140,6 +140,31 @@ def test_recursive_polygon_scan_is_public_and_lifetime_bounded(tmp_path: Path) -
         database.recursive_polygon_shapes(layer, box)
 
 
+def _write_layered_layout(path: Path) -> Path:
+    """写出多层版图：各层图形位置错开，层 3 只出现在选定子树外的另一顶层。"""
+    layout = kdb.Layout(); layout.dbu = 0.001
+    one = layout.layer(kdb.LayerInfo(1, 0)); two = layout.layer(kdb.LayerInfo(2, 5))
+    leaf = layout.create_cell("LEAF"); leaf.shapes(one).insert(kdb.Box(10, 10, 30, 40))
+    top = layout.create_cell("TOP")
+    top.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0)))
+    top.shapes(two).insert(kdb.Box(-50, -20, 500, 80))
+    other = layout.create_cell("OTHER")
+    other.shapes(layout.layer(kdb.LayerInfo(3, 0))).insert(kdb.Box(0, 0, 5, 5))
+    layout.write(str(path)); return path
+
+
+def test_layer_bbox_filters_target_layer_and_subtree(tmp_path: Path) -> None:
+    """layer_bbox 按层过滤并展开实例；层不在当前子树时返回 None。"""
+    source = _write_layered_layout(tmp_path / "layered.gds")
+    with LayoutDB.open(source, top_cell="TOP") as db:
+        assert db.bbox() == DbuBox(-50, -20, 500, 80)
+        assert db.layer_bbox(LayerSpec(1, 0)) == DbuBox(10, 10, 30, 40)
+        assert db.layer_bbox(LayerSpec(2, 5)) == DbuBox(-50, -20, 500, 80)
+        assert db.layer_bbox(LayerSpec(3, 0)) is None
+    with LayoutDB.open(source, top_cell="TOP") as db, pytest.raises(LayerNotFoundError):
+        db.layer_bbox(LayerSpec(99, 0))
+
+
 def test_importing_layout_does_not_load_geometry() -> None:
     """基础版图层不得因公共导入而反向加载几何输出层。"""
     command = "import sys, layout; assert not any(n == 'geometry' or n.startswith('geometry.') for n in sys.modules)"

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import main.run_macro_pipeline as pipeline
-from layout import DbuBox, LayoutDB
+from layout import DbuBox, LayerSpec, LayoutDB
 from opc.input.edge import MacroProblem, reconstruct_region
 
 # 测试版图：DBU=1nm，bar 图形使目标层 bbox 为 (20,20)-(140,60)，
@@ -15,11 +15,18 @@ from opc.input.edge import MacroProblem, reconstruct_region
 
 
 def _write_gds(tmp_path):
-    """生成单层 bar 图形的 GDS 并返回路径。"""
+    """生成上下锚框加中间内条的 GDS 并返回路径。
+
+    锚框只负责把层 bbox 撑到 (20,20)-(140,60)；内条与锚框不重叠且完全在
+    bbox 内部——这是位移有效性的关键：铺满 bbox 的图形外扩会全部落在
+    macro ownership 之外被正确裁掉，第一轮合并将看不到任何变化。
+    """
     layout = kdb.Layout()  # 独立原生版图
     layout.dbu = 0.001  # 1 nm/DBU，配置数值直接等于 DBU
     top = layout.create_cell("TOP")  # 唯一顶层
-    top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 20, 140, 60))  # 目标层 bar
+    top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 20, 140, 28))  # 下锚框
+    top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 52, 140, 60))  # 上锚框
+    top.shapes(layout.layer(1, 0)).insert(kdb.Box(60, 30, 100, 50))  # 内条（跨 macro 切线）
     path = tmp_path / "reticle.gds"  # 输出路径
     layout.write(str(path))  # 写盘
     return path  # 返回路径
@@ -30,7 +37,8 @@ def _write_config(tmp_path, layout_path, **overrides):
     values = {  # 默认值全部满足网格与分段契约
         "macro_grid": "[2, 2]", "core_size_nm": 30, "context_nm": 10,
         "pixel_nm": 1, "corner_nm": 4, "segment_nm": 10,
-        "max_displacement_nm": 8, "miter_limit": 4.0, "deltas": "[2, -2]"}
+        "max_displacement_nm": 8, "miter_limit": 4.0, "deltas": "[2, -2]",
+        "final_cell_mode": "single_cell"}
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
 [input]
@@ -61,7 +69,7 @@ round_deltas_nm = {values["deltas"]}
 [output]
 work_dir = "{(tmp_path / "work").as_posix()}"
 final_layout = "{(tmp_path / "final.gds").as_posix()}"
-final_cell_mode = "single_cell"
+final_cell_mode = "{values["final_cell_mode"]}"
 """
     config_path = tmp_path / "pipeline.toml"  # 配置路径
     config_path.write_text(text, encoding="utf-8")  # 写盘
@@ -283,3 +291,119 @@ class TestTwoRounds:
         pipeline.run_round(plan, 1, 2)  # 第一轮
         pipeline.run_round(plan, 2, -2)  # 第二轮
         assert calls == {"prepare": 0, "materialize": 0}  # 零调用
+
+
+@pytest.fixture
+def full(tmp_path):
+    """执行完整流程（准备 + 双轮 + 最终合并），返回 (config_path, summary)。"""
+    gds = _write_gds(tmp_path)  # 生成 GDS
+    config_path = _write_config(tmp_path, gds)  # 生成配置
+    summary = pipeline.run(config_path)  # 完整流程
+    return config_path, summary  # 返回两件套
+
+
+class TestFinalMerge:
+    """最终权威覆盖合并与两种 Cell 输出。"""
+
+    def test_single_cell_has_one_result_cell_without_seam(self, full, tmp_path):
+        """single_cell 只有一个结果 Cell，跨 macro polygon merge 后无 seam。"""
+        _, summary = full  # 解包
+        layer = LayerSpec(1, 0)  # 目标层
+        with LayoutDB.open(summary["final_layout"]) as db:  # 回读最终版图
+            region = db.query([layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
+                              ).materialize().region(layer)  # 物化
+            hierarchy = db.cell_hierarchy()  # Cell 结构
+        assert summary["final_xor_area"] == 0  # 回零 XOR 为零
+        assert region.count() == 3  # 两锚框与内条各一个 polygon，跨界处无 seam
+        assert all(not children for children in hierarchy.values())  # 无 macro 子 Cell
+
+    def test_macro_cells_contains_expected_child_cells(self, tmp_path):
+        """macro_cells 输出含预期数量的 macro 子 Cell。"""
+        gds = _write_gds(tmp_path)  # 生成 GDS
+        config_path = _write_config(  # macro_cells 模式
+            tmp_path, gds, final_cell_mode="macro_cells")  # 覆盖模式
+        summary = pipeline.run(config_path)  # 完整流程
+        assert summary["final_cell_mode"] == "macro_cells"  # 模式确认
+        with LayoutDB.open(summary["final_layout"]) as db:  # 回读
+            children = db.cell_hierarchy()["OPC_RESULT"]  # 顶层子 Cell
+        assert len(children) == 4  # 2×2 恰 4 个子 Cell
+
+    def test_both_cell_modes_have_identical_coverage(self, tmp_path):
+        """两种模式的顶层物理覆盖 XOR 为零。"""
+        layer = LayerSpec(1, 0)  # 目标层
+        gds = _write_gds(tmp_path)  # 生成 GDS
+        coverage = {}  # 模式 → 覆盖 Region
+        for mode in ("single_cell", "macro_cells"):  # 两种模式
+            base = tmp_path / mode  # 独立目录
+            base.mkdir()  # 创建
+            config_path = _write_config(  # 各自配置
+                base, gds, final_cell_mode=mode)  # 覆盖模式
+            summary = pipeline.run(config_path)  # 完整流程
+            with LayoutDB.open(summary["final_layout"]) as db:  # 回读
+                coverage[mode] = db.query(  # 全框查询
+                    [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
+                ).materialize().region(layer)  # 物化
+        assert (coverage["single_cell"] ^ coverage["macro_cells"]).area() == 0  # XOR 零
+
+    def test_merge_does_not_change_coverage_area(self, full):
+        """merge/normalize 不改变最终覆盖面积。"""
+        _, summary = full  # 解包
+        assert summary["final_xor_area"] == 0  # 与原始层一致
+        # bar 面积 = 120×40 = 4800；面积若被 normalize 改变，run 会在内部失败。
+
+    def test_round_one_merge_differs_from_reference(self, tmp_path):
+        """第一轮合并结果相对参考有非零变化，证明 +2 确实生效。"""
+        gds = _write_gds(tmp_path)  # 生成 GDS
+        config = pipeline.load_config(_write_config(tmp_path, gds))  # 加载
+        plan = pipeline.prepare_problems(config)  # 阶段 0/1
+        pipeline.run_round(plan, 1, 2)  # 仅第一轮
+        round_one_final = tmp_path / "round1.gds"  # 第一轮合并输出
+        pipeline.merge_final(plan, 1, round_one_final)  # 合并第一轮
+        with LayoutDB.open(gds) as db:  # 原始版图
+            reference = db.query(  # 全框查询
+                [LayerSpec(1, 0)], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
+            ).materialize_intersecting().region(LayerSpec(1, 0))  # 完整原图形
+        with LayoutDB.open(round_one_final) as db:  # 第一轮结果
+            moved = db.query(  # 全框查询
+                [LayerSpec(1, 0)], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
+            ).materialize().region(LayerSpec(1, 0))  # 物化
+        assert int((moved ^ reference).area()) > 0  # 外扩 2nm 必然产生非零 XOR
+
+    def test_missing_macro_gds_fails_merge(self, full, tmp_path):
+        """缺失 macro GDS 时合并明确失败。"""
+        _, _ = full  # 解包
+        target = tmp_path / "work" / "round_002" / "gds" / "mr0c0.gds"  # 待删文件
+        target.unlink()  # 删除
+        config = pipeline.load_config(  # 重新加载配置以重建 plan 路径
+            tmp_path / "pipeline.toml")  # 配置
+        plan = pipeline.prepare_problems(config)  # 重新准备（problems 目录已存在会被覆盖）
+        with pytest.raises(FileNotFoundError, match="macro GDS"):  # 明确失败
+            pipeline.merge_final(plan, 2, tmp_path / "final2.gds")  # 合并
+
+    def test_duplicate_macro_id_fails_merge(self, full, tmp_path):
+        """重复 macro ID 时合并明确失败。"""
+        _, _ = full  # 解包
+        config = pipeline.load_config(tmp_path / "pipeline.toml")  # 配置
+        plan = pipeline.prepare_problems(config)  # 重新准备
+        plan["macros"].append(dict(plan["macros"][0]))  # 注入重复条目
+        with pytest.raises(ValueError, match="重复 macro ID"):  # 明确失败
+            pipeline.merge_final(plan, 2, tmp_path / "final3.gds")  # 合并
+
+    def test_result_round_mismatch_fails_merge(self, full, tmp_path):
+        """result 轮次与合并轮次不一致时明确失败。"""
+        _, _ = full  # 解包
+        target = tmp_path / "work" / "round_002" / "results" / "mr0c0.npz"  # 篡改目标
+        with np.load(target, allow_pickle=False) as data:  # 读取
+            arrays = {name: data[name] for name in data.files}  # 复制
+        arrays["round_index"] = np.array([1], np.int32)  # 改成错误轮次
+        np.savez(target, **arrays)  # 写回
+        config = pipeline.load_config(tmp_path / "pipeline.toml")  # 配置
+        plan = pipeline.prepare_problems(config)  # 重新准备
+        with pytest.raises(ValueError, match="轮次"):  # 明确失败
+            pipeline.merge_final(plan, 2, tmp_path / "final4.gds")  # 合并
+
+    def test_unprocessed_layers_are_not_copied(self, full):
+        """最终版图只含处理过的目标层，不复制其他 layer。"""
+        _, summary = full  # 解包
+        with LayoutDB.open(summary["final_layout"]) as db:  # 回读最终版图
+            assert db.layers() == (LayerSpec(1, 0),)  # 只有目标层

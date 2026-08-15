@@ -1,4 +1,4 @@
-"""Macro–Core 两级网格双轮迭代管线的直接运行入口（阶段 0–2）。"""
+"""Macro–Core 两级网格双轮迭代管线的直接运行入口（阶段 0–3）。"""
 
 import json  # 序列化 plan.json 与读取轮次状态
 import os  # 原子替换与文件系统操作
@@ -19,6 +19,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
+from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
 from layout import DbuBox, LayerSpec, LayoutDB  # 版图打开、层规格与坐标框
 from opc.input import (  # 两级网格规划与居中光刻画布
     MaskPolarity,
@@ -412,3 +413,134 @@ def run_round(plan: dict, round_index: int, delta_dbu: int) -> dict:
         "macro_gds_count": len(plan["macros"]),  # GDS 数量
         "round_seconds": time.perf_counter() - started,  # 轮次耗时
         "iteration_peak_rss_bytes": peak_rss}  # 轮次 RSS 峰值
+
+
+def merge_final(plan: dict, round_index: int, output_path: Path) -> Path:
+    """合并指定轮次全部 macro 权威覆盖，并按 cell mode 写出最终版图。"""
+    started = time.perf_counter()  # 合并计时
+    process = psutil.Process()  # RSS 采样
+    work_dir = Path(plan["work_dir"])  # 工作目录
+    round_dir = work_dir / f"round_{round_index:03d}"  # 轮次目录
+    layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
+    dbu_um = float(plan["dbu_um"])  # 源版图 DBU
+    patches: list[GeometryPatch] = []  # 权威 patch 集合
+    identifiers = set()  # macro ID 去重集合
+    polygon_count_before = 0  # merge 前 polygon 数
+    area_before = 0  # merge 前覆盖面积
+    for entry in plan["macros"]:  # 按计划顺序逐 macro
+        macro_id = entry["macro_id"]  # macro 编号
+        if macro_id in identifiers:  # 重复 macro ID
+            raise ValueError(f"重复 macro ID：{macro_id}")  # 明确失败
+        identifiers.add(macro_id)  # 记录
+        # result 轮次一致性：result NPZ 记录的轮次必须与本次合并轮次相同。
+        with np.load(round_dir / "results" / f"{macro_id}.npz",  # 读 result
+                     allow_pickle=False) as data:  # 只读
+            if int(data["round_index"][0]) != round_index:  # 轮次不符
+                raise ValueError(f"{macro_id} result 轮次与合并轮次不一致")  # 失败
+        gds_path = round_dir / "gds" / f"{macro_id}.gds"  # macro GDS 路径
+        if not gds_path.is_file():  # 缺失 macro GDS
+            raise FileNotFoundError(f"缺失 macro GDS：{gds_path}")  # 明确失败
+        with LayoutDB.open(gds_path) as database:  # 回读完整候选
+            batch = database.query(  # 全框查询目标层
+                [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
+        region = batch.region(layer)  # 候选 Region
+        if not region.has_valid_polygons():  # 无效 polygon
+            raise RuntimeError(f"{macro_id} 候选 Region 含无效 polygon")  # 明确失败
+        ownership = DbuBox(*entry["ownership_box"])  # macro ownership 框
+        # 权威覆盖选择：完整候选只贡献自身 ownership 内的部分，消除相邻 macro
+        # context 的正面积重复；裁剪不是最终结果，seam 由写出端全局 merge 消除。
+        clipped = region & kdb.Region(ownership.to_native())  # 精确相交
+        polygon_count_before += clipped.count()  # 统计 polygon 数
+        area_before += int(clipped.area())  # 统计覆盖面积
+        patches.append(GeometryPatch(macro_id, layer, clipped, ownership))  # 收集
+    written = PatchWriter.write_macro_results(  # 按配置模式写出最终版图
+        patches, output_path, dbu_um,  # patch 集合与 DBU
+        cell_mode=plan["final_cell_mode"])  # single_cell 或 macro_cells
+    # 回读验证：merge/normalize 只能改变表示方式，不得改变物理覆盖面积。
+    with LayoutDB.open(written) as database:  # 回读最终版图
+        final_batch = database.query(  # 全框查询目标层
+            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
+    coverage = final_batch.region(layer)  # 最终覆盖
+    if not coverage.has_valid_polygons():  # 无效 polygon
+        raise RuntimeError("最终版图含无效 polygon")  # 明确失败
+    if int(coverage.area()) != area_before:  # 覆盖面积被 normalize 改变
+        raise RuntimeError(  # 明确失败
+            f"merge 前后覆盖面积改变：{area_before} -> {coverage.area()}")  # 报数值
+    # 把合并耗时与峰值一并记入计划字典，run 汇总 summary 时直接消费。
+    plan["merge_seconds"] = time.perf_counter() - started  # 合并耗时
+    # 说明：单次采样无法回溯进程历史峰值，此处取合并完成后的即时 RSS 作为
+    # 近似上界，具体口径在测试报告如实记录。
+    plan["merge_peak_rss_bytes"] = process.memory_info().rss  # 合并后即时 RSS
+    plan["merge_polygon_count_before"] = polygon_count_before  # merge 前 polygon 数
+    return written  # 返回最终版图路径
+
+
+def run(config_path: str | Path) -> dict:
+    """按准备、两轮迭代、最终合并、验证顺序执行完整流程并返回摘要。"""
+    total_started = time.perf_counter()  # 全流程计时
+    config = load_config(config_path)  # 严格加载配置
+    plan = prepare_problems(config)  # 阶段 0/1
+    round_one = run_round(plan, 1, plan["round_deltas_dbu"][0])  # 第一轮 +2 nm
+    round_two = run_round(plan, 2, plan["round_deltas_dbu"][1])  # 第二轮 -2 nm
+    final_path = merge_final(plan, 2, config.final_layout)  # 阶段 3 合并写出
+    # 回零验证：第二轮位移精确为零后，最终覆盖与原始目标层 XOR 面积必须为零。
+    layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
+    with LayoutDB.open(final_path) as database:  # 回读最终版图
+        final_batch = database.query(  # 全框查询
+            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
+    with LayoutDB.open(plan["layout"], plan["top_cell"]) as database:  # 原始版图
+        source_batch = database.query(  # 全框查询
+            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
+        ).materialize_intersecting()  # 完整原图形（不引入查询框边）
+    final_xor_area = int(  # 回零 XOR 面积
+        (final_batch.region(layer) ^ source_batch.region(layer)).area())  # 比较
+    if final_xor_area != 0:  # 第二轮回零后 XOR 非零即为回零失败
+        raise RuntimeError(f"第二轮回零后最终 XOR 面积非零：{final_xor_area}")  # 失败
+    summary = {  # 完整摘要（§16 契约字段）
+        "macro_count": plan["macro_count"],  # macro 总数
+        "core_count": plan["core_count"],  # core 总数
+        "problem_count": len(plan["macros"]),  # problem 总数
+        "round_count": 2,  # 恰好两轮
+        "round_001_macro_gds_count": round_one["macro_gds_count"],  # 第一轮 GDS 数
+        "round_002_macro_gds_count": round_two["macro_gds_count"],  # 第二轮 GDS 数
+        "segment_count_sum": plan["segment_count_sum"],  # 段数总计
+        "membership_count_sum": plan["membership_count_sum"],  # membership 总计
+        "maximum_problem_bytes": plan["maximum_problem_bytes"],  # 最大 problem
+        "maximum_problem_macro_id": plan["maximum_problem_macro_id"],  # 最大 problem macro
+        "prepare_seconds": plan["prepare_seconds"],  # 准备耗时
+        "round_001_seconds": round_one["round_seconds"],  # 第一轮耗时
+        "round_002_seconds": round_two["round_seconds"],  # 第二轮耗时
+        "merge_seconds": plan["merge_seconds"],  # 合并耗时
+        "total_seconds": time.perf_counter() - total_started,  # 总耗时
+        "prepare_peak_rss_bytes": plan["prepare_peak_rss_bytes"],  # 准备 RSS 峰值
+        "iteration_peak_rss_bytes": round_two["iteration_peak_rss_bytes"],  # 迭代 RSS 峰值
+        "merge_peak_rss_bytes": plan["merge_peak_rss_bytes"],  # 合并 RSS 峰值
+        "final_cell_mode": plan["final_cell_mode"],  # Cell 模式
+        "final_layout": str(final_path),  # 最终版图
+        "final_xor_area": final_xor_area}  # 回零 XOR 面积
+    _atomic_write_json(config.work_dir / "summary.json", summary)  # 落盘摘要
+    return summary  # 返回摘要
+
+
+def main() -> int:
+    """读取唯一位置参数 config，运行流程并打印中文摘要。"""
+    if len(sys.argv) != 2:  # 参数数量不符
+        print("用法：python main/run_macro_pipeline.py <config.toml>", file=sys.stderr)  # 提示
+        return 2  # 参数错误退出码
+    summary = run(sys.argv[1])  # 执行完整流程
+    print("Macro–Core 双轮迭代管线执行完成：")  # 摘要标题
+    print(f"  macro 数：{summary['macro_count']}，core 数：{summary['core_count']}")  # 网格规模
+    print(f"  段数总计：{summary['segment_count_sum']}，membership 总计："  # 规模
+          f"{summary['membership_count_sum']}")  # 规模续
+    print(f"  每轮 macro GDS：{summary['round_001_macro_gds_count']} × 2 轮")  # 产物数量
+    print(f"  准备 {summary['prepare_seconds']:.2f}s，第一轮 "  # 耗时
+          f"{summary['round_001_seconds']:.2f}s，第二轮 "  # 耗时续
+          f"{summary['round_002_seconds']:.2f}s，合并 "  # 耗时续
+          f"{summary['merge_seconds']:.2f}s，总计 {summary['total_seconds']:.2f}s")  # 耗时总
+    print(f"  最终 XOR 面积：{summary['final_xor_area']}（应为 0）")  # 回零验证
+    print(f"  最终版图：{summary['final_layout']}（{summary['final_cell_mode']}）")  # 输出位置
+    return 0  # 成功退出码
+
+
+if __name__ == "__main__":  # 直接运行入口
+    raise SystemExit(main())  # 以 main 返回值退出

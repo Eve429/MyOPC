@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import klayout.db as kdb
 
@@ -110,12 +110,67 @@ class PatchWriter:
         for layer in patches.layers:
             index = layout.layer(kdb.LayerInfo(layer.layer, layer.datatype))
             patches.region(layer).insert_into(layout, top.cell_index(), index)
+        return cls._save_layout(layout, output)
+
+    @classmethod
+    def write_macro_results(cls, patches: Iterable[GeometryPatch],
+                            output_path: str | Path, dbu_um: float, *,
+                            cell_mode: Literal["single_cell", "macro_cells"],
+                            top_name: str = "OPC_RESULT") -> Path:
+        """按单 Cell 全局 merge 或每 macro 子 Cell 两种方式原子写出权威 patch。"""
+        collected = list(patches)  # 物化输入，保证重复 ID 检查与两次遍历一致
+        if cell_mode not in ("single_cell", "macro_cells"):
+            raise ValueError(f"未知 cell_mode：{cell_mode}")
+        output = Path(output_path).expanduser().resolve()
+        if output.suffix.lower() not in cls._FORMATS:
+            raise ValueError("output extension must be .gds/.gds2/.oas/.oasis")
+        if not output.parent.is_dir():
+            raise FileNotFoundError(f"output directory does not exist: {output.parent}")
+        if dbu_um <= 0:
+            raise ValueError("dbu_um must be positive")
+        if not top_name.strip():
+            raise ValueError("top_name must be non-empty")
+        layout = kdb.Layout()
+        layout.dbu = float(dbu_um)
+        top = layout.create_cell(top_name)
+        # 两种模式都信任 grid 产生的不重叠 ownership：patch 输入已完成权威覆盖
+        # 选择，这里不再建立第二套全局 ownership 冲突检测结构。
+        if cell_mode == "single_cell":
+            # 汇总同层覆盖后做一次全局 merge/normalize：被 ownership 选择在表示
+            # 层切开的连续 polygon 重新连接，重复边与零面积碎片一并清理。这是
+            # 消除 macro seam 的唯一正确性路径，也是最终输出的一次全局内存峰值。
+            for layer in sorted({patch.layer for patch in collected}):
+                index = layout.layer(kdb.LayerInfo(layer.layer, layer.datatype))
+                merged = kdb.Region()
+                for patch in collected:
+                    if patch.layer == layer:
+                        merged += patch.region
+                merged.min_coherence = True
+                merged = merged.merged()
+                merged.insert_into(layout, top.cell_index(), index)
+        else:
+            # macro_cells：每个 patch 裁到自身 ownership 后写入独立子 Cell，顶层
+            # 以单位变换引用。物理覆盖与 single_cell 完全相同，但跨 Cell polygon
+            # 无法 merge，表示层 seam 保留——该模式只用于调试与降低临时内存，
+            # 不得在报告中描述为已经 normalize。
+            for patch in collected:
+                ownership = kdb.Region(patch.ownership_box.to_native())
+                clipped = patch.region & ownership
+                child = layout.create_cell(patch.patch_id)
+                index = layout.layer(kdb.LayerInfo(patch.layer.layer, patch.layer.datatype))
+                clipped.insert_into(layout, child.cell_index(), index)
+                top.insert(kdb.CellInstArray(child.cell_index(), kdb.Trans()))
+        return cls._save_layout(layout, output)
+
+    @classmethod
+    def _save_layout(cls, layout: kdb.Layout, output: Path) -> Path:
+        """按目标扩展名把原生 Layout 原子写出到目标路径。"""
         options = kdb.SaveLayoutOptions()
         options.format = cls._FORMATS[output.suffix.lower()]
         # 临时文件必须与目标位于同一目录和 Windows 卷。等待 KLayout 完整关闭输出后
         # 再原子替换，异常时旧结果仍然可用，也不会留下看似有效的半截 GDS/OASIS。
         handle, temporary_name = tempfile.mkstemp(prefix=f".{output.stem}-", suffix=output.suffix,
-                                                   dir=output.parent)
+                                                  dir=output.parent)
         os.close(handle)
         temporary = Path(temporary_name)
         try:

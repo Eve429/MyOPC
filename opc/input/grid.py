@@ -125,7 +125,7 @@ class MacroSpec:
         return owners
 
 
-def _cuts_by_size(start: int, end: int, size: int) -> IntArray:
+def _macro_cuts_by_size(start: int, end: int, size: int) -> IntArray:
     """从轴起点按固定尺寸切分，最后一个区间允许缩短。"""
     if end <= start or size <= 0:
         raise ValueError("axis range and cut size must be positive")
@@ -209,8 +209,8 @@ def plan_macros(
             raise ValueError("macro size must exceed core size")
         if macro_size_dbu % core_size_dbu:
             raise ValueError("macro size must be a whole multiple of core size")
-        x_macro = _cuts_by_size(bounds.left, bounds.right, macro_size_dbu)
-        y_macro = _cuts_by_size(bounds.bottom, bounds.top, macro_size_dbu)
+        x_macro = _macro_cuts_by_size(bounds.left, bounds.right, macro_size_dbu)
+        y_macro = _macro_cuts_by_size(bounds.bottom, bounds.top, macro_size_dbu)
     else:
         columns, rows = macro_grid
         if (not isinstance(columns, Integral) or isinstance(columns, bool) or

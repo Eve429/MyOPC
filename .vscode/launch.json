@@ -2,28 +2,15 @@
       "version": "0.2.0",
       "configurations": [
                   {
-              "name": "调试 run_mbopc_frontend",
+              "name": "调试 run_macro_pipeline",
               "type": "debugpy",
               "request": "launch",
-              "program": "${workspaceFolder}/main/run_mbopc_frontend.py",
+              "program": "${workspaceFolder}/main/run_macro_pipeline.py",
               "cwd": "${workspaceFolder}",
               "console": "integratedTerminal",
               "justMyCode": true,
               "args": [
-                  "TestReticle\\gcd_45nm.gds",
-              ]
-          },
-          {
-              "name": "调试 run_layout_geometry",
-              "type": "debugpy",
-              "request": "launch",
-              "program": "${workspaceFolder}/main/run_layout_geometry.py",
-              "cwd": "${workspaceFolder}",
-              "console": "integratedTerminal",
-              "justMyCode": true,
-              "args": [
-                  "TestReticle\\simple.gds",
+                  "config/macro_pipeline.toml",
               ]
           }
-      ]
   }

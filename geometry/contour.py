@@ -14,13 +14,19 @@ from numpy.typing import NDArray
 from layout.types import LayerSpec, RegionBatch
 
 
+
+
 @dataclass(frozen=True, slots=True)
 class ContourBatch:
     """用两级 CSR 连续数组保存 Polygon、轮廓环和整数顶点。"""
 
-    vertices: NDArray[np.int64] # 顶点
-    ring_offsets: NDArray[np.int64] # 每个顶点属于哪个环
-    polygon_ring_offsets: NDArray[np.int64] # 每个环属于哪个多边形
+    # vertices = [[0,0], [10,0], [10,10], [0,10], [20,0], [40,0], [40,20], [20,20], [25,5], [25,15], [35,15], [35,5]]
+    # ring_offsets = [0, 4, 8, 12]
+    # polygon_ring_offsets = [0, 1, 3]
+    
+    vertices: NDArray[np.int64] # 所有 ring 的顶点连续存储
+    ring_offsets: NDArray[np.int64] # 每个 ring 在 vertices 中的起止位置
+    polygon_ring_offsets: NDArray[np.int64] # 每个 polygon 在 ring 集合中的起止位置
 
     def __post_init__(self) -> None:
         """规范化内存布局，并校验 Polygon/Ring 两级 CSR 编码。"""

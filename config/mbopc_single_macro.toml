@@ -1,0 +1,40 @@
+# 单 macro（全 ROI 一个 macro、内部多 tile）simple MB-OPC 默认配置。
+
+[input]
+layout = "../TestReticle/gcd_45nm.gds"
+top_cell = "TOP"
+layer = 11
+datatype = 0
+polarity = "clear"
+
+[grid]
+macro_grid = [1, 1]
+# macro_size_nm = 4096
+core_size_nm = 1024
+context_nm = 400
+
+[lithography]
+pixel_nm = 8
+canvas_pixels = 256
+
+[edge]
+corner_nm = 16
+segment_nm = 32
+max_displacement_nm = 24
+miter_limit = 4.0
+
+[mbopc]
+iterations = 8
+initial_step_nm = 8
+decay_every = 4
+epe_distance_nm = 16
+batch_size = 8
+target_cache_mb = 512
+device = "auto"
+save_final_lithography = true
+show_progress = true
+
+[output]
+work_dir = "../output/mbopc_single_macro"
+final_layout = "../output/mbopc_single_macro/gcd_45nm_mbopc.gds"
+final_cell_mode = "single_cell"

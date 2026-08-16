@@ -161,10 +161,12 @@ def solve_macro(
             desc=f"macro {problem.macro.macro_id}", unit="tile",  # tile 单位
             position=progress_position, leave=leave_progress)  # 多层条位置
     on_tiles = None if bar is None else bar.update  # 批完成且张量已释放后回调
-    result = optimize_macro(  # 独立完成 baseline 与全部离散 EPE 轮次
-        problem, model, config, target_cache, on_tiles_completed=on_tiles)
-    if bar is not None:  # 提前停止按实际完成量收尾，不伪造 100%
-        bar.close()
+    try:  # 异常路径也要收尾进度条（finally 关闭，不留未结束的终端状态）
+        result = optimize_macro(  # 独立完成 baseline 与全部离散 EPE 轮次
+            problem, model, config, target_cache, on_tiles_completed=on_tiles)
+    finally:  # 提前停止按实际完成量收尾，不伪造 100%
+        if bar is not None:
+            bar.close()
     output_dir.mkdir(parents=True, exist_ok=True)  # macro 专属目录
     best_region = reconstruct_region(  # best 位移的最终候选几何
         problem, result.best_displacements)
@@ -193,6 +195,17 @@ def _run_mbopc(config_path: str | Path, *, require_multiple_macros: bool) -> dic
     if device == "auto":  # 有 CUDA 用 CUDA，否则 CPU
         device = "cuda" if torch.cuda.is_available() else "cpu"
     model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
+    # 入口数量约束前置：macro_grid 数量模式在配置层即可判定，错误配置不再
+    # 先跑完昂贵的 problem 准备才失败（size 模式仍由 plan 后的实际数兜底）。
+    grid = pipeline.macro_grid  # 数量模式（None = size 模式，未知）
+    if grid is not None:  # 可判定模式
+        grid_count = grid[0] * grid[1]  # macro 总数
+        if require_multiple_macros and grid_count <= 1:  # 多 macro 入口
+            raise ValueError(
+                f"多 macro 入口要求 macro 数大于 1，macro_grid={list(grid)}")
+        if not require_multiple_macros and grid_count != 1:  # 单 macro 入口
+            raise ValueError(
+                f"单 macro 入口要求恰好 1 个 macro，macro_grid={list(grid)}")
     macro_count = plan["macro_count"]  # macro 总数
     if require_multiple_macros:  # 多 macro 入口的数量约束
         if macro_count <= 1:

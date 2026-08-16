@@ -39,11 +39,11 @@ def _macro(**overrides):
     return plan_macros(BOUNDS, **values)[0]
 
 
-def _problem(region, macro=None, polarity="clear"):
+def _problem(region, macro=None, polarity="clear", frag=FRAG):
     """把原生 Region 直接包装为 RegionBatch 并生成单 macro problem。"""
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
-    return prepare_macro_problem(batch, LAYER, polarity, FRAG, macro)
+    return prepare_macro_problem(batch, LAYER, polarity, frag, macro)
 
 
 def _config(**overrides):
@@ -100,6 +100,11 @@ def _zero(mask):
 def _invert(mask):
     """反相变换：inner 不打印且 outer 打印 → 全部 ambiguous → 方向 0。"""
     return 1.0 - mask
+
+
+def _ones(mask):
+    """全亮变换：印刷过量（outer 也打印）→ 全部 -1 内移。"""
+    return torch.ones_like(mask)
 
 
 class TestTargetCache:
@@ -423,11 +428,12 @@ class TestOptimizeMacro:
         assert int(np.count_nonzero(result.best_displacements)) > 0
 
     def test_no_update_stops_with_ambiguous_only(self):
-        """全歧义方向 0 且 EPE 非零时按 no_update 停止。"""
+        """全歧义方向 0 且 EPE 非零时按 no_update 停止，不重复评价同状态。"""
         result = self._run(_PhaseModel([_invert, _invert]))
         assert result.stop_reason == "no_update"
-        assert len(result.records) == 2  # baseline + Round 1（无移动再评价一次）
-        assert result.records[1].moved_segments == 0
+        # 提案与当前一致时直接停止（同一状态再评无新信息），只有 baseline。
+        assert len(result.records) == 1
+        assert result.records[0].moved_segments == 0
 
     def test_zero_epe_during_iteration_with_pixel_aligned_step(self):
         """步长为像素整数倍时移动后直通输出达成零违规（循环内 zero_epe）。"""
@@ -633,6 +639,38 @@ class TestGeometryMatrix:
         assert "有效 EPE 探针 0 个" in result.stop_detail  # 原因在案
         assert result.best_round == 0  # 保留零位移 baseline
         assert len(result.records) == 1  # 无移动后状态
+
+    def test_hull_shrinking_into_hole_is_invalid_geometry(self):
+        """外轮廓内移 + hole 外扩同时进行时 hole 越出 hull，重建守卫拦截。"""
+        # 壁 15nm；全亮输出（印刷过量）→ 全 -1：hull 边内移、hole 边外扩，
+        # 一轮 10nm 后 hole(25..55) 越出 hull(30..50) → hole escaped its hull。
+        region = (kdb.Region(kdb.Box(20, 20, 60, 60)) -
+                  kdb.Region(kdb.Box(35, 35, 45, 45)))  # 壁 15nm
+        problem = _problem(region)
+        result = optimize_macro(problem, _PhaseModel([_ones, _ones]),
+                                _config(iterations=2, initial_step_dbu=10.0),
+                                TargetCanvasCache(0))
+        assert result.stop_reason == "invalid_geometry"  # 守卫拦截
+        assert "重建失败" in result.stop_detail  # 原因在案
+        assert result.best_round == 0  # 非法候选前的 baseline 保留
+
+    def test_rectangle_edges_crossing_is_invalid_geometry(self):
+        """矩形大幅内移到边交叉/共线退化时重建守卫拦截（真构造）。"""
+        # 矩形 20..60 宽 40；全亮输出 → 全 -1，一步 20nm 内移使四边共线
+        # 交叉：实测重建以「ring 少于三顶点」的 ValueError 形态失败，被
+        # invalid_geometry 路径捕获（更大幅度翻转会被 miter 解析成反向
+        # ring，共线退化是最先触发的守卫形态）。
+        wide = FragmentationConfig(corner_length_dbu=8.0,
+                                   max_segment_length_dbu=16.0,
+                                   max_displacement_dbu=30.0, miter_limit=4.0)
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)), frag=wide)
+        result = optimize_macro(problem, _PhaseModel([_ones, _ones]),
+                                _config(iterations=1, initial_step_dbu=20.0),
+                                TargetCanvasCache(0))
+        assert result.stop_reason == "invalid_geometry"  # 守卫拦截
+        assert result.stop_detail is not None  # 原因在案
+        assert result.best_round == 0  # 非法候选前的 baseline 保留
+        assert len(result.records) == 1  # 退化候选未进入评价
 
 
 class TestRealModelCuda:

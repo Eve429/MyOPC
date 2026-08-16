@@ -21,6 +21,7 @@ from lithography import LithographyModel
 from opc.errors import ReconstructionError
 from opc.input import ownership_canvas, points_to_canvas, rasterize_mask_canvas
 from opc.input.edge import MacroProblem, reconstruct_region
+from opc.input.edge.fragmentation import SegmentGeometry
 from opc.input.edge.sampling import edge_probe_points
 
 # 进度回调类型：参数是本批真正完成评价与释放的 tile 数。
@@ -144,6 +145,7 @@ def evaluate_and_propose(
         target_cache: TargetCanvasCache,
         *,
         can_update: bool,
+        reference: SegmentGeometry | None = None,
         on_tiles_completed: OnTilesCompleted | None = None,
 ) -> SimpleMBOPCStep:
     """评价一个 macro 当前状态，并产生同步 owner 位移提案。"""
@@ -161,8 +163,10 @@ def evaluate_and_propose(
         raise ValueError("模型画布与 problem 画布不一致")
     if not np.isfinite(step_dbu) or step_dbu < 0.0:
         raise ValueError("step_dbu 必须是非负有限数")
-    # 固定几何：参考（零位移）端点与法向只物化一次，探针始终围绕参考边定义。
-    reference = problem.segments.materialize()
+    # 固定几何：参考（零位移）端点与法向只物化一次，探针始终围绕参考边定义；
+    # 多轮迭代经 reference 参数复用同一物化结果（默认 None 时本调用自算）。
+    if reference is None:  # 独立调用方未提供
+        reference = problem.segments.materialize()  # 现算参考几何
     macro_id = problem.macro.macro_id  # cache 键的 macro 部分
     pixel_dbu = int(problem.macro.pixel_dbu)  # 栅格像素
     max_displacement = float(problem.fragmentation.max_displacement_dbu)  # 位移上限
@@ -243,18 +247,21 @@ def evaluate_and_propose(
                 epe_result = evaluate_edge_probes(  # 阈值用旧默认 0.499
                     target_tensor, nominal, batch_index_tensor, inner_xy, outer_xy)
                 totals["epe"] += epe_result.violation_count  # 违规段数
-                cursor = 0  # 探针游标（按 core 顺序回切）
-                for _, idx in probes:
-                    piece = slice(cursor, cursor + len(idx))  # 该 core 的探针段
-                    cursor += len(idx)
-                    totals["valid"] += int(epe_result.valid[piece].sum().item())
-                    totals["ambiguous"] += int(
-                        epe_result.ambiguous[piece].sum().item())
-                    if can_update:  # 方向只写提案缓冲，current 全程只读
-                        directions = (  # -1/0/+1 方向 × 当前提案步长
-                            epe_result.directions[piece].cpu().numpy()
-                            .astype(np.float64) * step_dbu)
-                        next_values[idx] += directions  # 在 current 基础上移动
+                # 回切整 batch 化：每张小张量只做一次设备→主机搬运，随后全部
+                # 统计与写回在 numpy 侧切片完成，避免逐 core 的 GPU 同步。
+                valid_all = epe_result.valid.cpu().numpy()  # 一次取回
+                ambiguous_all = epe_result.ambiguous.cpu().numpy()  # 一次取回
+                totals["valid"] += int(valid_all.sum())  # 整批求和
+                totals["ambiguous"] += int(ambiguous_all.sum())  # 整批求和
+                if can_update:  # 方向只写提案缓冲，current 全程只读
+                    moves = (  # -1/0/+1 方向 × 当前提案步长（一次取回）
+                        epe_result.directions.cpu().numpy()
+                        .astype(np.float64) * step_dbu)
+                    cursor = 0  # 探针游标（按 core 顺序回切）
+                    for _, idx in probes:
+                        piece = slice(cursor, cursor + len(idx))  # 该 core 段
+                        cursor += len(idx)
+                        next_values[idx] += moves[piece]  # 在 current 基础上移动
                         written[idx] = True  # 唯一写标记
             # 释放：批结束只保留标量与方向，GPU 张量立即失去引用。
             del printed, nominal, mask_tensor, target_tensor, ownership_tensor
@@ -299,13 +306,17 @@ def optimize_macro(
     segment_count = problem.segments.segment_count  # 段数 S
     owner_count = int(np.count_nonzero(problem.owner_indices >= 0))  # owner 段数
     zeros = np.zeros(segment_count, dtype=np.float64)  # 零位移状态
+    # 参考几何整个迭代只物化一次：baseline 与每个移动后状态的评价复用同一
+    # 份端点/法向（探针始终围绕参考边定义，与位移状态无关）。
+    reference = problem.segments.materialize()  # 唯一物化
     # baseline：零位移重建并评价；它同时产生 Round 1 提案。
     started = time.perf_counter()  # baseline 计时
     baseline_region = reconstruct_region(problem, zeros)  # 零位移候选
     pending_step = step_for(1)  # baseline 提案使用的步长
     proposal = evaluate_and_propose(  # 评价 + Round 1 提案
         problem, baseline_region, zeros, model, config, pending_step,
-        target_cache, can_update=True, on_tiles_completed=on_tiles_completed)
+        target_cache, can_update=True, reference=reference,
+        on_tiles_completed=on_tiles_completed)
     records = [IterationRecord(  # records[0] 固定是 baseline
         round_index=0, step_dbu=0.0, epe=proposal.epe, l2=proposal.l2,
         pvband=proposal.pvband, valid_probes=proposal.valid_probes,
@@ -329,18 +340,31 @@ def optimize_macro(
         for round_index in range(1, config.iterations + 1):  # 移动后状态轮次
             candidate = proposal.next_displacements  # 上一评价的提案
             candidate_moved = proposal.moved_segments  # 该提案改变的段数
+            if not candidate_moved:  # 提案与当前完全相同
+                # 同一状态再评一次不产生任何新信息（指标、几何全部不变），
+                # 直接停止，省去一整轮重建与光刻前向。
+                stop_reason = "no_update"
+                break
             started = time.perf_counter()  # 本轮计时（重建 + 评价）
             try:  # 候选必须先通过方向/hole/有效性守卫
                 candidate_region = reconstruct_region(problem, candidate)
             except (ValueError, ReconstructionError) as exc:  # 非法几何终止
+                # 捕获 ValueError 有实测依据：几何退化（如共线 ring 少于三
+                # 顶点）会以 ValueError 从 KLayout 数组校验冒出，并非只有
+                # ReconstructionError；把它包装进 ReconstructionError 需要
+                # 改 reconstruction.py（本轮不修改清单），故维持宽捕获。
+                # 位移 shape/有限性由 evaluate_and_propose 入口契约先行拦截，
+                # 此处的 ValueError 几乎只可能是几何退化。
                 stop_reason = "invalid_geometry"  # 保留最后合法 best
                 stop_detail = (  # 错误原因不得吞掉
                     f"round {round_index} 候选重建失败：{exc}")
                 break
-            pending_next = step_for(round_index + 1)  # 本轮评价的提案步长
-            proposal = evaluate_and_propose(  # 移动后状态评价 + 下一提案
+            can_propose = round_index < config.iterations  # 末轮不再生成
+            pending_next = step_for(round_index + 1)  # 被丢弃提案的步长（末轮）
+            proposal = evaluate_and_propose(  # 移动后状态评价（末轮纯评价）
                 problem, candidate_region, candidate, model, config,
-                pending_next, target_cache, can_update=True,
+                pending_next, target_cache, can_update=can_propose,
+                reference=reference,
                 on_tiles_completed=on_tiles_completed)
             records.append(IterationRecord(  # Round N 指标属第 N 次位移后状态
                 round_index=round_index, step_dbu=pending_step, epe=proposal.epe,
@@ -364,7 +388,8 @@ def optimize_macro(
             if proposal.epe == 0:  # 无违规即达目的
                 stop_reason = "zero_epe"
                 break
-            if proposal.moved_segments == 0:  # 提案不再移动任何段
+            if can_propose and proposal.moved_segments == 0:  # 提案不再移动
+                # 末轮 can_update=False 时 moved 恒 0，不构成 no_update 证据。
                 stop_reason = "no_update"
                 break
         if stop_reason is None:  # 轮次自然用尽

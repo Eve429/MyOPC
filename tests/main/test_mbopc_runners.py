@@ -300,9 +300,11 @@ class TestSingleVersusMulti:
         difference = int(  # 差异面积（独立 context 取舍的量化结果）
             (_coverage(single["final_layout"]) ^
              _coverage(multi["final_layout"])).area())
-        # 只要求差异被量化为有限非负值；正差异正体现固定参考 context 的代价。
-        assert difference >= 0
-        print(f"single vs multi 差异面积：{difference} DBU²")
+        # 上界断言：差异面积不可能超过源图形总面积（防边界差异爆炸性回归），
+        # 精确数值仍打印量化（固定参考 context 代价的观测值）。
+        source_area = int(_coverage(gds).area())  # 源图形总面积
+        assert 0 <= difference <= source_area  # 非恒真：拦截差异扩散
+        print(f"single vs multi 差异面积：{difference} DBU²（源面积 {source_area}）")
 
 
 class TestDirectExecution:

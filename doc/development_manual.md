@@ -63,14 +63,17 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 | 两级网格规划 | `opc.input.plan_macros` → `MacroSpec`（`core(i)` 即时构造 `CoreSpec`） |
 | 单 macro 参考问题 | `opc.input.edge.prepare_macro_problem` / `MacroProblem.save/load` |
 | 位移重建 | `reconstruct_contours/reconstruct_region(problem, displacements)` |
-| 居中光刻画布 | `rasterize_mask_canvas` / `ownership_canvas`（映射公式见其注释） |
+| 居中光刻画布 | `rasterize_mask_canvas` / `ownership_canvas` |
+| DBU 点→画布坐标 | `opc.input.points_to_canvas`（含 padding 项，禁手写公式） |
 | 最终双模式写出 | `geometry.PatchWriter.write_macro_results` |
-| 配置结构 | `main.run_macro_pipeline.PipelineConfig` / `load_config` |
+| 宏管线共享配置 | `main._macro_pipeline.MacroPipelineConfig` / `load_macro_config`（extra_sections 放行流程段） |
+| MB-OPC 运行配置 | `main._mbopc_workflow.MBOPCRunConfig` / `load_config` |
 
 ## 5. 光刻模型 lithography（ICCAD13，2026-08-16 迁移）
 
 - 唯一具体模型 `ICCAD13Lithography(torch.nn.Module)`（`lithography/iccad13.py`）；
-  不建 Protocol、注册器或抽象基类（等第二个真实模型再抽契约）。
+  `lithography/contracts.py` 的 `LithographyModel` 薄 Protocol 已随 simple
+  MB-OPC 建立（首个求解器调用方），无注册器或抽象基类。
 - 输入永远是**透光率 tensor**：`1.0=透光，0.0=不透光`，单张 `[H,W]` 或批量
   `[B,H,W]`，H/W ≤ 256；连续 0~1 值合法（模型不强制二值化）。
 - 版图、极性、DBU、居中由 layout/geometry/opc.input 在模型之前完成；
@@ -118,9 +121,15 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_multi_macro.py config/mbop
 - **算法**：`evaluate_and_propose()` 评价一个状态（target/current/ownership
   三画布 → no_grad 三条件一次 forward_many → L2/PVBand 只在 ownership 像素
   → owner 探针 `edge_probe_points` + `points_to_canvas` 批量 EPE →
-  next = current + {-1,0,+1}×step，批后释放张量再报进度）；
-  `optimize_macro()` baseline（records[0]）起每轮一次评价同时产生下轮提案，
-  步长按 `decay_every` 减半，EPE 严格更小才更新 best（平局保留早轮）。
+  next = current + {-1,0,+1}×step，批后释放张量再报进度；参考几何由
+  `reference` 参数在整迭代内复用一份）；
+  `optimize_macro()` baseline（records[0]）起每轮一次评价同时产生下轮提案
+  （末轮纯评价不提案、无变化提案直接停止），步长按 `decay_every` 减半，
+  EPE 严格更小才更新 best（平局保留早轮）。
+- **停止状态**：`zero_epe`（无违规）/ `no_update`（提案与当前一致）/
+  `invalid_geometry`（候选重建守卫拦截，含 KLayout ValueError 退化形态）/
+  `insufficient_probes`（有 owner 段但有效探针为 0——"无法评价"不是
+  "零违规"，保留 baseline）/ `iteration_limit`。
 - **坐标契约**：探针 DBU→canvas 必须经 `opc.input.points_to_canvas`（含
   居中 padding 项）；不要手写 `(x-left)/pixel-0.5`。
 - **独立 macro 语义**：macro 间不交换中间状态，边界 core 的 context 固定为
@@ -128,7 +137,9 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_multi_macro.py config/mbop
   （显式 macro_id→GDS 映射）。这不是全局同步最优，差异需量化（gcd_45nm：
   single 比 multi 之和小 236 段 EPE，覆盖 XOR 34650860 DBU²）。
 - **内存**：target 用有界 uint8 LRU（`TargetCanvasCache`，key 含 macro id）；
-  GPU 每 batch 只保留当前张量；不保存整张 reticle tensor。
+  GPU 每 batch 只保留当前张量；不保存整张 reticle tensor；最终光刻 PNG 与
+  merge 回读验证均为逐窗口物化（不常驻全量 Region；merge 的 patches 列表
+  持有全部 clipped——PatchWriter 接口属 geometry/，为已知上界）。
 - **产物**：`work_dir/macros/<id>/{result.npz,best.gds,metrics.json}` +
   `final.gds` + 可选 `final_lithography/`（逐 tile nominal/binary PNG +
   manifest）；`[mbopc]` 段 `show_progress` 控制 tqdm（自动测试一律 false）。

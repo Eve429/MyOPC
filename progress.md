@@ -2,6 +2,25 @@
 
 ## 会话记录
 
+### 2026-08-16（会话 8：MB-OPC 审查问题修复）
+
+- 用户提交独立只读审查结论（3 P1 + 5 组 P2 + 测试缺口）；Claude 逐条对照
+  代码原文核实：P1 全部属实、P2 七项属实、两项有保留（ProcessCondition
+  为设计选择、PatchWriter 受 geometry/ 领地限制）。
+- 两批修复：`3725c0e`（P1：insufficient_probes 新停止状态——「无法评价」
+  不再冒充「零违规」；save_final 逐 tile 窗口物化 + merge 验证窗口化 +
+  五处 ±2^30 魔法框换 layer_bbox；_as_int 拒绝 1.5/true 静默截断）→
+  `acfcab0`（P2：reference 复用、EPE 整 batch 回切、无变化提案跳过、
+  末轮纯评价、前置校验、tqdm finally、真构造越界用例与差异上界）。
+- **实测推翻审查一项建议**：except 收窄到 ReconstructionError——几何退化
+  （共线 ring 少于三顶点）以 ValueError 从 KLayout 冒出（−20 位移实测），
+  包装需改 reconstruction.py（不修改清单），维持宽捕获并记录证据；
+  同时发现 −25/−30 翻转会被 miter 解析成反向合法 ring（守卫不触发），
+  测试注释如实记录。
+- 验证：全量 341 passed；gcd_45nm smoke 四 macro best_epe 迁移/P1/P2
+  三版本逐位一致（7263/5904/5625/4884）。
+- 手册与两报告同步审查修复轮；task_plan/findings/progress 更新。
+
 ### 2026-08-16（会话 7：Phase 6A 最简 MB-OPC 迁移）
 
 - 用户批准 `doc/opc/mbopc_migration_design.md` 实施（三路事实核对 + 四处原文

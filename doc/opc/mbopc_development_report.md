@@ -119,7 +119,47 @@ gcd_45nm 最终 XOR 全部不变（TestTwoRounds/TestFinalMerge 全绿 + smoke �
 - 无第二套 raster/求解器入口复用问题：两入口只 import workflow。
 - `00_PAST/`、`layout/`、`geometry/`、`opc/input/edge/` 三文件零改动。
 
-## 8. 已知限制（承设计 §22）
+## 8. 审查修复轮（2026-08-16，用户独立审查后）
+
+用户以只读审查（`.planning/lithography_mbopc_review/`）提出 3 项 P1 与多项
+P2，逐条对照代码原文核实后实施两个修复提交：
+
+- **`3725c0e`（P1 三项）**：
+  1. **insufficient_probes 停止状态**（新算法政策，用户批准）：评价返回
+     `valid_probes==0` 且存在 owner 段时终止并保留 baseline，不再把
+     "无法评价"报成 zero_epe（2nm 壁 + 8nm 探针实测：修复前 zero_epe
+     误报 → 修复后 insufficient_probes，stop_detail 写明探针/段数）；
+     循环内检查先于 best 比较终止（valid==0 时 epe 恒 0 会被误当改善）；
+     空 macro（零段）维持 zero_epe。不选"拒绝 Problem"（窄壁跨 macro
+     无法预检）与"自适应探针距离"（改变评价语义）。
+  2. **几何流式与真实 bounds**：save_final_lithography 改 with 内逐 tile
+     窗口 materialize_intersecting 就地栅格（峰值 O(reticle)→O(tile)，
+     PNG 逐位不变）；merge 回读面积验证改逐 macro ownership 窗口累加
+     （显式裁回 ownership 防跨界重复计数；消除第二个全量 Region，失败可
+     定位 macro）；五处 ±2^30 魔法框 → layer_bbox（GDS int32 域外图形
+     不再静默丢失）。
+  3. **`_as_int` 严格整数校验**：workflow 四字段与 macro_pipeline 的
+     layer/datatype/canvas_pixels 拒绝 TOML 浮点/布尔（1.5/true 原先被
+     int() 静默截断）。
+- **`acfcab0`（P2）**：参考几何整迭代物化一次（reference 参数）；EPE 回切
+  整 batch 化（每张张量一次 .cpu()）；无变化提案直接 no_update 不再重复
+  评价（**行为变化**：no_update 时 records 只含 baseline）；末轮纯评价不
+  生成被丢弃的提案；macro_grid 数量模式配置层前置校验；tqdm try/finally；
+  补齐设计 §16.3 两个真构造越界用例与差异上界断言。
+- **审查建议不采纳一项（有实测证据）**：except 只捕 ReconstructionError——
+  实测几何退化（四边共线，ring 少于三顶点）以 ValueError 从 KLayout 数组
+  校验冒出，包装它需改 `reconstruction.py`（设计 §15.3 不修改清单），故
+  维持 `except (ValueError, ReconstructionError)` 并在代码注释记录依据；
+  更大幅度翻转（−25/−30）会被 miter 解析成反向合法 ring 而不触发守卫，
+  该行为已用测试注释如实记录。
+- **验证**：全量 330 → **341 passed**；gcd_45nm multi smoke 四 macro
+  best_epe 三个版本（迁移后/P1 修复后/P2 修复后）逐位一致
+  （7263/5904/5625/4884），几何与算法路径零漂移。
+- **仍开放（记录不改）**：merge patches 列表持有全部 clipped Region——
+  PatchWriter 接口在 geometry/（用户领地）；ProcessCondition 绑定
+  focus/defocus——设计 §8.1 原文如此，等真实第二模型。
+
+## 9. 已知限制（承设计 §22）
 
 context 光学充分性未证明；离散 EPE 是启发式（gcd_45nm 8 轮未收敛到 0，EPE
 下降但放缓）；相邻 macro 同边段可能形成真实 jog（未平滑）；SREF/AREF 展开

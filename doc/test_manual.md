@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 330 用例）
+# 全量（当前 341 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py
@@ -22,8 +22,8 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 | tests/main | 管线配置校验、阶段产物、双轮状态机、最终合并、单遍入口（34） |
 | tests/lithography | 配置解析、资产哈希/布局、前向数值参考、性能计数、backward 有限差分、CUDA parity、main 直跑（81） |
 | tests/evaluation | L2/PVBand/EPE 指标与方向表、ownership 屏蔽、阈值边界、光刻契约 isinstance（25） |
-| tests/opc/iteration | simple MB-OPC：cache 全路径、入口契约、stub 方向/停止路径、batch/进度/计数、真实 ICCAD13 图形矩阵、CUDA 直通（51） |
-| tests/main/test_mbopc_runners | 单/多 macro 入口端到端：产物与 records 语义、恰一次 merge、正逆序、batch 不变性、invalid 保留 best、差异量化、仓库外直跑、进度开关（21） |
+| tests/opc/iteration | simple MB-OPC：cache 全路径、入口契约、stub 方向/全部停止路径（含 insufficient_probes 与两个真构造越界）、batch/进度/计数、真实 ICCAD13 图形矩阵、CUDA 直通（53） |
+| tests/main/test_mbopc_runners | 单/多 macro 入口端到端：产物与 records 语义、恰一次 merge、正逆序、batch 不变性、invalid 保留 best、差异上界量化、配置类型注入、仓库外直跑、进度开关（23） |
 
 ## 3. 测试纪律
 

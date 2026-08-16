@@ -157,6 +157,38 @@
 | main | 3357 | 验证管线 + MB-OPC 两入口 ✅；旧入口剩余待评审 |
 | tests | 4177（旧） | 按批次对照移植（新树 330 用例） |
 
+## MB-OPC 审查修复轮事实（2026-08-16）
+
+- **「无法评价 ≠ 零违规」**：valid_probes==0 时 epe 恒 0（violation 只在
+  有效探针上累计），旧逻辑把探针全无效（2nm 壁 + 8nm 探针穿壁）判成
+  zero_epe。修复为 insufficient_probes 停止状态；循环内检查必须放在 best
+  比较之前（valid==0 的 epe=0 会被 epe<best 误当改善）。空 macro（零段）
+  的 zero_epe 语义正确（无违规对象），两者必须区分。
+- **几何退化的异常形态**：reconstruct_region 的越界守卫不止抛
+  ReconstructionError——四边共线退化（位移 −20）以 ValueError
+  （"every ring must contain at least three vertices"）从 KLayout 数组
+  校验冒出；且更大幅度（−25/−30）的边交叉会被 miter 解析成**反向合法
+  ring**（正面积、不触发守卫）。测试构造越界场景时用 −20 的共线退化
+  （最先触发的守卫形态），不要用 −30 翻转（守卫不炸）。
+- **窗口物化防重复计数**：merge 回读验证逐 macro 窗口累加时，
+  materialize_intersecting 不裁剪——跨界 polygon 伸出窗口的部分会被
+  相邻窗口各算一次，必须显式 `& kdb.Region(ownership)` 裁回（与主路径
+  clipped 同款）。
+- **±2^30 魔法框的真实风险**：GDS int32 域 ±2^31，固定 ±2^30 只盖一半，
+  域外图形静默不进 Region（无报错的数据损坏）；正确写法是
+  `db.layer_bbox(layer)`（原生逐层包络，图形必然全含）。
+- **TOML int() 静默截断**：`int(1.5)→1`、`int(True)→1`；配置层整数必须
+  `isinstance(v, int) and not isinstance(v, bool)`（_as_int）。
+- **stub 方向构造的三个变换**：_zero（全暗→全 +1 外移）、_ones（全亮→
+  全 -1 内移）、_invert（反相→全 ambiguous 方向 0）；大幅移动后参考探针
+  的判定基于 printed（模型输出）而非 mask——_ones 在任意位移下都给 -1，
+  是构造越界场景的可靠变换。
+- **无变化提案跳过**：directions 全 0 时 next==current，同一状态再评一轮
+  无新信息（指标几何全同）；跳过后 no_update 的 records 只含 baseline
+  （行为变化，metrics.json 消费方须知）。
+- gcd_45nm smoke 三版本（迁移/P1/P2）四 macro best_epe 逐位一致——
+  几何流式、窗口化验证、性能修复均零算法漂移。
+
 ## 最简 MB-OPC 批次事实（2026-08-16，Phase 6A）
 
 - **评价层默认阈值分叉**：`evaluate_edge_probes` 旧默认 threshold=**0.499**、

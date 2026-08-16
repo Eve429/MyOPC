@@ -7,14 +7,14 @@
 ## 1. 命令与结果
 
 ```text
-pytest -q tests                       330 passed（基线 224 + 106 新增）
+pytest -q tests                       341 passed（迁移 330 + 审查修复轮 11 新增）
 pytest -q tests/evaluation             25 passed
-pytest -q tests/opc/iteration          51 passed
-pytest -q tests/main/test_mbopc_runners.py 21 passed
+pytest -q tests/opc/iteration          53 passed
+pytest -q tests/main/test_mbopc_runners.py 23 passed
 ruff check evaluation lithography opc main tests   All checks passed
 compileall -q evaluation lithography opc main tests  通过
 coverage --source=evaluation → metrics.py 100%（66/66）
-coverage --source=opc/iteration → simple.py 99%（228 语句，缺 266/269 防御行）
+coverage --source=opc/iteration → simple.py 99%（缺两行不可构造防御行）
 ```
 
 ## 2. 套件职责
@@ -56,8 +56,10 @@ gcd_45nm smoke 真实层级版图），本套件用平坦 Region 直构。
 |---|---|
 | zero_epe（baseline） | 直通模型零位移与 target 全同 |
 | zero_epe（循环内） | 步长 4nm（像素整数倍）+ 直通输出两轮归零 |
-| no_update | 反相模型全 ambiguous（方向 0、EPE 非零） |
+| no_update | 反相模型全 ambiguous（方向 0、EPE 非零；提案与当前一致直接停止，records 只含 baseline） |
 | invalid_geometry | 第二个 macro 候选重建抛错：保留 best、stop_detail 含原因、其余 macro 继续、最终合并照常 |
+| invalid_geometry（真构造×2） | 大步长 hull 内移使 hole 越出 hull；一步 20nm 四边共线退化（ValueError 形态，实测记录） |
+| insufficient_probes | 2nm 窄壁 + 8nm 探针距离（审查 P1.1 复现场景）：valid=0/epe=0/保留 baseline/原因在案 |
 | iteration_limit | 持续全暗输出跑满轮次（EPE 平局保留 baseline） |
 
 ## 6. 端到端 smoke（gcd_45nm，CUDA）

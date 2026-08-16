@@ -61,11 +61,19 @@ ILT 属未来方法，各自需要独立设计文档评审后再实施；本轮�
 - 实施六批提交：`2b9194a`（契约）→ `a5509bc`（evaluation）→ `c596d70`
   （居中坐标）→ `71d42ba`（共享生命周期重构，±2/-2 与 gcd XOR 不变）→
   `986cbfd`（求解器）→ `84407e5`（两入口）→ 报告批次（F）。
-- 交付：evaluation/（25 例 100%）+ opc/iteration/mbopc/（51 例，simple.py
-  99%）+ 两入口（21 例）；gcd_45nm CUDA 实测两入口各 ~126s，EPE 逐轮单调
+- 交付：evaluation/（25 例 100%）+ opc/iteration/mbopc/（53 例，simple.py
+  99%）+ 两入口（23 例）；gcd_45nm CUDA 实测两入口各 ~126s，EPE 逐轮单调
   下降；独立 macro 边界代价量化（single 比 multi 之和小 236 段 EPE，
   覆盖 XOR 34650860 DBU²）。
-- 全量 224 → **330 passed**；偏差与取舍见 `doc/opc/mbopc_development_report.md`。
+- 全量 224 → 330 → **341 passed**；偏差与取舍见
+  `doc/opc/mbopc_development_report.md`。
+- **审查修复轮（2026-08-16）**：用户独立只读审查提出 3 P1 + 多项 P2，
+  逐条核实全部属实后两批修复——`3725c0e`（insufficient_probes 停止状态 /
+  几何流式与 layer_bbox 替换 ±2^30 魔法框 / _as_int 严格整数校验）→
+  `acfcab0`（reference 复用、EPE 整 batch 回切、无变化提案跳过重复评价、
+  末轮纯评价、前置数量校验、tqdm finally、真构造越界用例）。审查一项
+  建议不采纳（except 收窄）有实测反证并记录。gcd_45nm smoke 三版本
+  best_epe 逐位一致。
 
 ### Phase 6B: opc.iteration 剩余（diffopc / ilt）— Status: pending
 - 梯度 MB-OPC 与 ILT 属未来方法；须各自独立设计评审，本轮明确不建空目录。

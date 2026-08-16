@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -23,6 +22,8 @@ from opc.input import ownership_canvas, points_to_canvas, rasterize_mask_canvas
 from opc.input.edge import MacroProblem, reconstruct_region
 from opc.input.edge.fragmentation import SegmentGeometry
 from opc.input.edge.sampling import edge_probe_points
+
+from ._cache import TargetCanvasCache
 
 # 进度回调类型：参数是本批真正完成评价与释放的 tile 数。
 OnTilesCompleted = Callable[[int], None]
@@ -54,46 +55,6 @@ class SimpleMBOPCConfig:
         if (not isinstance(self.target_cache_bytes, int)
                 or self.target_cache_bytes < 0):
             raise ValueError("target_cache_bytes 必须是非负整数")
-
-
-class TargetCanvasCache:
-    """按显式字节上限保存跨状态复用的只读 uint8 target canvas。"""
-
-    def __init__(self, max_bytes: int) -> None:
-        """保存字节上限并建立空的 LRU 容器。"""
-        if not isinstance(max_bytes, int) or max_bytes < 0:
-            raise ValueError("max_bytes 必须是非负整数")
-        self._max_bytes = max_bytes  # 0 表示完全禁用缓存
-        self._entries: OrderedDict[tuple[str, int], NDArray[np.uint8]] = (
-            OrderedDict())  # (macro_id, core_index) → uint8 canvas，最新在尾
-        self._used_bytes = 0  # 当前缓存占用字节数
-
-    def get(self, macro_id: str, core_index: int) -> NDArray[np.uint8] | None:
-        """命中时返回缓存 canvas 并把它标记为最新，未命中返回 None。"""
-        key = (macro_id, core_index)  # key 必须包含 macro ID，防止跨 macro 误用
-        entry = self._entries.get(key)  # 查找
-        if entry is None:  # 未命中
-            return None  # 调用方自行栅格化
-        self._entries.move_to_end(key)  # LRU：刚访问的移到最新端
-        return entry  # 只读语义由调用方遵守
-
-    def put(self, macro_id: str, core_index: int,
-            value: NDArray[np.uint8]) -> None:
-        """写入或替换一个 target canvas，超上限时从最旧端驱逐。"""
-        if self._max_bytes == 0:  # 0 上限禁用缓存
-            return  # 不存任何条目
-        nbytes = int(value.nbytes)  # 以实际数组字节计量
-        if nbytes > self._max_bytes:  # 单项超过总上限则不缓存
-            return  # 宁可每次重算也不驱逐整个缓存
-        key = (macro_id, core_index)  # 缓存键
-        old = self._entries.pop(key, None)  # 替换语义：先移除旧值
-        if old is not None:  # 旧值占用的字节先归还
-            self._used_bytes -= int(old.nbytes)
-        while self._used_bytes + nbytes > self._max_bytes:  # 腾出足够空间
-            _, evicted = self._entries.popitem(last=False)  # 驱逐最旧
-            self._used_bytes -= int(evicted.nbytes)  # 归还字节
-        self._entries[key] = value  # 存入最新端
-        self._used_bytes += nbytes  # 计入占用
 
 
 @dataclass(frozen=True, slots=True)

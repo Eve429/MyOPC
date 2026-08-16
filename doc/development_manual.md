@@ -21,11 +21,15 @@ python -m compileall -q layout geometry opc lithography main tests
 ```text
 layout -> geometry -> opc.input -> opc.input.edge -> main
 lithography -> torch + 标准库（不导入 layout/geometry/opc/evaluation/main）
+evaluation -> torch + 标准库（不导入 layout/geometry/opc/lithography/main）
+opc.iteration.mbopc -> opc.input(.edge) + lithography + evaluation + torch/numpy/kdb
+main -> 上述全部（应用编排）
 ```
 
-基础层不得反向依赖；`opc.iteration.<method>`（未迁移）将来可依赖输入层、
-`lithography` 与 `evaluation`；`main_test_lithography.py` 才桥接
-`opc.input.rasterize_mask_canvas` 与模型。
+基础层不得反向依赖；`opc.iteration.<method>` 可依赖输入层、`lithography` 与
+`evaluation`（消费 `LithographyModel` 契约而非 ICCAD13 具体类型）；
+`main/_macro_pipeline.py` 是两个真实流程（验证管线与 MB-OPC）共用的 macro
+生命周期，`main/_mbopc_workflow.py` 是 MB-OPC 两入口的共享工作流。
 
 ## 3. Macro–Core 管线（直接运行，无需安装）
 
@@ -100,7 +104,36 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
   前分段注释（解释 why：坐标方向、不变量、性能路径、内存上界、边界归属、
   异常原因）。
 
-## 7. 迁移状态
+## 7. 最简 MB-OPC（opc/iteration/mbopc，2026-08-16 迁移）
 
-layout / geometry / opc.input(+edge) / lithography 已完成；evaluation、
-opc.iteration、main 旧入口待迁移。历史架构参照 `00_PAST/doc/`（只读归档）。
+固定步长、EPE 驱动的离散边移动求解器（设计文档
+`doc/opc/mbopc_migration_design.md`，报告 `doc/opc/mbopc_{development,test}_report.md`）。
+
+```bash
+# 单 macro（全 ROI 一个 macro、内部多 tile）/ 多 macro（2×2，每 macro 多 tile）
+D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_single_macro.py config/mbopc_single_macro.toml
+D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_multi_macro.py config/mbopc_multi_macro.toml
+```
+
+- **算法**：`evaluate_and_propose()` 评价一个状态（target/current/ownership
+  三画布 → no_grad 三条件一次 forward_many → L2/PVBand 只在 ownership 像素
+  → owner 探针 `edge_probe_points` + `points_to_canvas` 批量 EPE →
+  next = current + {-1,0,+1}×step，批后释放张量再报进度）；
+  `optimize_macro()` baseline（records[0]）起每轮一次评价同时产生下轮提案，
+  步长按 `decay_every` 减半，EPE 严格更小才更新 best（平局保留早轮）。
+- **坐标契约**：探针 DBU→canvas 必须经 `opc.input.points_to_canvas`（含
+  居中 padding 项）；不要手写 `(x-left)/pixel-0.5`。
+- **独立 macro 语义**：macro 间不交换中间状态，边界 core 的 context 固定为
+  邻区参考几何；全部 macro 完成后只调用一次 `merge_macro_results`
+  （显式 macro_id→GDS 映射）。这不是全局同步最优，差异需量化（gcd_45nm：
+  single 比 multi 之和小 236 段 EPE，覆盖 XOR 34650860 DBU²）。
+- **内存**：target 用有界 uint8 LRU（`TargetCanvasCache`，key 含 macro id）；
+  GPU 每 batch 只保留当前张量；不保存整张 reticle tensor。
+- **产物**：`work_dir/macros/<id>/{result.npz,best.gds,metrics.json}` +
+  `final.gds` + 可选 `final_lithography/`（逐 tile nominal/binary PNG +
+  manifest）；`[mbopc]` 段 `show_progress` 控制 tqdm（自动测试一律 false）。
+
+## 8. 迁移状态
+
+layout / geometry / opc.input(+edge) / lithography / evaluation / opc.iteration.mbopc
+已完成；diffopc、ilt 与 main 旧入口待迁移。历史架构参照 `00_PAST/doc/`（只读归档）。

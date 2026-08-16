@@ -2,6 +2,25 @@
 
 ## 会话记录
 
+### 2026-08-16（会话 7：Phase 6A 最简 MB-OPC 迁移）
+
+- 用户批准 `doc/opc/mbopc_migration_design.md` 实施（三路事实核对 + 四处原文
+  精读：无算法/接口错误；两项裁决——EPE threshold 保留旧值 0.499、tqdm 实测
+  已在环境；§3.4 光刻未实施已过时但 API 吻合无需对齐）。
+- 实施六批 A–F：evaluation+契约（2 提交）→ points_to_canvas → 共享 macro
+  生命周期重构（±2/-2 与 gcd XOR 验证不变）→ 求解器 simple.py → 单/多
+  macro 两入口 → 端到端验证与报告。
+- 提交：`2b9194a`/`a5509bc`（A）→ `c596d70`（B）→ `71d42ba`（C）→
+  `986cbfd`（D）→ `84407e5`（E）→ 报告批次（F，本批）。
+- **实施中真实 bug 一枚**：方向写入漏乘步长（±1 DBU 而非 ±step），测试
+  `values==2.0` 拦截后修正为 `next += directions*step`；连同 stub 直通模型
+  的像素量化陷阱、invalid 测试的参考重建计数陷阱一并记 findings。
+- **端到端**（gcd_45nm CUDA 870 tile）：multi 126.0s（4 macro EPE
+  37743→7263 等逐轮单调降）、single 126.6s（128227→23440）；独立 macro
+  代价量化：single 比 multi 之和小 236 段 EPE、覆盖 XOR 34650860 DBU²。
+- 测试基线 224 → **330 passed**；evaluation coverage 100%、simple.py 99%
+  （仅两行不可构造的防御 RuntimeError）；两份报告 + 手册 + 规划同步。
+
 ### 2026-08-16（会话 6：Phase 5A lithography 迁移）
 
 - 用户批准 `doc/lithography/lithography_migration_design.md` 实施（先做三路事实

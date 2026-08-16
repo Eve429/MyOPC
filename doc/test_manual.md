@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 224 用例）
+# 全量（当前 330 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py
@@ -18,9 +18,12 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 |---|---|
 | tests/layout | 版图打开/查询/物化/GLP（27） |
 | tests/geometry | 轮廓提取、校验、Patch、栅格化（25） |
-| tests/opc/input | 两级网格规划与校验、居中 canvas 与极性、MacroProblem 与 NPZ（40） |
+| tests/opc/input | 两级网格规划与校验、居中 canvas 与极性、points_to_canvas、MacroProblem 与 NPZ（49） |
 | tests/main | 管线配置校验、阶段产物、双轮状态机、最终合并、单遍入口（34） |
 | tests/lithography | 配置解析、资产哈希/布局、前向数值参考、性能计数、backward 有限差分、CUDA parity、main 直跑（81） |
+| tests/evaluation | L2/PVBand/EPE 指标与方向表、ownership 屏蔽、阈值边界、光刻契约 isinstance（25） |
+| tests/opc/iteration | simple MB-OPC：cache 全路径、入口契约、stub 方向/停止路径、batch/进度/计数、真实 ICCAD13 图形矩阵、CUDA 直通（51） |
+| tests/main/test_mbopc_runners | 单/多 macro 入口端到端：产物与 records 语义、恰一次 merge、正逆序、batch 不变性、invalid 保留 best、差异量化、仓库外直跑、进度开关（21） |
 
 ## 3. 测试纪律
 
@@ -59,7 +62,21 @@ D:/app/miniforge/envs/myopc/python.exe -m coverage run --source=lithography -m p
 D:/app/miniforge/envs/myopc/python.exe -m coverage report -m
 ```
 
-## 5. 管线 smoke 验收
+## 5. MB-OPC 入口 smoke（2026-08-16）
+
+```bash
+D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_single_macro.py config/mbopc_single_macro.toml
+D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_multi_macro.py config/mbopc_multi_macro.toml
+```
+
+通过标准：退出码 0；摘要含 device、每 macro `best_round/best_epe/stop`、
+合并耗时与最终版图；`work_dir` 下 plan.json、problems/、macros/<id>/
+{result.npz,best.gds,metrics.json}、summary.json、final.gds；
+`save_final_lithography=true` 时 final_lithography/ 有逐 tile PNG 与
+manifest。gcd_45nm 默认参数 CUDA 实测约 126s（multi 870 tile，EPE 逐轮下降，
+报告见 `doc/opc/mbopc_test_report.md`）。产物目录不提交。
+
+## 6. 管线 smoke 验收
 
 ```bash
 D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_pipeline.toml
@@ -76,7 +93,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 产物目录不提交；smoke 最终版图按 TOML 相对路径落在 `config/` 下时验证后
 删除。
 
-## 6. 已知口径
+## 7. 已知口径
 
 - `merge_peak_rss_bytes` 为合并完成后即时采样（psutil 无历史峰值接口），
   如实反映在测试报告。

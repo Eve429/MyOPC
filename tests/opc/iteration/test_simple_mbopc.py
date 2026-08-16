@@ -429,6 +429,15 @@ class TestOptimizeMacro:
         assert len(result.records) == 2  # baseline + Round 1（无移动再评价一次）
         assert result.records[1].moved_segments == 0
 
+    def test_zero_epe_during_iteration_with_pixel_aligned_step(self):
+        """步长为像素整数倍时移动后直通输出达成零违规（循环内 zero_epe）。"""
+        result = self._run(_PhaseModel([_zero, _identity, _identity]),
+                           iterations=2, initial_step_dbu=4.0)
+        assert result.stop_reason == "zero_epe"
+        assert len(result.records) == 3  # baseline + 两轮（Round 2 归零）
+        assert result.records[-1].epe == 0  # 最后一轮零违规
+        assert result.best_round == 2
+
     def test_iteration_limit_records_all_rounds(self):
         """持续违规且持续移动时跑满轮次并按 iteration_limit 停止。"""
         result = self._run(_PhaseModel([_zero, _zero, _zero, _zero]),

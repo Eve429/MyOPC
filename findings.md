@@ -150,9 +150,47 @@
 | layout | 616 | ✅ 已迁移 |
 | geometry | 495 | ✅ 已迁移 |
 | lithography | 318 | ✅ 已迁移（Phase 5A，重写为 ~370 行 + main 入口 + 81 测试） |
-| evaluation | 153 | 待迁移 |
-| opc/input | 1315 | 复制到新树，未适配 |
-| opc/input/edge | 758 | 复制到新树，未适配 |
-| opc/iteration | 1670 | 待迁移 |
-| main | 3357 | 待迁移 |
-| tests | 4177（旧） | 按批次对照移植 |
+| evaluation | 153 | ✅ 已迁移（Phase 6A 最小子集：metrics 100% coverage） |
+| opc/input | 1315 | ✅ 已迁移（Phase 4 重构为 Macro–Core） |
+| opc/input/edge | 758 | ✅ 已迁移（Phase 4） |
+| opc/iteration | 1670 | mbopc ✅ 已迁移（Phase 6A，simple.py ~430 行）；diffopc/ilt 待独立设计 |
+| main | 3357 | 验证管线 + MB-OPC 两入口 ✅；旧入口剩余待评审 |
+| tests | 4177（旧） | 按批次对照移植（新树 330 用例） |
+
+## 最简 MB-OPC 批次事实（2026-08-16，Phase 6A）
+
+- **评价层默认阈值分叉**：`evaluate_edge_probes` 旧默认 threshold=**0.499**、
+  L2/PVBand=0.5（设计文档 §8.2 误写 0.5，已裁决保留 0.499——0.4995 这类
+  边界灰度在两阈值下打印判定相反，测试固化该差异）。
+- **探针坐标必须过 `points_to_canvas`**：旧 solver 公式
+  `(x-left)/pixel-0.5` 与旧 raster 自洽（旧契约 tile+2×halo 恰满 256 画布、
+  无 padding）；新 Macro–Core 的 228px 居中 + 14px padding 下必须补
+  `+low_x/+low_y`，否则探针整体向左下偏 14 像素。ownership 全部 True 像素
+  中心整数回映是批量一致性锚点。
+- **方向写入漏乘步长是首版真实 bug**：`next[idx]=directions` 会把步长丢成
+  ±1 DBU；正确为 `next[idx] += directions.astype(f64)*step`（测试
+  `values==2.0` 一步拦截）。
+- **stub 直通模型的量化陷阱**：`nominal==mask` 时零位移无违规成立（同图同
+  采样），但**移动后**的直通输出因边界半像素灰度（step 非像素整数倍）会残留
+  少量 outer 违规——「移动后归零」测试必须用像素整数倍步长（step=4×pixel=4）
+  构造，否则断言脆弱。
+- **invalid_geometry 测试的重建计数陷阱**：evaluate_and_propose 内 cache miss
+  会重建零位移参考 Region（cache 预算 0 时每次评价都重建），monkeypatch
+  reconstruct 计数会混入参考重建；按「首个非零位移候选」判别而非纯计数。
+- **独立 macro 边界代价实测**（gcd_45nm CUDA，870 tile）：single（全 ROI 一
+  macro）总 EPE 23440 vs multi（2×2）之和 23676——差 236 段（~1.0%）；
+  最终覆盖 XOR 34650860 DBU²。EPE 逐轮单调下降但 8 轮未归零（启发式已知
+  行为）。两入口各 ~126s。
+- **merge 显式映射重构**：`merge_macro_results(plan, {macro_id: Path}, out,
+  cell_mode)` 不读 result/不猜路径/键集必须与 plan 一致；轮次一致性校验
+  （防旧轮 GDS 冒充最新）归验证 runner 的 `collect_round_macro_gds`。
+  重构后 +2/-2 与 gcd XOR 零变化（TestTwoRounds/TestFinalMerge 全绿）。
+- **load_macro_config 的段白名单机制**：共享六段键校验 + `extra_sections`
+  放行流程专属段（iteration/mbopc），拼错段名进不了任何白名单；段内键由
+  各流程 loader 自校验。
+- **plan.json 不存 macro 切线**：save_final_lithography 用独立规整 tile 网格
+  （单 macro 全 ROI 按 core 切分）并写入 manifest 对账；MacroProblem 不含
+  dbu_um，GDS 写出函数必须由调用方传 dbu（solve_macro 同款补参）。
+- simple.py coverage 99%：缺两行防御 RuntimeError（需破坏构造期不变量，
+  不可构造）；evaluation metrics 100%。
+

@@ -7,9 +7,8 @@
 
 ## Next Step
 
-**Phase 5B（evaluation）**：153 行纯消费者层；独立评审后再迁移设计。
-lithography 已完成（见 Phase 5A），evaluation 将消费
-`ICCAD13Lithography.forward_many` 的连续胶图输出。
+**Phase 6 剩余（diffopc / ilt）**：mbopc 已完成（Phase 6A）。梯度 MB-OPC 与
+ILT 属未来方法，各自需要独立设计文档评审后再实施；本轮明确不建空目录。
 
 ## Phases
 
@@ -51,16 +50,29 @@ lithography 已完成（见 Phase 5A），evaluation 将消费
   DLL 缺失实际复现后按设计 §11.7 授权加回最小 Windows 修复。
 - 全量 143 → **224 passed**。
 
-### Phase 5B: evaluation — Status: pending
-- 153 行，纯消费者层；待独立评审。
+### Phase 5B: evaluation — Status: complete（并入 Phase 6A 实施）
+- 153 行纯消费者层；由 mbopc 迁移设计 §8.2 定义最小子集（L2/PVBand/EPE，
+  不迁 shot），随 Phase 6A 阶段 A 迁移并配 25 用例（coverage 100%）。
 
-### Phase 6: opc.iteration — Status: pending
-- 1670 行，三种求解器（mbopc/diffopc/ilt）；须遵守 Macro–Core 全局轮次屏障
-  （设计文档 §20.3）。
+### Phase 6A: opc.iteration.mbopc（最简 MB-OPC）— Status: complete
+- 依据 `doc/opc/mbopc_migration_design.md`（用户 2026-08-16 批准）：
+  固定步长、EPE 驱动离散边移动；evaluation + LithographyModel 契约 +
+  points_to_canvas + 共享 macro 生命周期 + 求解器 + 单/多 macro 两入口。
+- 实施六批提交：`2b9194a`（契约）→ `a5509bc`（evaluation）→ `c596d70`
+  （居中坐标）→ `71d42ba`（共享生命周期重构，±2/-2 与 gcd XOR 不变）→
+  `986cbfd`（求解器）→ `84407e5`（两入口）→ 报告批次（F）。
+- 交付：evaluation/（25 例 100%）+ opc/iteration/mbopc/（51 例，simple.py
+  99%）+ 两入口（21 例）；gcd_45nm CUDA 实测两入口各 ~126s，EPE 逐轮单调
+  下降；独立 macro 边界代价量化（single 比 multi 之和小 236 段 EPE，
+  覆盖 XOR 34650860 DBU²）。
+- 全量 224 → **330 passed**；偏差与取舍见 `doc/opc/mbopc_development_report.md`。
+
+### Phase 6B: opc.iteration 剩余（diffopc / ilt）— Status: pending
+- 梯度 MB-OPC 与 ILT 属未来方法；须各自独立设计评审，本轮明确不建空目录。
 
 ### Phase 7: main 入口 + 收尾审计 — Status: pending
-- 旧 3357 行接线层已被 `main/run_macro_pipeline.py` 取代大半；剩余入口待评审。
-- 最终全量回归 + 交付审计（未用函数/重复实现/异常入口）。
+- 旧 3357 行接线层已被 `main/run_macro_pipeline.py` + MB-OPC 两入口取代大半；
+  剩余入口待评审。最终全量回归 + 交付审计（未用函数/重复实现/异常入口）。
 
 ## Decisions Made
 

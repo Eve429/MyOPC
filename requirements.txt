@@ -1,0 +1,12 @@
+# MyOPC 依赖清单（myopc conda env，Python >= 3.12；本项目免安装直跑，
+# 依赖通过环境提供，本文件用于环境复现与依赖声明）。
+# 实测版本（2026-08-16）：klayout 0.30.10 / numpy 2.5.1 / pillow 12.3.0
+#                         / psutil 7.2.2 / torch 2.5.1 + CUDA 12.4。
+# torch 的 CUDA/CPU 构建选择见 doc/development_manual.md §5；
+# 不在本文件硬编码任何私有下载源。
+
+klayout
+numpy
+pillow
+psutil
+torch

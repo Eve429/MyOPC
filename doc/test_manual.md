@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 115 用例）
+# 全量（当前 224 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py
@@ -19,7 +19,8 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 | tests/layout | 版图打开/查询/物化/GLP（27） |
 | tests/geometry | 轮廓提取、校验、Patch、栅格化（25） |
 | tests/opc/input | 两级网格规划与校验、居中 canvas 与极性、MacroProblem 与 NPZ（40） |
-| tests/main | 管线配置校验、阶段产物、双轮状态机、最终合并（23） |
+| tests/main | 管线配置校验、阶段产物、双轮状态机、最终合并、单遍入口（34） |
+| tests/lithography | 配置解析、资产哈希/布局、前向数值参考、性能计数、backward 有限差分、CUDA parity、main 直跑（81） |
 
 ## 3. 测试纪律
 
@@ -30,8 +31,28 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 - 阶段边界用 monkeypatch 调用计数证明，不用注释或口头约定。
 - bug 修复必须携带可复现回归用例；构造期不变量（如 CSR 边界）在
   `__post_init__` 校验，测试负责注入破坏值验证拒绝路径。
+- lithography 数值纪律：CPU 参考值（三工艺角 sums）与 OpenILT 同资产
+  基线绑定（实测逐位相等）；资产 SHA-256 是硬断言，漂移即说明数值参考
+  全部失效。
 
-## 4. 管线 smoke 验收
+## 4. 光刻模型直跑验证
+
+```bash
+D:/app/miniforge/envs/myopc/python.exe main/main_test_lithography.py
+```
+
+通过标准：退出码 0；输出包含 device、三工艺角 range/sum/曝光像素、
+batch `(2, 256, 256)`、`梯度 finite=True`；CUDA 时附 elapsed 与 peak
+allocated。从仓库外工作目录执行同样必须成功（sys.path 自引导）。
+
+coverage：
+
+```bash
+D:/app/miniforge/envs/myopc/python.exe -m coverage run --source=lithography -m pytest -q tests/lithography
+D:/app/miniforge/envs/myopc/python.exe -m coverage report -m
+```
+
+## 5. 管线 smoke 验收
 
 ```bash
 D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_pipeline.toml
@@ -48,9 +69,10 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 产物目录不提交；smoke 最终版图按 TOML 相对路径落在 `config/` 下时验证后
 删除。
 
-## 5. 已知口径
+## 6. 已知口径
 
 - `merge_peak_rss_bytes` 为合并完成后即时采样（psutil 无历史峰值接口），
   如实反映在测试报告。
 - 完整 `ruff check .` 在未纳入本任务的 `geometry/contour.py` 有一个既存
-  导入空行告警；专项范围（layout/geometry/opc/main/tests）必须全绿。
+  导入空行告警；专项范围（layout/geometry/opc/lithography/main/tests）
+  必须全绿。

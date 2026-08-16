@@ -7,10 +7,9 @@
 
 ## Next Step
 
-**Phase 5（lithography + evaluation）**：318 + 153 行纯消费者层迁移。注意 opc.input
-已重构为 Macro–Core 管线（见 Phase 4），lithography 的 ICCAD13 画布契约
-（canvas 256、核 35×35×24、norm="forward"）已由 `opc/input/raster.py` 居中
-canvas 对齐，迁移时以 `doc/macro_core_pipeline_design.md` §6 为准。
+**Phase 5B（evaluation）**：153 行纯消费者层；独立评审后再迁移设计。
+lithography 已完成（见 Phase 5A），evaluation 将消费
+`ICCAD13Lithography.forward_many` 的连续胶图输出。
 
 ## Phases
 
@@ -40,8 +39,20 @@ canvas 对齐，迁移时以 `doc/macro_core_pipeline_design.md` §6 为准。
   对照、coverage 审计（84%），并连带修复两个新暴露 bug（切线交点重复分裂
   点、空 macro 崩溃）。审查后 §21 完成标准逐项通过；细节见两份报告。
 
-### Phase 5: lithography + evaluation — Status: pending
-- 318 + 153 行，纯消费者层；ICCAD13 画布契约（canvas 256、核 35×35×24、norm="forward"）。
+### Phase 5A: lithography — Status: complete
+- 依据 `doc/lithography/lithography_migration_design.md`（用户 2026-08-16 批准）：
+  只迁 ICCAD13 Hopkins 模型（一个具体类 + 四资产 + 原生 autograd 前向 +
+  main 验证入口）；不迁 Protocol/手写 backward/CT/TorchLitho/resize 分支。
+- 实施四批提交：`6338710`（配置/资产）→ `8773e37`（可微批量前向）→
+  `5f0747a`（main 入口）→ 报告批次（D）。
+- 交付：`lithography/`（三公共类型）+ `main/main_test_lithography.py` +
+  `tests/lithography/` 81 例（coverage 100%）；CPU 三工艺角 sums 与
+  OpenILT 基线**逐位复现**；CUDA（GTX 1650）parity 1e-4 通过；
+  DLL 缺失实际复现后按设计 §11.7 授权加回最小 Windows 修复。
+- 全量 143 → **224 passed**。
+
+### Phase 5B: evaluation — Status: pending
+- 153 行，纯消费者层；待独立评审。
 
 ### Phase 6: opc.iteration — Status: pending
 - 1670 行，三种求解器（mbopc/diffopc/ilt）；须遵守 Macro–Core 全局轮次屏障

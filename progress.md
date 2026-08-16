@@ -2,6 +2,23 @@
 
 ## 会话记录
 
+### 2026-08-16（会话 6：Phase 5A lithography 迁移）
+
+- 用户批准 `doc/lithography/lithography_migration_design.md` 实施（先做三路事实
+  核对：§3 全部吻合、无设计错误；基线实测 143 passed）。
+- 实施四批 A–D：配置/资产 → 可微批量前向 → main 验证入口 → 报告与简化审计。
+- 提交：`6338710`（配置+资产+43 例）→ `8773e37`（前向+27 例）→
+  `5f0747a`（main 入口+3 例）→ 报告批次（补 11 个防御分支用例 + requirements
+  + 手册 + 两报告 + 规划同步）。
+- **数值验收**：CPU 三工艺角 sums 与 OpenILT 基线逐位相等（差 0.0）；
+  有限差分/批量一致性/CUDA parity（GTX 1650，1e-4）全过。
+- **实施中实际复现 Windows DLL 缺失**（nvrtc-builtins64_124.dll），按设计
+  §11.7 预设授权加回旧版最小修复（模块级 DLL 目录注册）。
+- 测试基线 143 → **224 passed**；lithography coverage **100%**（204/204）。
+- gcd_45nm smoke：不适用（本批无管线改动）；main 直跑 172.4ms / 32MiB。
+
+## 会话记录
+
 ### 2026-08-16（会话 5：run_single_pass 单遍偏置扩张入口）
 
 - 用户先审查设计文档 `doc/single_pass_bias_design.md` 后放行（含两项决定：

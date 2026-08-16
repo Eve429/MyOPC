@@ -80,6 +80,19 @@ class TestConfigParsing:
         with pytest.raises(ValueError, match="缺少字段.*Resolution"):
             ICCAD13Config.from_file(path)
 
+    def test_malformed_line_fails(self, tmp_path):
+        """行内出现三段（非“名称 值”结构）时失败。"""
+        lines = _config_lines() + ["DoseNom 1.00 extra"]  # 三段注入
+        with pytest.raises(ValueError, match="名称和值"):
+            ICCAD13Config.from_file(_write_config(tmp_path, lines))
+
+    @pytest.mark.parametrize("field", ["KernelNum", "TargetDensity"])
+    def test_non_numeric_value_fails(self, tmp_path, field):
+        """字段值无法转换为数字时失败并报字段名。"""
+        path = _write_config(tmp_path, _config_lines(**{field: "abc"}))
+        with pytest.raises(ValueError, match=field):
+            ICCAD13Config.from_file(path)
+
     def test_unknown_field_fails(self, tmp_path):
         """出现九字段之外的未知字段时解析失败。"""
         lines = _config_lines() + ["DoseTypo 1.0"]  # 注入拼错的字段
@@ -163,6 +176,39 @@ class TestAssets:
     def test_missing_asset_fails(self, tmp_path):
         """资产目录缺少 .pt 文件时加载失败。"""
         with pytest.raises(FileNotFoundError):
+            ICCAD13Lithography(asset_dir=tmp_path, device="cpu")
+
+    def test_default_device_is_auto(self):
+        """device 省略时自动选择（有 CUDA 用 CUDA，否则 CPU）。"""
+        model = ICCAD13Lithography()  # 缺省 device=None
+        expected = "cuda" if torch.cuda.is_available() else "cpu"
+        assert model.device.type == expected  # 与显式 auto 同义
+
+    def test_insufficient_asset_kernels_fails(self, tmp_path):
+        """资产核数少于配置 kernel_count 时失败。"""
+        config = tmp_path / "iccad13.txt"  # 请求 24 核的合法配置
+        config.write_text("\n".join(_config_lines()) + "\n", encoding="utf-8")
+        for name in ("focus", "defocus"):  # 只提供 4 核资产
+            torch.save(torch.zeros(35, 35, 4, dtype=torch.complex64),
+                       tmp_path / f"{name}.pt")
+            torch.save(torch.zeros(4), tmp_path / f"{name}_scale.pt")
+        with pytest.raises(ValueError, match="少于配置要求"):
+            ICCAD13Lithography(
+                config_path=config, asset_dir=tmp_path, device="cpu")
+
+    def test_missing_scale_fails(self, tmp_path):
+        """kernel 存在而 scale 缺失时失败。"""
+        torch.save(torch.zeros(35, 35, 24, dtype=torch.complex64),
+                   tmp_path / "focus.pt")  # 只给 kernel
+        with pytest.raises(FileNotFoundError, match="focus_scale"):
+            ICCAD13Lithography(asset_dir=tmp_path, device="cpu")
+
+    def test_non_vector_scale_fails(self, tmp_path):
+        """scale 是二维张量时拒绝。"""
+        torch.save(torch.zeros(35, 35, 24, dtype=torch.complex64),
+                   tmp_path / "focus.pt")
+        torch.save(torch.zeros(24, 2), tmp_path / "focus_scale.pt")  # 二维
+        with pytest.raises(ValueError, match="一维"):
             ICCAD13Lithography(asset_dir=tmp_path, device="cpu")
 
     def test_non_square_kernel_layout_fails(self, tmp_path):
@@ -382,6 +428,14 @@ class TestCpuNumerics:
         model = ICCAD13Lithography(device="cpu")
         with pytest.raises(ValueError, match="至少需要一个"):
             model.forward_many(torch.zeros((32, 32)), [])
+
+    def test_non_condition_entries_fail(self):
+        """forward_many / forward 混入非 ProcessCondition 时类型失败。"""
+        model = ICCAD13Lithography(device="cpu")
+        with pytest.raises(TypeError, match="ProcessCondition"):
+            model.forward_many(torch.zeros((32, 32)), ["nominal"])  # 字符串混入
+        with pytest.raises(TypeError, match="ProcessCondition"):
+            model(torch.zeros((32, 32)), "nominal")  # 单条件同样拦截
 
 
 class TestSharedComputation:

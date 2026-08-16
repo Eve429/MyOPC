@@ -5,13 +5,13 @@
 ## 1. 环境与门禁
 
 - 解释器固定：`D:/app/miniforge/envs/myopc/python.exe`（Python ≥ 3.12，
-  依赖 klayout / numpy / pillow / psutil）。
+  依赖见 `requirements.txt`：klayout / numpy / pillow / psutil / torch）。
 - 门禁（范围必须显式，绝不 `ruff check .`）：
 
 ```bash
 python -m pytest -q tests
-python -m ruff check layout geometry opc main tests
-python -m compileall -q layout geometry opc main tests
+python -m ruff check layout geometry opc lithography main tests
+python -m compileall -q layout geometry opc lithography main tests
 ```
 
 - Bash on Windows：路径用正斜杠。
@@ -20,10 +20,12 @@ python -m compileall -q layout geometry opc main tests
 
 ```text
 layout -> geometry -> opc.input -> opc.input.edge -> main
+lithography -> torch + 标准库（不导入 layout/geometry/opc/evaluation/main）
 ```
 
 基础层不得反向依赖；`opc.iteration.<method>`（未迁移）将来可依赖输入层、
-`lithography` 与 `evaluation`。
+`lithography` 与 `evaluation`；`main_test_lithography.py` 才桥接
+`opc.input.rasterize_mask_canvas` 与模型。
 
 ## 3. Macro–Core 管线（直接运行，无需安装）
 
@@ -61,14 +63,44 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 | 最终双模式写出 | `geometry.PatchWriter.write_macro_results` |
 | 配置结构 | `main.run_macro_pipeline.PipelineConfig` / `load_config` |
 
-## 5. 注释规则（2026-08-15 新增）
+## 5. 光刻模型 lithography（ICCAD13，2026-08-16 迁移）
+
+- 唯一具体模型 `ICCAD13Lithography(torch.nn.Module)`（`lithography/iccad13.py`）；
+  不建 Protocol、注册器或抽象基类（等第二个真实模型再抽契约）。
+- 输入永远是**透光率 tensor**：`1.0=透光，0.0=不透光`，单张 `[H,W]` 或批量
+  `[B,H,W]`，H/W ≤ 256；连续 0~1 值合法（模型不强制二值化）。
+- 版图、极性、DBU、居中由 layout/geometry/opc.input 在模型之前完成；
+  模型不导入这些模块。`opc.input.rasterize_mask_canvas()` 的 256 输出可
+  直传（padding 契约逐位一致，模型不二次移动）。
+- 坐标方向与输入一致（行 0 = 最低 Y，不翻转 Y）；输出与输入同 shape、
+  范围 (0,1)。
+- 工艺条件互相独立：`model.condition(name)` 返回 nominal→focus+1.00、
+  dose_max→focus+1.02、defocus_min→defocus+0.98；自定义条件直接构造
+  `ProcessCondition("focus_101", "focus", 1.01)`，同一次调用名称必须唯一。
+- `forward_many(mask, conditions)`：一次 mask FFT + 每 bank 一次传播 +
+  `dose²` 缩放 + `sigmoid(steepness×(I−target))`；`forward` 是单条件便捷入口。
+- MB-OPC 推理用 `torch.no_grad()`；梯度 OPC/ILT 直接 `loss.backward()`——
+  前向全原生可微算子（pad→fft2→乘→ifft2→|·|²→加权→dose²→sigmoid→crop），
+  **无手写 backward**，有限差分已验证。
+- kernel/scale（35×35×24 complex64 + 24 float32 ×2 bank）注册为 buffer，
+  不是 parameter；`model.device` 报告 buffer 设备；`device=None/"auto"`
+  = 有 CUDA 用 CUDA。`.to(device)` 会同时移动四个 buffer。
+- batch size 由调用方按显存决定（模型不拆 batch）：单个复数场中间量约
+  `B × 24 × 256² × complex64 ≈ B × 12 MiB`，反向峰值更高。
+- **torch 安装**：默认 PyPI 为 CPU 构建；需 CUDA 时从 PyTorch 官方索引安装
+  对应 cuXXX 轮子（实测 2.5.1+cu124 / GTX 1650）。
+- **Windows 注意**：直接用环境 python.exe 启动（非 conda run）时，
+  `lithography/iccad13.py` 在导入 torch 前把 `<env>/bin` 注册进 DLL 搜索
+  目录（NVRTC JIT 运行时位于该目录）；该顺序不可调换。
+
+## 6. 注释规则（2026-08-15 新增）
 
 - `main/` 下文件**每一行**都要有中文短注释；
 - 其他目录：文件级 docstring 一句话、函数 docstring 一句话、每个紧凑逻辑块
   前分段注释（解释 why：坐标方向、不变量、性能路径、内存上界、边界归属、
   异常原因）。
 
-## 6. 迁移状态
+## 7. 迁移状态
 
-layout / geometry / opc.input(+edge) 已完成；lithography、evaluation、
+layout / geometry / opc.input(+edge) / lithography 已完成；evaluation、
 opc.iteration、main 旧入口待迁移。历史架构参照 `00_PAST/doc/`（只读归档）。

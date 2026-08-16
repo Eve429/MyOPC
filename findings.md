@@ -100,6 +100,34 @@
 - 测试对照层技巧：验证「未处理层不复制」时源 GDS 必须含非目标层，否则断言
   是同义反复；验证位移生效时图形必须完全在层 bbox 内部（锚框撑 bbox）。
 
+## lithography 批次事实（2026-08-16，Phase 5A）
+
+- **Hopkins 前向公式链**（`lithography/iccad13.py`）：pad → fft2(norm="forward")
+  → 四象限 kernel 相乘 → ifft2(norm="forward") → scale 加权 |field|² →
+  dose² 缩放 → sigmoid(steepness×(I−target)) → crop。全原生可微算子，
+  无手写 backward。
+- **四象限映射的关键事实**：象限块尺寸由 **kernel 自身**（35→18/17）决定，
+  不是频谱尺寸——频谱只有四角低频块（±17 频率）与 kernel 相乘，其余频率
+  恒零；赋值顺序固定（左上→右上→左下→右下），DC/Nyquist 重叠行列由后写
+  覆盖。探索转述易把象限索引误读为 256 频谱块，实施以旧代码原文为准。
+- **数值身份**：新实现三工艺角 sums 与 OpenILT 同资产基线**逐位相等**
+  （差 0.0）；确定性 mask 构造（[2,200,150] 固定公式）与期望值已移植进
+  `tests/lithography/test_iccad13.py`。资产 SHA-256 是模型身份，硬断言。
+- **居中 padding 双实现共享同一公式**：`_prepare_mask` 与
+  `opc.input.raster._center_padding` 都是差值均分 + 奇数余量归高侧；
+  模型对满 256 输入 padding 全零、不二次移动，raster canvas 可直传。
+- **Windows DLL 事实**：环境 python.exe 直跑（非 conda run）时
+  `torch.cuda.is_available()` 为 True 但首次 CUDA FFT 抛
+  `nvrtc-builtins64_124.dll` 缺失——`<env>/bin` 不在搜索路径。
+  最小修复 = 模块级 `os.add_dll_directory` + PATH 前置，必须在
+  `import torch` 之前执行（lithography/iccad13.py 模块头）。
+- **依赖纪律**：lithography 只 import torch + 标准库；main_test_lithography
+  才桥接 opc.input.raster。测试导入 opc.input 无碍（tests 无此限制）。
+- **性能**：GTX 1650 上三条件 256 canvas 前向 172.4ms / peak 32MiB；
+  一次 forward_many = 1 次 mask fft2 + 每 bank 1 次传播（monkeypatch
+  计数测试固化）。
+- coverage 100%（204/204 语句），无豁免分支。
+
 ## run_single_pass 批次事实（2026-08-16）
 
 - **边压切线退化**：图形边恰好与内部 macro 切线重合时，边整条归一侧 macro
@@ -121,7 +149,7 @@
 |---|---|---|
 | layout | 616 | ✅ 已迁移 |
 | geometry | 495 | ✅ 已迁移 |
-| lithography | 318 | 待迁移 |
+| lithography | 318 | ✅ 已迁移（Phase 5A，重写为 ~370 行 + main 入口 + 81 测试） |
 | evaluation | 153 | 待迁移 |
 | opc/input | 1315 | 复制到新树，未适配 |
 | opc/input/edge | 758 | 复制到新树，未适配 |

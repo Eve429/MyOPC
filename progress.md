@@ -2,6 +2,21 @@
 
 ## 会话记录
 
+### 2026-08-16（会话 5：run_single_pass 单遍偏置扩张入口）
+
+- 用户先审查设计文档 `doc/single_pass_bias_design.md` 后放行（含两项决定：
+  displacement_nm 做成配置项、[lithography] 段保留）。
+- 交付：`main/run_single_pass.py`（每行注释）、`config/single_pass.toml`、
+  `tests/main/test_single_pass.py` 8 用例（环双向扩张正/负、产物唯一、
+  未处理层、macro_cells 一致、配置校验 3）。
+- 实施中确认两个测试几何陷阱并记 findings：孔两维都必须 >2d 才不闭合；
+  **边压内部 macro 切线的退化**（切线分裂不处理边落在切线上，两侧拐角
+  重建不一致 → 拼合台阶，对验证管线同样成立，属已知边界情形）。
+- gcd_45nm 单遍 +5nm smoke：0.80s、唯一产物 output/single_pass/。
+- 测试基线 135 → **143 passed**；ruff / compileall 全绿。
+
+## 会话记录
+
 ### 2026-08-16（会话 4：审查清单处理 + layer_bbox 收尾）
 
 - `243a5fd`：`LayoutDB.layer_bbox`（原生 `bbox_per_layer`）取代 main 流式

@@ -1,0 +1,29 @@
+[input]
+layout = "../TestReticle/gcd_45nm.gds"
+top_cell = "TOP"                  # 可省略；省略时使用唯一顶层规则
+layer = 11
+datatype = 0
+polarity = "clear"                # clear 或 opaque
+
+[grid]
+macro_grid = [2, 2]               # 与 macro_size_nm 恰好填写一个
+# macro_size_nm = 4096
+core_size_nm = 1024
+context_nm = 400                  # core 四边各自扩展的通用只读上下文
+
+[lithography]
+pixel_nm = 8                      # 仅供网格契约校验，本入口不栅格化
+canvas_pixels = 256               # 冻结为 ICCAD13 画布
+
+[edge]
+corner_nm = 16
+segment_nm = 32
+max_displacement_nm = 24          # |displacement_nm| 不得超过此值
+miter_limit = 4.0
+
+[iteration]
+displacement_nm = 5               # 单遍位移；正=沿外法向，负=反向
+
+[output]
+final_layout = "../output/single_pass/gcd_45nm_result.gds"
+final_cell_mode = "single_cell"   # single_cell 或 macro_cells

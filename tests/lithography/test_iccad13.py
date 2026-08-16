@@ -556,3 +556,49 @@ class TestCuda:
         peak = torch.cuda.max_memory_allocated()  # 实测峰值
         assert elapsed > 0  # 只记录不设阈值
         assert peak > 0  # 确实发生了 GPU 分配
+
+
+class TestMainEntry:
+    """main/main_test_lithography.py 子进程直接运行验证（设计文档 §11.8）。"""
+
+    def _run_entry(self, cwd) -> subprocess.CompletedProcess:
+        """从指定工作目录以环境 python 直跑演示入口。"""
+        from pathlib import Path  # 局部导入脚本路径
+        script = (Path(__file__).resolve().parents[2]
+                  / "main" / "main_test_lithography.py")  # 入口脚本
+        return subprocess.run(  # 与用户手工直跑完全同构
+            [sys.executable, str(script)], cwd=cwd, capture_output=True,
+            text=True, timeout=180, check=False)
+
+    def test_entry_runs_from_repository_root(self, project_root):
+        """从仓库根直跑退出码 0 且输出包含全部关键摘要。"""
+        completed = self._run_entry(project_root)  # 仓库内直跑
+        assert completed.returncode == 0, completed.stderr  # 正常退出
+        markers = (  # 各阶段必须出现的输出标记
+            "device=",  # 阶段 2 设备
+            "kernel_count=24",  # 配置摘要
+            "nominal", "dose_max", "defocus_min",  # 阶段 3 三条件
+            "range=[",  # 连续输出范围
+            "(2, 256, 256)",  # 阶段 4 batch 形状
+            "梯度 finite=True",  # 阶段 5 backward 摘要
+            "不引入优化器")  # 边界声明
+        for marker in markers:  # 逐项检查
+            assert marker in completed.stdout  # 缺一即失败
+
+    def test_entry_runs_outside_repository(self, project_root, tmp_path):
+        """从仓库外工作目录直跑同样成功（脚本自做 sys.path 引导）。"""
+        completed = self._run_entry(tmp_path)  # 仓库外目录
+        assert completed.returncode == 0, completed.stderr  # 不依赖 cwd
+        assert "device=" in completed.stdout  # 完整跑通
+
+    def test_entry_leaves_worktree_unchanged(self, project_root):
+        """入口不生成仓库内临时产物（git status 前后一致）。"""
+        status = ["git", "status", "--porcelain"]  # 只读查询
+        before = subprocess.run(  # 运行前快照
+            status, cwd=project_root, capture_output=True,
+            text=True, check=True).stdout
+        self._run_entry(project_root)  # 完整执行一次
+        after = subprocess.run(  # 运行后快照
+            status, cwd=project_root, capture_output=True,
+            text=True, check=True).stdout
+        assert after == before  # 零新增产物

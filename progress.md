@@ -135,6 +135,18 @@
 - 工作树遗留：`AGENTS.md`（迁移期规则 + 未来优化条目）、`CLAUDE.md`（重写）未提交，
   待用户决定归属批次；`TestReticle/M1_test10.glp` 用户数据不提交；`opc/` 已复制待迁移。
 
+## 会话记录
+
+### 2026-08-16（会话：梯度 MB-OPC 实施，Phase 6A-G）
+
+- 事实核对规格 `doc/opc/gradient_mbopc_migration_design.md`（1200 行）：autograd 前提
+  （forward_many 全链可微 + 6 个既有 backward 测试）、全部接口签名、极性/坐标不变量
+  均成立；发现规格 §10.4「只捕 ReconstructionError」与 simple 轮实测（KLayout
+  ValueError 穿透）冲突，经用户批准裁决为宽捕获 (ReconstructionError, ValueError)。
+- 另三项裁决：P=0 空问题直接 no_owned_segments（不跑 forward）；段法向常驻
+  float64[S,2]；doc_/changes/active 副本不动。
+- 实施批次 A–D（共享 cache → 梯度求解器 → 配置与入口 → 全量验证与报告）。
+
 ## 测试结果速查
 
 | 日期 | 范围 | 结果 |
@@ -143,3 +155,6 @@
 | 2026-08-15 | tests/layout + tests/geometry | 49 passed |
 | 2026-08-15 | 全量（layout 27 + geometry 25 + opc/input 40 + main 23） | 115 passed |
 | 2026-08-15 | gcd_45nm 2×2 smoke | 总 10.6s，最终 XOR 面积 = 0 |
+| 2026-08-16 | 全量（mbopc 迁移 + 审查修复轮后） | 341 passed |
+| 2026-08-17 | 全量（梯度 MB-OPC 后） | 410 passed |
+| 2026-08-17 | gcd_45nm 梯度 smoke（CUDA，iterations=1） | 41.61s，四 macro best_state=1，loss −10.1% |

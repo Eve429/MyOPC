@@ -144,7 +144,41 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_multi_macro.py config/mbop
   `final.gds` + 可选 `final_lithography/`（逐 tile nominal/binary PNG +
   manifest）；`[mbopc]` 段 `show_progress` 控制 tqdm（自动测试一律 false）。
 
-## 8. 迁移状态
+## 8. 梯度 MB-OPC（opc/iteration/mbopc/gradient.py，2026-08-17 迁移）
+
+基于梯度的边段优化（设计 `doc/opc/gradient_mbopc_migration_design.md`，报告
+`doc/opc/gradient_mbopc_{development,test}_report.md`）。
+
+```bash
+# 单入口、任意 macro 数（config 即 gcd_45nm 2×2 smoke）
+D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradient_mbopc.toml
+```
+
+- **算法**：`optimize_gradient_macro()` —— KLayout 精确面积覆盖率 hard 前向 +
+  DiffOPC Algorithm 4 midpoint STE 反向（`_EdgeGradientMask`：forward 逐位直通、
+  backward 在段当前中点双线性采样 dL/dMask 后 ×2——标量位移同时驱动两端点，
+  两端链式求和恰为 2·g_mid）；owner-only Adam（批 backward 累积梯度、全部 tile
+  完成的屏障后恰一次 step，随后 clamp ±max_displacement）；候选经
+  `reconstruct_region` 守卫通过才发布为下一状态。
+- **loss**：三项连续（nominal/process/pvband，只在 ownership 像素累计、除以
+  全 macro 计分像素总数 P、显式权重至少一正）；离散 L2/PVBand/EPE 只作同状态
+  诊断，不参与训练与 best 选择。
+- **状态语义**：records[0]=baseline；state N=第 N 次更新后已评价状态；末状态
+  纯评价不建图；best 按已评价 total_loss 严格更小更新（平局保留较早状态）。
+- **停止状态**：`zero_loss` / `no_update`（梯度全零步长为零）/ `invalid_geometry`
+  （宽捕获 ReconstructionError+ValueError——KLayout 几何退化以 ValueError 冒出，
+  simple 同款实测证据）/ `no_owned_segments`（空或纯 context macro，不建
+  optimizer）/ `iteration_limit`。
+- **学习率**：连续 optimizer 步长，Decimal nm 相除转 float DBU（不走 exact_dbu
+  整数契约）；epe_distance 等其余 nm 参数仍走精确整数换算。
+- **产物**：`work_dir/macros/<id>/{gradient_result.npz,best.gds,
+  gradient_metrics.json}`（文件名独立于 simple）+ summary（含 RSS 三采样与
+  CUDA 峰值）+ final.gds + 可选 final_lithography/。
+- **simple 兼容**：`TargetCanvasCache` 移至 `_cache.py`（两方法共享），包级与
+  simple 模块级导入路径不变。
+
+## 9. 迁移状态
 
 layout / geometry / opc.input(+edge) / lithography / evaluation / opc.iteration.mbopc
-已完成；diffopc、ilt 与 main 旧入口待迁移。历史架构参照 `00_PAST/doc/`（只读归档）。
+（simple + gradient）已完成；ilt 与 main 旧入口待评审。历史架构参照
+`00_PAST/doc/`（只读归档）。

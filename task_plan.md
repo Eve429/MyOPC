@@ -7,8 +7,8 @@
 
 ## Next Step
 
-**Phase 6 剩余（diffopc / ilt）**：mbopc 已完成（Phase 6A）。梯度 MB-OPC 与
-ILT 属未来方法，各自需要独立设计文档评审后再实施；本轮明确不建空目录。
+**Phase 6 剩余（ilt）**：simple 与 gradient MB-OPC 均已完成。ILT 须独立设计
+评审后实施；随后 Phase 7（旧 main 入口评审 + 收尾审计）。
 
 ## Phases
 
@@ -75,7 +75,21 @@ ILT 属未来方法，各自需要独立设计文档评审后再实施；本轮�
   建议不采纳（except 收窄）有实测反证并记录。gcd_45nm smoke 三版本
   best_epe 逐位一致。
 
-### Phase 6B: opc.iteration 剩余（diffopc / ilt）— Status: pending
+### Phase 6A-G: 梯度 MB-OPC（CHG-20260816-gradient-mbopc）— Status: complete
+- 依据 `doc/opc/gradient_mbopc_migration_design.md`（用户 2026-08-16 批准计划，
+  含四项裁决：几何退化宽捕获 ReconstructionError+ValueError、P=0 空问题直接
+  no_owned_segments、段法向常驻 [S,2]、doc_ 副本不动；规格 Revision 0.2 同步）。
+- 实施四批提交：`42bf6f3`（共享 TargetCanvasCache 抽出）→ `17ff75c`
+  （gradient.py：midpoint STE 2·g_mid + owner-only Adam + 三项连续 loss，
+  44 例）→ `c3e59bc`（load_gradient_config/solve/run + 单入口任意 macro 数
+  + summary RSS/CUDA，25 例）→ 报告批次（D）。
+- 交付：gcd_45nm CUDA smoke 41.6s（2×2、iterations=1：四 macro 全部一轮
+  更新即改善，loss −10.1%、EPE −9%、L2 −10%；PVBand 连续分量 +2.9% 与
+  simple 轮结构性观察一致；CUDA 峰值 496 MiB、RSS 1244 MiB）。
+- 全量 341 → **410 passed**；state0 EPE 与 simple baseline 逐位一致。
+- 偏差与裁决记录：`doc/opc/gradient_mbopc_{development,test}_report.md`。
+
+### Phase 6B: opc.iteration 剩余（ilt）— Status: pending
 - 梯度 MB-OPC 与 ILT 属未来方法；须各自独立设计评审，本轮明确不建空目录。
 
 ### Phase 7: main 入口 + 收尾审计 — Status: pending

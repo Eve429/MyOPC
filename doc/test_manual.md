@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 341 用例）
+# 全量（当前 410 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py
@@ -22,8 +22,9 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 | tests/main | 管线配置校验、阶段产物、双轮状态机、最终合并、单遍入口（34） |
 | tests/lithography | 配置解析、资产哈希/布局、前向数值参考、性能计数、backward 有限差分、CUDA parity、main 直跑（81） |
 | tests/evaluation | L2/PVBand/EPE 指标与方向表、ownership 屏蔽、阈值边界、光刻契约 isinstance（25） |
-| tests/opc/iteration | simple MB-OPC：cache 全路径、入口契约、stub 方向/全部停止路径（含 insufficient_probes 与两个真构造越界）、batch/进度/计数、真实 ICCAD13 图形矩阵、CUDA 直通（53） |
+| tests/opc/iteration | simple MB-OPC：cache 全路径、入口契约、stub 方向/全部停止路径（含 insufficient_probes 与两个真构造越界）、batch/进度/计数、真实 ICCAD13 图形矩阵、CUDA 直通（54）；gradient MB-OPC：surrogate 2·g_mid 公式与越界/重复索引、真实 ICCAD13 ±1 DBU 有限差分方向一致（clear/opaque）、loss 独立复算与 halo 屏蔽、batch 不变与 Adam 屏障事件序、状态/best 快照、共线退化真构造、几何矩阵、调用计数、CPU/CUDA（44） |
 | tests/main/test_mbopc_runners | 单/多 macro 入口端到端：产物与 records 语义、恰一次 merge、正逆序、batch 不变性、invalid 保留 best、差异上界量化、配置类型注入、仓库外直跑、进度开关（23） |
+| tests/main/test_gradient_mbopc_runner | 梯度入口端到端：[gradient_mbopc] 配置契约（类型/权重/Decimal/epe 整除）、产物与 summary（§8.2 键全集、RSS/CUDA 字段）、多 macro 一次合并、正逆序 XOR==0、进度计数与异常收尾、仓库外直跑（25） |
 
 ## 3. 测试纪律
 
@@ -75,6 +76,22 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_multi_macro.py config/mbop
 `save_final_lithography=true` 时 final_lithography/ 有逐 tile PNG 与
 manifest。gcd_45nm 默认参数 CUDA 实测约 126s（multi 870 tile，EPE 逐轮下降，
 报告见 `doc/opc/mbopc_test_report.md`）。产物目录不提交。
+
+### 梯度入口 smoke（2026-08-17）
+
+```bash
+D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradient_mbopc.toml
+```
+
+通过标准：退出码 0；摘要含 device、loss 权重、每 macro
+`best_state/best_total_loss/stop`、合并与总耗时、峰值 RSS/CUDA、最终版图；
+`work_dir/macros/<id>/` 下三件产物文件名为 `gradient_result.npz`（键
+format_version/macro_id/best_state_index/best_displacements/stop_reason）、
+`gradient_metrics.json`（records 含 state_index 与三项连续 loss）、`best.gds`；
+summary.json 顶层含 `method="gradient_mbopc"`、`loss_weights`、
+`rss_start_bytes/rss_after_prepare_bytes/peak_rss_bytes`、`cuda_peak_bytes`
+（CPU 运行为 null）。产物目录不提交；实测数字见
+`doc/opc/gradient_mbopc_test_report.md`。
 
 ## 6. 管线 smoke 验收
 

@@ -2,8 +2,9 @@
 id: CHG-20260816-gradient-mbopc
 title: 基于梯度的 MB-OPC 迁移
 type: implementation-spec
-status: draft
+status: approved
 baseline_commit: e289f2c60c3db6302c687bdf30c6977f108c47f0
+implementation_base_commit: fbc059b（e289f2c 后仅规格入库与文档提交，业务代码零漂移）
 baseline_worktree: dirty
 baseline_dirty_paths:
   - doc/opc/mbopc_migration_design.md
@@ -739,14 +740,18 @@ if candidate exactly equals before:
 candidate_full = expand candidate to float64[S]
 try:
     candidate_region = reconstruct_region(problem, candidate_full)
-except ReconstructionError as exc:
+except (ReconstructionError, ValueError) as exc:   # Revision 0.2 宽捕获
     stop invalid_geometry with original message
 
 publish parameters + candidate_region as next current state
 continue
 ```
 
-不得捕获 `ValueError`、`RuntimeError`、CUDA OOM 或未知异常。非法 candidate 未进入 records，也未成为 best。
+（Revision 0.2 修订）几何退化（如位移共线使 ring 顶点不足）会以 `ValueError`
+从 KLayout 穿透 `reconstruct_region`（simple 轮实测证据，reconstruction.py 无
+包装），故候选守卫捕获 `(ReconstructionError, ValueError)` 并在 stop_detail
+保留原始文本；不得捕获 `RuntimeError`、CUDA OOM 或未知异常。非法 candidate
+未进入 records，也未成为 best。
 
 ### 10.5 Boundary Conditions
 
@@ -815,9 +820,10 @@ SN --evaluate only--> record(SN)
 
 ### ERR-004：候选几何非法
 
-- Condition：`reconstruct_region()` 抛 `ReconstructionError`。
+- Condition：`reconstruct_region()` 抛 `ReconstructionError` 或 KLayout 原生
+  `ValueError`（几何退化形态，Revision 0.2）。
 - Behavior：返回 `invalid_geometry`，`stop_detail` 保留 state 和原错误；输出历史最佳合法状态。
-- MUST NOT：捕获 `ValueError` 或未知异常。
+- MUST NOT：捕获 `RuntimeError` 或未知异常（程序错误必须传播）。
 
 ### ERR-005：I/O、CUDA 与依赖错误
 
@@ -936,7 +942,8 @@ SN --evaluate only--> record(SN)
 
 - File/functions：
   - `test_invalid_reconstruction_keeps_last_legal_best`
-  - `test_program_value_error_is_not_converted_to_invalid_geometry`
+  - `test_program_runtime_error_is_not_converted_to_invalid_geometry`
+    （Revision 0.2：ValueError 与几何退化不可按类型区分，改用 RuntimeError 验证传播边界）
   - `test_nonfinite_gradient_raises_floating_point_error`
 - Then：只捕 `ReconstructionError` 为领域停止；其他错误传播；非法候选无 record。
 - Covers：REQ-010/015, ERR-003/004。
@@ -1195,3 +1202,4 @@ None.
 | Revision | Date | Status | Change | Reviewer |
 |---|---|---|---|---|
 | 0.1 | 2026-08-16 | draft | 初始迁移规格；锁定官方 midpoint STE、owner-only Adam 与最小复用边界 | 待用户审核 |
+| 0.2 | 2026-08-17 | approved | 用户批准实施计划（含四项裁决：宽捕获 / P=0 空问题直接 no_owned_segments / 段法向常驻 [S,2] / doc_ 副本不动）；§10.4、ERR-004、TEST-007 同步修订；实施基线 fbc059b | 用户 |

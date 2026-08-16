@@ -226,3 +226,24 @@
 - simple.py coverage 99%：缺两行防御 RuntimeError（需破坏构造期不变量，
   不可构造）；evaluation metrics 100%。
 
+
+## 梯度 MB-OPC 批次事实（2026-08-17，Phase 6A-G）
+
+- **Adam 方向与梯度符号**：dL/dMask<0（印刷不足）→ 最小化器沿负梯度走 →
+  位移为正（外移）；构造"内移退化"测试需印刷过量（dL/dMask>0）。Adam 单步
+  幅值与梯度大小无关（首步 ≈ lr×0.316…实际 m̂/√v̂=sign(g)，首步 |Δ|≈lr），
+  大 lr + clamp 可精确控制候选到恰 ±max_displacement（共线退化真构造）。
+- **autograd.Function 直通返回**：forward 返回输入 tensor 时 apply 输出与
+  输入 torch.equal 但不是同一 Python 对象（requires_grad 输入下被包装）；
+  测试断言用逐位相等而非 `is`。
+- **`2·g_mid` 手算基准**：半像素点 = 四角均值；跨批采样注意第二张图的扁平
+  基址偏移（[B,H,W] 扁平索引 base=b·H·W，自检时两次算错都错在这里）。
+- **rasterize_mask_canvas 边界对齐**：Box 边界恰在像素边界（20/4=5.0）时
+  中点采样落在整数格点，mask 值取像素 5（完全覆盖）——线性模型梯度非零
+  的取值来源。
+- **gradient 产物三件套命名**：gradient_result.npz/gradient_metrics.json/
+  best.gds（独立于 simple 的 result.npz/metrics.json，同目录共存互不覆盖）。
+- **_resolve_device/_as_number** 为 simple+gradient 共享的最小抽取（DEC-004
+  边界内：两个真实调用方才抽）。
+- **P=0 防御分支不可达**：core ownership box 恒含至少一个 canvas 像素，
+  total_pixels==0 仅在数据损坏时出现；保留 ValueError 防御。

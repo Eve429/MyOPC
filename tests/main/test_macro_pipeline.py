@@ -78,11 +78,17 @@ final_cell_mode = "{values["final_cell_mode"]}"
     return config_path  # 返回路径
 
 
+def _load(config_path):
+    """加载宏管线配置并放行验证专属 [iteration] 段。"""
+    return pipeline.load_macro_config(  # 共用六段加载器
+        config_path, extra_sections=("iteration",))  # 白名单放行验证段
+
+
 @pytest.fixture
 def prepared(tmp_path):
     """生成版图与配置并执行阶段 0/1，返回 (config, plan)。"""
     gds = _write_gds(tmp_path)  # 生成 GDS
-    config = pipeline.load_config(_write_config(tmp_path, gds))  # 严格加载
+    config = _load(_write_config(tmp_path, gds))  # 严格加载
     plan = pipeline.prepare_problems(config)  # 阶段 0/1
     return config, plan  # 返回两件套
 
@@ -98,7 +104,7 @@ class TestConfigValidation:
             "[grid]", "[grid]\nbogus = 1")  # 在 grid 段加键
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="未知键"):  # 必须报错
-            pipeline.load_config(path)  # 加载
+            _load(path)  # 加载
 
     def test_macro_entry_exclusivity(self, tmp_path):
         """macro_grid 与 macro_size_nm 同现或同缺都失败。"""
@@ -109,26 +115,26 @@ class TestConfigValidation:
             "macro_grid = [2, 2]", "macro_grid = [2, 2]\nmacro_size_nm = 60")  # 注入
         both.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="恰好填写一个"):  # 必须报错
-            pipeline.load_config(both)  # 加载
+            _load(both)  # 加载
         neither = _write_config(tmp_path, gds)  # 数量模式配置
         text = neither.read_text(encoding="utf-8").replace(  # 删除唯一入口
             "macro_grid = [2, 2]", "")  # 移除
         neither.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="恰好填写一个"):  # 必须报错
-            pipeline.load_config(neither)  # 加载
+            _load(neither)  # 加载
 
     def test_exact_dbu_rejects_off_grid_value(self, tmp_path):
         """不能精确转换 DBU 的 nm 参数失败并写明参数名。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
         path = _write_config(tmp_path, gds, context_nm=10.5)  # 0.5nm 无法落 1nm 格点
-        config = pipeline.load_config(path)  # 加载本身不做换算
+        config = _load(path)  # 加载本身不做换算
         with pytest.raises(ValueError, match="context_nm"):  # 报错含参数名
             pipeline.prepare_problems(config)  # 精确换算发生在阶段 0
 
     def test_context_below_max_displacement_rejected(self, tmp_path):
         """context 小于最大位移时阶段 0 校验失败。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
-        config = pipeline.load_config(  # context=2 < max_disp=8
+        config = _load(  # context=2 < max_disp=8
             _write_config(tmp_path, gds, context_nm=2))  # 配置
         with pytest.raises(ValueError, match="max_displacement_nm"):  # 必须报错
             pipeline.prepare_problems(config)  # 执行
@@ -137,10 +143,9 @@ class TestConfigValidation:
         """双轮位移冻结为 [+2nm,-2nm]：其他幅值或不对称序列一律失败。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
         for deltas in ("[3, -3]", "[2, -1]"):  # 幅值不符 / 不对称
-            config = pipeline.load_config(  # 加载
-                _write_config(tmp_path, gds, deltas=deltas))  # 覆盖序列
+            config_path = _write_config(tmp_path, gds, deltas=deltas)  # 覆盖序列
             with pytest.raises(ValueError, match="冻结"):  # 必须报错
-                pipeline.prepare_problems(config)  # 执行
+                pipeline.load_validation_deltas(config_path)  # 验证段解析即冻结检查
 
     def test_two_nm_not_representable_fails_with_parameter_name(self, tmp_path):
         """2 nm 无法精确换算到当前 DBU 时失败并保留参数名。"""
@@ -150,11 +155,11 @@ class TestConfigValidation:
         top.shapes(layout.layer(1, 0)).insert(kdb.Box(0, 0, 30, 30))  # 目标层图形
         gds = tmp_path / "odd_dbu.gds"  # 输出路径
         layout.write(str(gds))  # 写盘
-        config = pipeline.load_config(_write_config(  # 全部参数取 2.5 的倍数
+        config_path = _write_config(  # 全部参数取 2.5 的倍数
             tmp_path, gds, pixel_nm=2.5, corner_nm=5, segment_nm=10,
-            max_displacement_nm=5))  # 只有 2nm 常量无法落格点
+            max_displacement_nm=5)  # 只有 2nm 常量无法落格点
         with pytest.raises(ValueError, match="round_deltas_nm"):  # 报错含参数名
-            pipeline.prepare_problems(config)  # 执行
+            pipeline.run(config_path)  # 落格点换算在 run 内用实际 dbu 执行
 
 
 class TestPrepareProblems:
@@ -189,7 +194,7 @@ class TestTwoRounds:
     def test_round_one_moves_all_owned_segments(self, prepared):
         """第一轮全部 owner 段位移恰为 +2 nm，context 段保持零。"""
         _, plan = prepared  # 解包
-        summary = pipeline.run_round(plan, 1, plan["round_deltas_dbu"][0])  # 第一轮 +2
+        summary = pipeline.run_round(plan, 1, 2)  # 第一轮 +2（冻结步长）
         assert summary["macro_gds_count"] == 4  # 每轮 4 个 macro GDS
         for entry in plan["macros"]:  # 逐 macro 检查
             problem = self._problem(plan, entry)  # 加载 problem
@@ -286,7 +291,8 @@ class TestTwoRounds:
         gds = _write_gds(shared)  # 生成一份源版图
         finals = {}  # 顺序 → 最终版图路径
         plans = {}  # 顺序 → 计划
-        real_plan_macros = pipeline.plan_macros  # 循环外捕获，闭包不绑定循环变量
+        import main._macro_pipeline as macro_pipeline  # plan_macros 现居共享模块
+        real_plan_macros = macro_pipeline.plan_macros  # 循环外捕获，闭包不绑定循环变量
 
         def _reversed_macros(*args, **kwargs):
             """反转 macro 规划顺序，验证迭代顺序无关性。"""
@@ -294,17 +300,19 @@ class TestTwoRounds:
         for tag, reverse in (("forward", False), ("reverse", True)):  # 两种顺序
             base = tmp_path / tag  # 独立工作目录
             base.mkdir()  # 创建
-            config = pipeline.load_config(_write_config(base, gds))  # 各自配置
+            config = _load(_write_config(base, gds))  # 各自配置
             if reverse:  # 逆序只在准备期反转 macro 规划顺序
-                monkeypatch.setattr(pipeline, "plan_macros", _reversed_macros)  # 替换
+                monkeypatch.setattr(macro_pipeline, "plan_macros", _reversed_macros)  # 替换
                 plans[tag] = pipeline.prepare_problems(config)  # 阶段 0/1
                 monkeypatch.undo()  # 立即恢复，后续阶段不受影响
             else:  # 正序
                 plans[tag] = pipeline.prepare_problems(config)  # 阶段 0/1
             plan = plans[tag]  # 当前计划
-            pipeline.run_round(plan, 1, plan["round_deltas_dbu"][0])  # 第一轮
-            pipeline.run_round(plan, 2, plan["round_deltas_dbu"][1])  # 第二轮
-            finals[tag] = pipeline.merge_final(plan, 2, base / "final.gds")  # 合并
+            pipeline.run_round(plan, 1, 2)  # 第一轮 +2（冻结步长）
+            pipeline.run_round(plan, 2, -2)  # 第二轮 -2
+            finals[tag] = pipeline.merge_macro_results(  # 合并
+                plan, pipeline.collect_round_macro_gds(plan, 2),  # 校验并显式映射
+                base / "final.gds", cell_mode="single_cell")  # 固定模式
         # ① 两轮每 macro 的位移数组逐位一致（按 macro_id 配对，顺序不同）。
         reverse_by_id = {e["macro_id"]: e for e in plans["reverse"]["macros"]}  # 索引
         for entry_f in plans["forward"]["macros"]:  # 正序条目
@@ -332,13 +340,14 @@ class TestTwoRounds:
         """阶段二不调用 LayoutDB 物化或 problem 准备（调用计数证明）。"""
         _, plan = prepared  # 解包
         calls = {"prepare": 0, "materialize": 0}  # 计数器
-        real_prepare = pipeline.prepare_macro_problem  # 原函数
+        import main._macro_pipeline as macro_pipeline  # 准备函数现居共享模块
+        real_prepare = macro_pipeline.prepare_macro_problem  # 原函数
 
         def _counting_prepare(*args, **kwargs):
             """计数 problem 准备调用并透传，证明阶段二零调用。"""
             calls["prepare"] += 1  # 计数
             return real_prepare(*args, **kwargs)  # 透传
-        monkeypatch.setattr(pipeline, "prepare_macro_problem", _counting_prepare)  # 替换入口
+        monkeypatch.setattr(macro_pipeline, "prepare_macro_problem", _counting_prepare)  # 替换入口
         from layout.query import ShapeQuery  # 物化入口类
         real_materialize = ShapeQuery.materialize_intersecting  # 原方法
 
@@ -355,7 +364,7 @@ class TestTwoRounds:
     def test_prepare_never_iterates_shapes_in_python(self, tmp_path, monkeypatch):
         """阶段 0 取层 bbox 走原生路径：全程不触碰公共 shape 迭代器。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
-        config = pipeline.load_config(_write_config(tmp_path, gds))  # 配置
+        config = _load(_write_config(tmp_path, gds))  # 配置
         from layout import LayoutDB as _LayoutDB  # 迭代器宿主类
         real_iterate = _LayoutDB.recursive_polygon_shapes  # 原方法
         calls = {"iterate": 0}  # 计数器
@@ -431,11 +440,13 @@ class TestFinalMerge:
     def test_round_one_merge_differs_from_reference(self, tmp_path):
         """第一轮合并结果相对参考有非零变化，证明 +2 确实生效。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
-        config = pipeline.load_config(_write_config(tmp_path, gds))  # 加载
+        config = _load(_write_config(tmp_path, gds))  # 加载
         plan = pipeline.prepare_problems(config)  # 阶段 0/1
         pipeline.run_round(plan, 1, 2)  # 仅第一轮
         round_one_final = tmp_path / "round1.gds"  # 第一轮合并输出
-        pipeline.merge_final(plan, 1, round_one_final)  # 合并第一轮
+        pipeline.merge_macro_results(  # 合并第一轮
+            plan, pipeline.collect_round_macro_gds(plan, 1),  # 第一轮显式映射
+            round_one_final, cell_mode=config.final_cell_mode)  # 配置模式
         with LayoutDB.open(gds) as db:  # 原始版图
             reference = db.query(  # 全框查询
                 [LayerSpec(1, 0)], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
@@ -451,20 +462,24 @@ class TestFinalMerge:
         _, _ = full  # 解包
         target = tmp_path / "work" / "round_002" / "gds" / "mr0c0.gds"  # 待删文件
         target.unlink()  # 删除
-        config = pipeline.load_config(  # 重新加载配置以重建 plan 路径
+        config = _load(  # 重新加载配置以重建 plan 路径
             tmp_path / "pipeline.toml")  # 配置
         plan = pipeline.prepare_problems(config)  # 重新准备（problems 目录已存在会被覆盖）
         with pytest.raises(FileNotFoundError, match="macro GDS"):  # 明确失败
-            pipeline.merge_final(plan, 2, tmp_path / "final2.gds")  # 合并
+            pipeline.merge_macro_results(  # 合并（缺文件在映射检查后失败）
+                plan, pipeline.collect_round_macro_gds(plan, 2),  # 第二轮显式映射
+                tmp_path / "final2.gds", cell_mode="single_cell")  # 固定模式
 
     def test_duplicate_macro_id_fails_merge(self, full, tmp_path):
         """重复 macro ID 时合并明确失败。"""
         _, _ = full  # 解包
-        config = pipeline.load_config(tmp_path / "pipeline.toml")  # 配置
+        config = _load(tmp_path / "pipeline.toml")  # 配置
         plan = pipeline.prepare_problems(config)  # 重新准备
         plan["macros"].append(dict(plan["macros"][0]))  # 注入重复条目
         with pytest.raises(ValueError, match="重复 macro ID"):  # 明确失败
-            pipeline.merge_final(plan, 2, tmp_path / "final3.gds")  # 合并
+            pipeline.merge_macro_results(  # 合并（计划条目重复即失败）
+                plan, pipeline.collect_round_macro_gds(plan, 2),  # 第二轮显式映射
+                tmp_path / "final3.gds", cell_mode="single_cell")  # 固定模式
 
     def test_result_round_mismatch_fails_merge(self, full, tmp_path):
         """result 轮次与合并轮次不一致时明确失败。"""
@@ -474,10 +489,12 @@ class TestFinalMerge:
             arrays = {name: data[name] for name in data.files}  # 复制
         arrays["round_index"] = np.array([1], np.int32)  # 改成错误轮次
         np.savez(target, **arrays)  # 写回
-        config = pipeline.load_config(tmp_path / "pipeline.toml")  # 配置
+        config = _load(tmp_path / "pipeline.toml")  # 配置
         plan = pipeline.prepare_problems(config)  # 重新准备
         with pytest.raises(ValueError, match="轮次"):  # 明确失败
-            pipeline.merge_final(plan, 2, tmp_path / "final4.gds")  # 合并
+            pipeline.merge_macro_results(  # 轮次校验在收集映射时失败
+                plan, pipeline.collect_round_macro_gds(plan, 2),  # 篡改后被拒
+                tmp_path / "final4.gds", cell_mode="single_cell")  # 固定模式
 
     def test_unprocessed_layers_are_not_copied(self, full, tmp_path):
         """源含 1/0 与 2/0 两层时，最终版图只保留处理过的目标层 1/0。"""

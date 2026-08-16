@@ -9,6 +9,7 @@ from opc.input import (
     MacroSpec,
     ownership_canvas,
     plan_macros,
+    points_to_canvas,
     rasterize_mask_canvas,
     rasterize_region_window,
 )
@@ -263,3 +264,79 @@ class TestCenteredCanvas:
             kdb.Region(kdb.Box(0, 0, 16, 8)), DbuBox(0, 0, 16, 16), 8)
         assert window.shape == (2, 2)
         assert window.tolist() == [[1.0, 1.0], [0.0, 0.0]]
+
+
+class TestPointsToCanvas:
+    """DBU 点到居中 canvas 连续坐标换算与 ownership 对齐。"""
+
+    def test_full_canvas_has_no_padding_offset(self):
+        """满 256 窗口 low=0：第一像素中心 (4,4)DBU 映射到 (0,0)。"""
+        context = DbuBox(0, 0, 2048, 2048)
+        out = points_to_canvas([[4.0, 4.0]], context, 8, 256)
+        assert out.shape == (1, 2)
+        assert out[0].tolist() == [0.0, 0.0]
+
+    def test_even_padding_shifts_by_low_side(self):
+        """228 像素窗口低侧 padding 14：像素中心仍映射回自身索引。"""
+        context = DbuBox(0, 0, 1824, 1824)
+        out = points_to_canvas([[4.0, 4.0]], context, 8, 256)
+        assert out[0].tolist() == [14.0, 14.0]  # 局部 (0,0) 像素中心
+
+    def test_odd_remainder_keeps_low_floor(self):
+        """227 像素窗口 14 低 15 高：窗口首尾像素中心映射正确。"""
+        context = DbuBox(0, 0, 1816, 1816)
+        out = points_to_canvas([[4.0, 4.0], [1812.0, 1812.0]], context, 8, 256)
+        # 局部首像素中心 4DBU → 局部索引 0 → canvas 14；
+        # 末像素中心 1816-4=1812DBU → 局部索引 226 → canvas 240。
+        assert out[0].tolist() == [14.0, 14.0]
+        assert out[1].tolist() == [240.0, 240.0]
+
+    def test_nonzero_context_origin(self):
+        """context 原点非零时先减原点再换算，与全局坐标无关。"""
+        context = DbuBox(1000, 2000, 2824, 3824)
+        out = points_to_canvas([[1004.0, 2004.0]], context, 8, 256)
+        assert out[0].tolist() == [14.0, 14.0]
+
+    def test_all_ownership_pixels_round_trip_to_integers(self):
+        """ownership 计分像素中心经换算恰落回自身整数索引（批量对齐）。"""
+        context = DbuBox(0, 0, 1824, 1824)
+        ownership = DbuBox(400, 400, 1424, 1424)
+        owned = ownership_canvas(ownership, context, 8, 256)
+        rows, columns = np.nonzero(owned)
+        # 正向公式来自 ownership_canvas：中心 = 原点 + (索引 - low + 0.5)×pixel。
+        centers = np.stack(
+            (context.left + (columns - 14 + 0.5) * 8,
+             context.bottom + (rows - 14 + 0.5) * 8), axis=1)
+        out = points_to_canvas(centers, context, 8, 256)
+        np.testing.assert_array_equal(out[:, 0], columns.astype(np.float64))
+        np.testing.assert_array_equal(out[:, 1], rows.astype(np.float64))
+
+    def test_x_and_y_are_not_swapped(self):
+        """x 进列索引、y 进行索引，两轴互不交换。"""
+        context = DbuBox(0, 0, 1824, 1824)
+        out = points_to_canvas([[12.0, 4.0], [4.0, 12.0]], context, 8, 256)
+        assert out[0, 0] == pytest.approx(15.0)  # x=12 → 列 15
+        assert out[0, 1] == pytest.approx(14.0)  # y=4 → 行 14
+        assert out[1, 0] == pytest.approx(14.0)
+        assert out[1, 1] == pytest.approx(15.0)
+
+    def test_fractional_coordinates_stay_continuous(self):
+        """非像素中心的连续 DBU 坐标保留小数，不取整不裁剪。"""
+        context = DbuBox(0, 0, 1824, 1824)
+        out = points_to_canvas([[9.0, 5.0]], context, 8, 256)
+        assert out[0].tolist() == [14.625, 14.125]  # (9/8-0.5+14, 5/8-0.5+14)
+
+    def test_out_of_window_points_are_not_clipped(self):
+        """context 外的点照样换算（可能为负或超界），裁剪留给评价层。"""
+        context = DbuBox(0, 0, 1824, 1824)
+        out = points_to_canvas([[-200.0, 2200.0]], context, 8, 256)
+        assert out[0, 0] < 0.0  # 左侧 200DBU → canvas -11.5，保留负值
+        assert out[0, 1] > 255.0  # 上方 376DBU → canvas 288.5，保留超界值
+
+    def test_non_pair_points_fail(self):
+        """[N,3] 或一维输入不是 (x,y) 点集，失败。"""
+        context = DbuBox(0, 0, 1824, 1824)
+        with pytest.raises(ValueError, match="N,2"):
+            points_to_canvas(np.zeros((2, 3)), context, 8, 256)
+        with pytest.raises(ValueError, match="N,2"):
+            points_to_canvas(np.zeros(4), context, 8, 256)

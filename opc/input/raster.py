@@ -128,3 +128,30 @@ def ownership_canvas(
     y_valid = ((rows >= low_y) & (rows < low_y + local_height) &
                (y_centers >= ownership_box.bottom) & (y_centers < ownership_box.top))
     return y_valid[:, None] & x_valid[None, :]
+
+
+def points_to_canvas(
+        points_dbu: object, context_box: DbuBox, pixel_dbu: int,
+        canvas_pixels: int,
+) -> NDArray[np.float64]:
+    """把全局 DBU 点转换为居中 canvas 的连续 (x,y) 像素坐标。"""
+    if (not isinstance(pixel_dbu, Integral) or pixel_dbu <= 0 or
+            not isinstance(canvas_pixels, Integral) or canvas_pixels <= 0):
+        raise ValueError("pixel_dbu 和 canvas_pixels 必须是正整数")
+    pixel_dbu, canvas_pixels = int(pixel_dbu), int(canvas_pixels)
+    points = np.asarray(points_dbu, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("points_dbu 必须是 [N,2] 的 (x,y) 坐标数组")
+    # padding 与 rasterize_mask_canvas/ownership_canvas 共用同一 _center_padding，
+    # 因此换算出的探针坐标与 mask 像素、ownership 像素天然对齐；本函数只做连续
+    # 坐标换算，取整与越界处理留给评价层（evaluate_edge_probes 的 round+in_bounds）。
+    local_width = (context_box.width + pixel_dbu - 1) // pixel_dbu
+    local_height = (context_box.height + pixel_dbu - 1) // pixel_dbu
+    low_y, _, low_x, _ = _center_padding(
+        int(local_height), int(local_width), canvas_pixels)
+    canvas = np.empty_like(points)
+    # x 进列索引、y 进行索引：canvas 第 j 列中心位于 context.left+(j-low_x+0.5)×pixel，
+    # 逆映射即 (x-left)/pixel-0.5+low_x，与 ownership_canvas 的正向公式互为反函数。
+    canvas[:, 0] = (points[:, 0] - context_box.left) / pixel_dbu - 0.5 + low_x
+    canvas[:, 1] = (points[:, 1] - context_box.bottom) / pixel_dbu - 0.5 + low_y
+    return canvas

@@ -137,6 +137,7 @@ model.forward_many(mask, conditions)    # → dict[name, Tensor]
 | 增加 Windows DLL 注册（§11.7 默认不迁） | 实测复现 nvrtc DLL 缺失，属设计预设的授权路径（§9 本报告） |
 | 基线数字 115 → 实际 143 | 设计自注“实施时先跑新鲜基线”；143 为 run_single_pass 之后的事实基线 |
 | 补齐 §11.4 之外的 ProcessCondition 校验测试 | 旧版 `__post_init__` 行为保留（防止未知名静默落到 defocus 分支），需要注入测试覆盖 |
+| main 入口新增阶段 6 matplotlib 可视化（超出 §10 五阶段） | 用户 2026-08-16 追加需求：2×2 灰度面板（输入+三工艺角），PNG 留档 `output/lithography/`（gitignored），`plt.show()` 弹窗；测试子进程以 `MPLBACKEND=Agg` 运行避免 GUI 阻塞，matplotlib 3.11.1 入 requirements |
 
 其余接口、公式、资产、测试矩阵、提交划分与设计文档一致。
 

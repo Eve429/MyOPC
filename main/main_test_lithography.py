@@ -4,6 +4,7 @@ import sys  # 仓库根路径引导（免安装直接运行）
 import time  # 前向计时（唯一保留的统计）
 from pathlib import Path  # 路径工具
 
+import matplotlib.pyplot as plt  # 阶段 6 可视化面板（Agg 后端下 show 无操作）
 import numpy as np  # raster 画布的 numpy 类型
 import torch  # 张量、no_grad 与原生 autograd
 
@@ -98,6 +99,29 @@ def run_demo(device: str = "auto") -> None:
     print(f"  梯度 finite={finite} 非零元素={nonzero}/{gradient.numel()} "  # 梯度摘要
           f"L2范数={norm:.4f}")  # 摘要续
     print("  仅演示梯度传播；不更新 mask，不引入优化器")  # 边界声明
+    # 阶段 6：把光刻计算结果可视化（2×2 灰度面板：输入与三工艺角胶图）。
+    print("阶段 6 · 可视化（matplotlib）")  # 阶段标题
+    panels = (  # 四联面板数据：输入透光率 + 三个条件的连续 printed image
+        ("输入 mask（1=透光）", canvas),
+        ("nominal（focus × 1.00²）", images["nominal"].cpu().numpy()),
+        ("dose_max（focus × 1.02²）", images["dose_max"].cpu().numpy()),
+        ("defocus_min（defocus × 0.98²）", images["defocus_min"].cpu().numpy()))
+    figure, axes = plt.subplots(  # 建 2×2 面板
+        2, 2, figsize=(10, 9), layout="constrained")  # 紧凑排版不重叠
+    for ax, (title, image) in zip(axes.flat, panels):  # 逐面板绘制
+        drawn = ax.imshow(  # origin=lower 让行 0（最低 Y）显示在底部
+            image, origin="lower", extent=(0, 1824, 0, 1824),  # 轴=context DBU 坐标
+            cmap="gray", vmin=0.0, vmax=1.0)  # 固定灰阶便于跨面板对比
+        ax.set_title(title)  # 面板标题
+        ax.set_xlabel("context X（DBU）")  # 横轴说明
+        ax.set_ylabel("context Y（DBU）")  # 纵轴说明
+        figure.colorbar(drawn, ax=ax, shrink=0.85)  # 灰阶色条
+    output_dir = _REPO_ROOT / "output" / "lithography"  # 留档目录（gitignored）
+    output_dir.mkdir(parents=True, exist_ok=True)  # 确保目录存在
+    figure_path = output_dir / "main_test_lithography.png"  # PNG 产物路径
+    figure.savefig(str(figure_path), dpi=150)  # 写盘留档（锚定仓库根，不依赖 cwd）
+    print(f"  已保存 {figure_path}")  # 打印留档路径
+    plt.show()  # 弹窗交互查看；测试用 Agg 无头后端时此调用不阻塞
     print("=" * 72)  # 演示结束
 
 

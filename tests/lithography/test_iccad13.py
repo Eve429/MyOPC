@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -616,13 +617,14 @@ class TestMainEntry:
     """main/main_test_lithography.py 子进程直接运行验证（设计文档 §11.8）。"""
 
     def _run_entry(self, cwd) -> subprocess.CompletedProcess:
-        """从指定工作目录以环境 python 直跑演示入口。"""
+        """以 Agg 无头后端直跑演示入口（plt.show 不弹窗不阻塞）。"""
         from pathlib import Path  # 局部导入脚本路径
         script = (Path(__file__).resolve().parents[2]
                   / "main" / "main_test_lithography.py")  # 入口脚本
-        return subprocess.run(  # 与用户手工直跑完全同构
+        env = {**os.environ, "MPLBACKEND": "Agg"}  # 无头后端替换默认交互后端
+        return subprocess.run(  # 与用户手工直跑同构（仅绘图后端不同）
             [sys.executable, str(script)], cwd=cwd, capture_output=True,
-            text=True, timeout=180, check=False)
+            text=True, timeout=180, check=False, env=env)
 
     def test_entry_runs_from_repository_root(self, project_root):
         """从仓库根直跑退出码 0 且输出包含全部关键摘要。"""
@@ -635,7 +637,8 @@ class TestMainEntry:
             "range=[",  # 连续输出范围
             "(2, 256, 256)",  # 阶段 4 batch 形状
             "梯度 finite=True",  # 阶段 5 backward 摘要
-            "不引入优化器")  # 边界声明
+            "阶段 6 · 可视化",  # 阶段 6 面板标题
+            "已保存")  # PNG 留档路径
         for marker in markers:  # 逐项检查
             assert marker in completed.stdout  # 缺一即失败
 

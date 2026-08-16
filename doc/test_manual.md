@@ -42,8 +42,15 @@ D:/app/miniforge/envs/myopc/python.exe main/main_test_lithography.py
 ```
 
 通过标准：退出码 0；输出包含 device、三工艺角 range/sum/曝光像素、
-batch `(2, 256, 256)`、`梯度 finite=True`；CUDA 时附 elapsed 与 peak
-allocated。从仓库外工作目录执行同样必须成功（sys.path 自引导）。
+batch `(2, 256, 256)`、`梯度 finite=True`、`阶段 6 · 可视化` 与
+`已保存`；CUDA 时附 elapsed 与 peak allocated。从仓库外工作目录执行
+同样必须成功（sys.path 自引导）。
+
+阶段 6 可视化（2026-08-16 追加）：2×2 灰度面板（输入 mask + 三工艺角
+连续胶图，origin=lower 保持左下原点显示），PNG 留档到
+`output/lithography/main_test_lithography.png`（gitignored、锚定仓库根），
+随后 `plt.show()` 弹窗——**手工直跑会等待窗口关闭**；测试子进程设
+`MPLBACKEND=Agg`（show 无操作不阻塞）。
 
 coverage：
 

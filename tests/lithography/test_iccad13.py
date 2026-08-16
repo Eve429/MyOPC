@@ -1,6 +1,10 @@
-"""ICCAD13 配置解析、Hopkins 资产契约与工艺条件的生成式测试。"""
+"""ICCAD13 配置解析、Hopkins 资产契约、前向数值与 backward 的生成式测试。"""
 
 import hashlib
+import json
+import subprocess
+import sys
+import time
 
 import pytest
 import torch
@@ -37,6 +41,21 @@ def _write_config(tmp_path, lines: list[str]):
     path = tmp_path / "iccad13.txt"  # 临时配置路径
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")  # 写盘
     return path  # 返回路径
+
+
+def _model_mask(height: int = 200, width: int = 150) -> torch.Tensor:
+    """构造同时包含实心矩形和孔洞的确定性 batch mask（旧测试移植）。"""
+    mask = torch.zeros((2, height, width), dtype=torch.float32)  # 两张同尺寸
+    mask[0, 40:160, 40:110] = 1.0  # 第一张：居中实心矩形
+    mask[1, 20:180, 20:130] = 1.0  # 第二张：更大的外框
+    mask[1, 70:130, 60:90] = 0.0  # 第二张：中心孔洞
+    return mask
+
+
+def _default_conditions(model: ICCAD13Lithography) -> list[ProcessCondition]:
+    """返回三个默认工艺条件（nominal / dose_max / defocus_min）。"""
+    return [model.condition(name) for name in
+            ("nominal", "dose_max", "defocus_min")]
 
 
 class TestConfigParsing:
@@ -204,3 +223,336 @@ class TestProcessCondition:
         """空名称、未知 kernel bank、非正或非有限剂量都失败。"""
         with pytest.raises(ValueError):
             ProcessCondition(name, kernel, dose)
+
+
+class TestShapeAndPadding:
+    """输入形态、居中补零与方向契约（设计文档 §11.3）。"""
+
+    def test_single_image_returns_same_shape(self):
+        """[H,W] 输入返回 [H,W] float32 输出。"""
+        model = ICCAD13Lithography(device="cpu")
+        output = model(torch.zeros((64, 48)), model.condition("nominal"))
+        assert output.shape == (64, 48)  # 形状还原
+        assert output.dtype == torch.float32  # 计算精度
+
+    def test_batch_returns_same_shape(self):
+        """[B,H,W] 输入返回 [B,H,W] 输出。"""
+        model = ICCAD13Lithography(device="cpu")
+        output = model(torch.zeros((3, 70, 90)), model.condition("defocus_min"))
+        assert output.shape == (3, 70, 90)  # 批量形状还原
+
+    def test_center_padding_layout(self):
+        """200×150 输入的低/高 padding 为 (28,28,53,53)，内容零移动。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = torch.ones((200, 150))  # 全透光便于验证内容位置
+        padded, (top, bottom, left, right), was_single = model._prepare_mask(mask)
+        assert (top, bottom, left, right) == (28, 28, 53, 53)  # 差值均分
+        assert padded.shape == (1, 256, 256)  # 补齐到画布
+        assert was_single  # 单张输入标记
+        assert torch.count_nonzero(padded[0, :top]) == 0  # 上侧全零
+        assert torch.count_nonzero(padded[0, -bottom:]) == 0  # 下侧全零
+        assert torch.count_nonzero(padded[0, :, :left]) == 0  # 左侧全零
+        assert torch.count_nonzero(padded[0, :, -right:]) == 0  # 右侧全零
+        assert torch.all(padded[0, top:top + 200, left:left + 150] == 1.0)  # 原位
+
+    def test_odd_remainder_goes_to_high_side(self):
+        """奇数余量归高坐标侧：201 高 → 低 27 高 28。"""
+        model = ICCAD13Lithography(device="cpu")
+        _, (top, bottom, left, right), _ = model._prepare_mask(
+            torch.zeros((201, 150)))
+        assert (top, bottom) == (27, 28)  # 高度差 55，低侧取半
+        assert (left, right) == (53, 53)  # 宽度差 106 均分
+
+    def test_full_canvas_not_shifted_or_cropped(self):
+        """满 256×256 输入 padding 全零，输出同形状不被二次移动。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = torch.zeros((256, 256))  # 满 canvas
+        mask[100:150, 120:140] = 1.0  # 局部透光块
+        _, padding, _ = model._prepare_mask(mask)
+        assert padding == (0, 0, 0, 0)  # 四边零补
+        output = model(mask, model.condition("nominal"))
+        assert output.shape == (256, 256)  # 不裁剪
+
+    def test_oversized_mask_fails(self):
+        """超过 canvas 的输入在频域数组分配前失败。"""
+        model = ICCAD13Lithography(device="cpu")
+        with pytest.raises(ValueError, match="超过 canvas"):
+            model(torch.zeros((257, 256)), model.condition("nominal"))
+
+    def test_four_dimensional_input_fails(self):
+        """四维输入拒绝。"""
+        model = ICCAD13Lithography(device="cpu")
+        with pytest.raises(ValueError, match="形状"):
+            model(torch.zeros((2, 64, 64, 64)), model.condition("nominal"))
+
+    def test_raster_canvas_passes_through_directly(self):
+        """opc.input 的 256 raster canvas 可直接作为输入，不被二次移动。"""
+        import klayout.db as kdb  # 仅集成测试引入版图依赖
+
+        from layout import DbuBox
+        from opc.input.raster import rasterize_mask_canvas
+        region = (kdb.Region(kdb.Box(200, 200, 1400, 1300)) -  # 非对称实心块
+                  kdb.Region(kdb.Box(500, 500, 900, 700)))  # 中心孔洞
+        canvas = rasterize_mask_canvas(  # 与 main 演示相同参数
+            region, DbuBox(0, 0, 1824, 1824), 8, 256, polarity="clear")
+        model = ICCAD13Lithography(device="cpu")
+        output = model(torch.from_numpy(canvas), model.condition("nominal"))
+        assert output.shape == (256, 256)  # 满 canvas 直通
+
+    def test_output_orientation_matches_input(self):
+        """输出坐标方向与输入一致：低 Y 亮半区的输出仍在低 Y。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = torch.zeros((128, 128))  # 行 0 = 最低 Y（左下原点）
+        mask[:64] = 1.0  # 仅低 Y 半区透光
+        with torch.no_grad():
+            output = model(mask, model.condition("nominal"))
+        # 若模型错误地翻转 Y，亮暗半区会对调
+        assert output[:64].mean() > output[64:].mean()  # 方向一致
+
+
+class TestCpuNumerics:
+    """CPU 固定数值与批量一致性（设计文档 §11.4）。"""
+
+    def test_reference_sums_match_openilt_baseline(self):
+        """三工艺角 sums 与 OpenILT 同资产基线一致（atol 0.05）。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask()  # 旧测试的确定性 [2,200,150]
+        with torch.no_grad():
+            batch = model.forward_many(mask, _default_conditions(model))
+        expected = torch.tensor([  # OpenILT 基线（实测逐位复现）
+            25802.533203125, 26009.16796875, 25675.23828125])
+        actual = torch.stack((  # 按基线顺序堆叠
+            batch["nominal"].sum(), batch["dose_max"].sum(),
+            batch["defocus_min"].sum()))
+        torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.05)
+
+    def test_batch_matches_single_images(self):
+        """batch 输出与逐张运行逐像素一致（atol 1e-6）。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask(64, 64)  # 小尺寸降低耗时
+        with torch.no_grad():
+            batch = model.forward_many(mask, _default_conditions(model))
+            first = model.forward_many(mask[:1], _default_conditions(model))
+            second = model.forward_many(mask[1:], _default_conditions(model))
+        for name in ("nominal", "dose_max", "defocus_min"):  # 逐条件逐像素
+            torch.testing.assert_close(
+                batch[name][0], first[name][0], rtol=0.0, atol=1e-6)
+            torch.testing.assert_close(
+                batch[name][1], second[name][0], rtol=0.0, atol=1e-6)
+
+    def test_full_canvas_output_is_continuous_not_input(self):
+        """满 canvas 输出不是原 mask，且含 (0,1) 开区间连续值。"""
+        model = ICCAD13Lithography(device="cpu")
+        generator = torch.Generator().manual_seed(7)  # 确定性随机
+        mask = (torch.rand((256, 256), generator=generator) > 0.5).float()
+        with torch.no_grad():
+            output = model(mask, model.condition("nominal"))
+        assert not torch.equal(output, mask)  # 经过真实光刻传播
+        assert torch.any((output > 0.0) & (output < 1.0))  # 连续过渡
+        assert 0.0 <= output.min().item()  # 范围下界
+        assert output.max().item() <= 1.0  # 范围上界
+
+    def test_custom_condition_takes_effect(self):
+        """自定义条件的名称、kernel、剂量都生效。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask(64, 64)  # [2,64,64]
+        conditions = (  # 自定义 + 两个对照
+            ProcessCondition("focus_101", "focus", 1.01),
+            model.condition("nominal"),
+            ProcessCondition("defocus_101", "defocus", 1.01))
+        with torch.no_grad():
+            result = model.forward_many(mask, conditions)
+        assert set(result) == {"focus_101", "nominal", "defocus_101"}  # 名称生效
+        assert result["focus_101"].shape == mask.shape  # 形状还原
+        assert not torch.equal(  # dose 生效：1.01 与 1.00 不同
+            result["focus_101"], result["nominal"])
+        assert not torch.equal(  # kernel 生效：同 dose 下 focus 与 defocus 不同
+            result["focus_101"], result["defocus_101"])
+
+    def test_duplicate_condition_names_fail(self):
+        """同一次 forward_many 内条件名称重复时失败。"""
+        model = ICCAD13Lithography(device="cpu")
+        conditions = [model.condition("nominal"),
+                      ProcessCondition("nominal", "focus", 1.5)]  # 重名不同义
+        with pytest.raises(ValueError, match="不能重复"):
+            model.forward_many(torch.zeros((32, 32)), conditions)
+
+    def test_empty_conditions_fail(self):
+        """空条件序列失败。"""
+        model = ICCAD13Lithography(device="cpu")
+        with pytest.raises(ValueError, match="至少需要一个"):
+            model.forward_many(torch.zeros((32, 32)), [])
+
+
+class TestSharedComputation:
+    """一次 FFT 与每 bank 一次传播的性能不变量（设计文档 §11.5）。"""
+
+    def test_single_fft_and_per_bank_propagation(self, monkeypatch):
+        """默认三条件调用恰一次 mask fft2、focus/defocus 各传播一次。"""
+        model = ICCAD13Lithography(device="cpu")
+        fft_calls: list[int] = []  # fft2 调用计数
+        original_fft2 = torch.fft.fft2  # 保存原函数
+        monkeypatch.setattr(torch.fft, "fft2", lambda *a, **kw: (
+            fft_calls.append(1), original_fft2(*a, **kw))[1])
+        propagate_calls: list[bool] = []  # 每次传播是否 focus bank
+        original_propagate = ICCAD13Lithography._propagate  # 保存原方法
+        monkeypatch.setattr(ICCAD13Lithography, "_propagate", lambda self_, s, k, sc: (
+            propagate_calls.append(k is self_.focus_kernels),
+            original_propagate(self_, s, k, sc))[1])
+        with torch.no_grad():
+            model.forward_many(_model_mask(64, 64), _default_conditions(model))
+        assert len(fft_calls) == 1  # mask FFT 只算一次
+        assert propagate_calls == [True, False]  # focus 一次、defocus 一次
+
+    def test_forward_many_matches_independent_calls(self):
+        """共享频谱的三条件结果与三次独立 forward 数值一致。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask(64, 64)
+        names = ("nominal", "dose_max", "defocus_min")
+        with torch.no_grad():
+            shared = model.forward_many(mask, _default_conditions(model))
+            independent = {name: model(mask, model.condition(name))
+                           for name in names}
+        for name in names:  # 共享路径不改变数值
+            torch.testing.assert_close(
+                shared[name], independent[name], rtol=0.0, atol=1e-6)
+
+
+class TestBackward:
+    """原生 autograd 的梯度正确性（设计文档 §11.6）。"""
+
+    def test_single_condition_mask_gradient(self):
+        """nominal 单条件对 mask 产生有限非零梯度。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask(64, 64)[0].clone().requires_grad_()  # 单张
+        model(mask, model.condition("nominal")).sum().backward()
+        assert mask.grad is not None  # 梯度存在
+        assert torch.all(torch.isfinite(mask.grad))  # 全部有限
+        assert torch.count_nonzero(mask.grad).item() > 0  # 非全零
+
+    def test_joint_condition_loss_gradient(self):
+        """nominal+dose_max−defocus_min 联合损失仍向 mask 传播梯度。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask(64, 64)[:1].clone().requires_grad_()  # [1,64,64]
+        result = model.forward_many(mask, _default_conditions(model))
+        loss = (result["nominal"].mean() + result["dose_max"].mean()
+                - result["defocus_min"].mean())  # 联合损失
+        loss.backward()
+        assert torch.all(torch.isfinite(mask.grad))  # 有限
+        assert torch.count_nonzero(mask.grad).item() > 0  # 非零
+
+    def test_batch_every_image_receives_gradient(self):
+        """batch 中每张 mask 都能获得非零梯度。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask(64, 64).requires_grad_()  # [2,64,64]
+        result = model.forward_many(mask, [model.condition("nominal")])
+        result["nominal"].sum().backward()
+        for image in range(2):  # 逐张检查
+            assert torch.count_nonzero(mask.grad[image]).item() > 0
+
+    def test_autograd_matches_nonuniform_finite_difference(self):
+        """非均匀上游权重下 autograd 与中心有限差分一致（旧测试移植）。"""
+        model = ICCAD13Lithography(device="cpu")
+        generator = torch.Generator().manual_seed(20260811)  # 固定随机源
+        mask = torch.rand((20, 18), generator=generator,
+                          dtype=torch.float32).requires_grad_()  # 连续 mask
+        # 非均匀权重避免对称损失掩盖梯度错误（均匀权重下对称扰动可能抵消）
+        weights = torch.linspace(-0.7, 1.3, mask.numel(),
+                                 dtype=torch.float32).reshape_as(mask)
+        condition = ProcessCondition("focus_101", "focus", 1.01)
+        torch.sum(model(mask, condition) * weights).backward()
+        assert mask.grad is not None  # autograd 梯度已就位
+        y, x, epsilon = 9, 8, 1e-3  # 检查点与扰动步长
+        with torch.no_grad():
+            plus, minus = mask.detach().clone(), mask.detach().clone()
+            plus[y, x] += epsilon  # 正扰动
+            minus[y, x] -= epsilon  # 负扰动
+            numerical = ((  # 中心差分：dL/dmask[y,x]
+                torch.sum(model(plus, condition) * weights)
+                - torch.sum(model(minus, condition) * weights))
+                / (2.0 * epsilon))
+        torch.testing.assert_close(
+            mask.grad[y, x], numerical, rtol=2e-2, atol=2e-2)
+
+    def test_buffers_have_no_grad_after_backward(self):
+        """backward 后 kernel/scale buffer 仍无 .grad（非可训练对象）。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = torch.zeros((32, 32), requires_grad=True)
+        model(mask, model.condition("nominal")).sum().backward()
+        for buffer in model.buffers():  # buffer.grad 恒 None
+            assert buffer.grad is None
+
+    def test_no_grad_output_has_no_graph(self):
+        """no_grad 推理输出不保留 autograd 图。"""
+        model = ICCAD13Lithography(device="cpu")
+        with torch.no_grad():
+            output = model(torch.zeros((32, 32)), model.condition("nominal"))
+        assert not output.requires_grad  # 纯推理无图
+        requires_input = torch.zeros((32, 32), requires_grad=True)
+        with torch.no_grad():  # 即使输入带 grad，no_grad 下也不建图
+            detached = model(requires_input, model.condition("nominal"))
+        assert not detached.requires_grad
+
+
+class TestCuda:
+    """CUDA parity 与直接环境运行（设计文档 §11.7，无 GPU 时跳过）。"""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(),
+                        reason="当前环境没有 CUDA")
+    def test_cuda_matches_cpu(self):
+        """CPU/GPU 同输入同条件输出在容差内一致。"""
+        model = ICCAD13Lithography(device="cpu")
+        mask = _model_mask(64, 64)
+        conditions = _default_conditions(model)
+        with torch.no_grad():
+            cpu = model.forward_many(mask, conditions)
+            gpu_model = ICCAD13Lithography(device="cuda")
+            gpu = gpu_model.forward_many(mask.cuda(), conditions)
+        for name in ("nominal", "dose_max", "defocus_min"):
+            torch.testing.assert_close(  # FFT 实现差异下的浮点容差
+                cpu[name], gpu[name].cpu(), rtol=1e-4, atol=1e-4)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(),
+                        reason="当前环境没有 CUDA")
+    def test_cuda_forward_backward_complete(self):
+        """CUDA forward/backward 均完成且梯度有限。"""
+        model = ICCAD13Lithography(device="cuda")
+        mask = _model_mask(64, 64).cuda().requires_grad_()
+        result = model.forward_many(mask, _default_conditions(model))
+        result["nominal"].sum().backward()
+        torch.cuda.synchronize()  # 显式同步确保异步错误暴露
+        assert mask.grad is not None
+        assert torch.all(torch.isfinite(mask.grad))
+
+    @pytest.mark.skipif(not torch.cuda.is_available(),
+                        reason="当前环境没有 CUDA")
+    def test_direct_environment_python_loads_cuda_runtime(self, project_root):
+        """环境 python.exe 子进程直跑必须能加载 CUDA 运行时。"""
+        code = (  # 与旧测试同构：不依赖 conda run 与项目安装
+            "import json,torch; from lithography import ICCAD13Lithography; "
+            "m=ICCAD13Lithography(device='cuda'); "
+            "x=torch.zeros((1,64,64),device='cuda'); "
+            "y=m(x,m.condition('nominal')); torch.cuda.synchronize(); "
+            "print(json.dumps({'shape':list(y.shape),'device':str(y.device)}))")
+        completed = subprocess.run(
+            [sys.executable, "-c", code], cwd=project_root, capture_output=True,
+            text=True, timeout=120, check=False)
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout) == {
+            "shape": [1, 64, 64], "device": "cuda:0"}
+
+    @pytest.mark.skipif(not torch.cuda.is_available(),
+                        reason="当前环境没有 CUDA")
+    def test_cuda_reports_peak_memory(self):
+        """记录 CUDA elapsed 与 peak allocated（不设绝对阈值）。"""
+        model = ICCAD13Lithography(device="cuda")
+        torch.cuda.reset_peak_memory_stats()  # 从模型加载后开始计量
+        mask = _model_mask(200, 150).cuda()  # 基线用同尺寸
+        started = time.perf_counter()  # 计时起点
+        with torch.no_grad():
+            model.forward_many(mask, _default_conditions(model))
+        torch.cuda.synchronize()  # 等待全部核函数完成
+        elapsed = time.perf_counter() - started  # 实测耗时
+        peak = torch.cuda.max_memory_allocated()  # 实测峰值
+        assert elapsed > 0  # 只记录不设阈值
+        assert peak > 0  # 确实发生了 GPU 分配

@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+import os
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
 from typing import Literal
 
+# Windows 直接执行环境内 python.exe 时不会像 conda run 那样把 <env>/bin 加入
+# DLL 搜索目录，而 PyTorch 的 NVRTC JIT 运行时（nvrtc-builtins64_*.dll）位于
+# 该目录；缺目录时 torch.cuda.is_available() 仍为 True，直到首次 CUDA FFT 才
+# 抛 nvrtc 错误（迁移实测复现，设计文档 §11.7 授权的最小修复）。句柄必须在
+# 进程生命周期内保留，否则目录会立即从搜索路径移除；非 Windows 不执行。
+_DLL_DIRECTORY = None
+if os.name == "nt":
+    _cuda_dll_dir = Path(sys.prefix) / "bin"
+    if _cuda_dll_dir.is_dir():
+        _DLL_DIRECTORY = os.add_dll_directory(str(_cuda_dll_dir))
+        os.environ["PATH"] = (
+            f"{_cuda_dll_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+# torch 导入必须保持在上述 DLL 目录注册之后：先注册后导入才能保证
+# 首次 CUDA 操作在任意启动方式下都找得到 NVRTC 运行时。
 import torch
 from torch import nn
+from torch.nn import functional
 
 # 当前 OpenILT 资产每个 bank 固定提供 24 个 Hopkins 核；配置请求超过该上限说明
 # 配置与资产世代不符，必须在解析期拒绝，而不是运行期得到错误截断的结果。
@@ -216,3 +235,124 @@ class ICCAD13Lithography(nn.Module):
         return (kernels.permute(2, 0, 1).to(
                     dtype=torch.complex64, device=device).contiguous(),
                 scales.to(dtype=torch.float32, device=device).contiguous())
+
+    def _prepare_mask(
+            self, mask: torch.Tensor
+    ) -> tuple[torch.Tensor, tuple[int, int, int, int], bool]:
+        """规范化单张/批量 mask，并居中补零到固定 canvas。"""
+        # 输入只接受单张 [H,W] 或批量 [B,H,W]；其他维度在频域大数组分配
+        # 之前拒绝（设计文档 §5.1），错误不会留下等待回收的大张量。
+        was_single = mask.ndim == 2
+        if was_single:
+            mask = mask.unsqueeze(0)  # 统一为 [B,H,W] 处理
+        if mask.ndim != 3:
+            raise ValueError("光刻 mask 必须具有 [H,W] 或 [B,H,W] 形状")
+        mask = mask.to(device=self.device, dtype=torch.float32)
+        height, width = mask.shape[-2:]
+        canvas = self.config.canvas
+        if height > canvas or width > canvas:
+            raise ValueError(f"光刻 mask 尺寸 {height}x{width} 超过 canvas {canvas}")
+        # 差值平均分配到低/高两侧，奇数余量归高坐标侧——与 opc.input.raster
+        # 的居中 padding 约定逐位一致，同一几何永远得到同一 canvas 布局。
+        top = (canvas - height) // 2
+        bottom = canvas - height - top
+        left = (canvas - width) // 2
+        right = canvas - width - left
+        padded = functional.pad(mask, (left, right, top, bottom))
+        return padded, (top, bottom, left, right), was_single
+
+    @staticmethod
+    def _kernel_multiply(
+            kernels: torch.Tensor, spectrum: torch.Tensor,
+            kernel_count: int) -> torch.Tensor:
+        """把中心原点 kernel 的四个象限批量映射到 FFT 频谱四角。"""
+        # kernel 自身尺寸决定象限块大小（35→18/17）：Hopkins 核只覆盖中心
+        # ±17 个频率采样点，因此频谱只有四角低频块与 kernel 相乘，其余
+        # 频率保持零，模型天然抑制高频伪影。
+        height, width = kernels.shape[-2:]
+        half_height, half_width = height // 2, width // 2
+        output = torch.zeros(
+            (spectrum.shape[0], kernel_count,
+             spectrum.shape[-2], spectrum.shape[-1]),
+            dtype=spectrum.dtype, device=spectrum.device)
+        # 保持 OpenILT 的频域象限约定，不显式执行 fftshift；四次批量赋值
+        # 避免对 kernel 或像素的 Python 循环，是 GPU 热路径的主要性能
+        # 不变量。赋值顺序固定左上→右上→左下→右下：DC 与 Nyquist 的重叠
+        # 行/列由后写的象限覆盖。
+        output[:, :, :half_height + 1, :half_width + 1] = (
+            spectrum[:, :, :half_height + 1, :half_width + 1] *
+            kernels[None, :kernel_count, -(half_height + 1):, -(half_width + 1):])
+        output[:, :, :half_height + 1, -half_width:] = (
+            spectrum[:, :, :half_height + 1, -half_width:] *
+            kernels[None, :kernel_count, -(half_height + 1):, :half_width])
+        output[:, :, -half_height:, :half_width + 1] = (
+            spectrum[:, :, -half_height:, :half_width + 1] *
+            kernels[None, :kernel_count, :half_height, -(half_width + 1):])
+        output[:, :, -half_height:, -half_width:] = (
+            spectrum[:, :, -half_height:, -half_width:] *
+            kernels[None, :kernel_count, :half_height, :half_width])
+        return output
+
+    def _propagate(
+            self, spectrum: torch.Tensor, kernels: torch.Tensor,
+            scales: torch.Tensor) -> torch.Tensor:
+        """从共享 mask 频谱计算一个 kernel bank 的单位剂量强度。"""
+        # 每 kernel 一次 ifft2 回到空间域，取模平方后按 scale 加权求和，
+        # 得到单位剂量下的 Hopkins 部分相干强度 [B,canvas,canvas]。
+        fields = torch.fft.ifft2(
+            self._kernel_multiply(kernels, spectrum, self.config.kernel_count),
+            norm="forward")
+        weights = scales[:self.config.kernel_count][None, :, None, None]
+        return torch.sum(weights * torch.abs(fields).square(), dim=1)
+
+    def forward_many(
+            self, mask: torch.Tensor,
+            conditions: Sequence[ProcessCondition]) -> dict[str, torch.Tensor]:
+        """一次计算多个独立工艺条件，并保留 mask 的 autograd 图。"""
+        requested = tuple(conditions)
+        if not requested:
+            raise ValueError("至少需要一个光刻工艺条件")
+        if any(not isinstance(condition, ProcessCondition)
+               for condition in requested):
+            raise TypeError("conditions 必须全部是 ProcessCondition")
+        names = [condition.name for condition in requested]
+        if len(set(names)) != len(names):
+            raise ValueError("同一次仿真的工艺条件名称不能重复")
+        prepared, (top, bottom, left, right), was_single = self._prepare_mask(mask)
+        # 所有条件共享同一 mask FFT；相同 kernel bank 的单位剂量强度也只
+        # 传播一次。剂量乘在振幅上，强度严格按 dose² 缩放，因此 dose 只
+        # 通过 dose² 因子复用同一 unit。缓存仅存在于本次调用的 autograd
+        # 图中，不跨 mask 保存——MB-OPC 的 no_grad 推理与 ILT 的 backward
+        # 走同一条路径。
+        spectrum = torch.fft.fft2(
+            prepared.to(torch.complex64).unsqueeze(1), norm="forward")
+        steepness = self.config.print_steepness
+        density = self.config.target_density
+        intensities: dict[str, torch.Tensor] = {}  # bank 名 → 单位剂量强度
+        results: dict[str, torch.Tensor] = {}
+        for condition in requested:
+            unit = intensities.get(condition.kernel)
+            if unit is None:  # 该 bank 首次出现才传播，后续条件直接复用
+                if condition.kernel == "focus":
+                    kernels, scales = self.focus_kernels, self.focus_scales
+                else:
+                    kernels, scales = self.defocus_kernels, self.defocus_scales
+                unit = self._propagate(spectrum, kernels, scales)
+                intensities[condition.kernel] = unit
+            printed = torch.sigmoid(
+                steepness * (unit * (condition.dose ** 2) - density))
+            # 内联 crop：去掉居中补零的四边恢复输入 H×W（top+高度恰等于
+            # canvas−bottom，因此统一切片公式对零 padding 同样正确）；
+            # 单张输入再压回 [H,W]。
+            restored = printed[
+                :, top:printed.shape[-2] - bottom,
+                left:printed.shape[-1] - right]
+            results[condition.name] = restored[0] if was_single else restored
+        return results
+
+    def forward(self, mask: torch.Tensor,
+                condition: ProcessCondition) -> torch.Tensor:
+        """执行单工艺条件的 mask 到连续 printed image 前向。"""
+        if not isinstance(condition, ProcessCondition):
+            raise TypeError("condition 必须是 ProcessCondition")
+        return self.forward_many(mask, (condition,))[condition.name]

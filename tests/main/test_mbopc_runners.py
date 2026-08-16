@@ -400,3 +400,15 @@ class TestConfigValidation:
         """越界迭代参数、步长/探针越限与未知设备都失败。"""
         with pytest.raises(ValueError, match=pattern):
             workflow.load_config(self._config_path(tmp_path, **overrides))
+
+    @pytest.mark.parametrize(
+        ("overrides", "field"),
+        [({"iterations": 1.5}, "iterations"),
+         ({"iterations": "true"}, "iterations"),
+         ({"batch_size": 2.0}, "batch_size"),
+         ({"target_cache_mb": "true"}, "target_cache_mb")],
+        ids=["iter=1.5", "iter=true", "batch=2.0", "cache=true"])
+    def test_non_integer_values_fail(self, tmp_path, overrides, field):
+        """浮点或布尔的整数配置被严格拒绝，不静默截断（审查 P1.3 回归）。"""
+        with pytest.raises(ValueError, match=field):
+            workflow.load_config(self._config_path(tmp_path, **overrides))

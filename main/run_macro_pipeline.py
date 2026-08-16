@@ -16,7 +16,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
-from layout import DbuBox, LayerSpec, LayoutDB  # 回零验证的版图查询
+from layout import LayerSpec, LayoutDB  # 回零验证的版图查询
 from main._macro_pipeline import (  # 两个真实流程共用的 macro 生命周期
     atomic_write_json,
     exact_dbu,
@@ -176,12 +176,18 @@ def run(config_path: str | Path) -> dict:
     # 回零验证：第二轮位移精确为零后，最终覆盖与原始目标层 XOR 面积必须为零。
     layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
     with LayoutDB.open(final_path) as database:  # 回读最终版图
-        final_batch = database.query(  # 全框查询
-            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
+        final_bounds = database.layer_bbox(layer)  # 最终层真实包络
+        if final_bounds is None:  # 空层即回零失败
+            raise RuntimeError("最终版图目标层为空")
+        final_batch = database.query(  # 层包络内查询物化
+            [layer], final_bounds).materialize()  # 物化
     with LayoutDB.open(plan["layout"], plan["top_cell"]) as database:  # 原始版图
-        source_batch = database.query(  # 全框查询
-            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-        ).materialize_intersecting()  # 完整原图形（不引入查询框边）
+        source_bounds = database.layer_bbox(layer)  # 原始层真实包络
+        if source_bounds is None:  # 空层无法比较
+            raise RuntimeError("原始版图目标层为空")
+        source_batch = database.query(  # 包络内完整相交物化
+            [layer], source_bounds  #   （不引入查询框边；包络恰含全部图形）
+        ).materialize_intersecting()  # 完整原图形
     final_xor_area = int(  # 回零 XOR 面积
         (final_batch.region(layer) ^ source_batch.region(layer)).area())  # 比较
     if final_xor_area != 0:  # 第二轮回零后 XOR 非零即为回零失败

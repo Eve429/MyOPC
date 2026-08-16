@@ -297,6 +297,7 @@ def optimize_macro(
             (target_round - 1) // config.decay_every)
 
     segment_count = problem.segments.segment_count  # 段数 S
+    owner_count = int(np.count_nonzero(problem.owner_indices >= 0))  # owner 段数
     zeros = np.zeros(segment_count, dtype=np.float64)  # 零位移状态
     # baseline：零位移重建并评价；它同时产生 Round 1 提案。
     started = time.perf_counter()  # baseline 计时
@@ -315,7 +316,14 @@ def optimize_macro(
     best_displacements = zeros.copy()  # 零位移副本
     stop_reason: str | None = None  # 停止原因
     stop_detail: str | None = None  # 非法候选原因
-    if proposal.epe == 0:  # baseline 已无违规
+    if owner_count and proposal.valid_probes == 0:  # 有段却无有效探针
+        # 「无法评价」不是「零违规」：探针越过窄特征落入异侧（如 2nm 壁 +
+        # 8nm 探针距离）时全部探针被判无效，epe 恒为 0；此时以零位移为 best
+        # 终止并显式记录原因，不冒充收敛。
+        stop_reason = "insufficient_probes"
+        stop_detail = (f"有效 EPE 探针 0 个 / owner 段 {owner_count} 个，"
+                       "无法评价（探针距离可能大于最窄特征）")
+    elif proposal.epe == 0:  # baseline 已无违规
         stop_reason = "zero_epe"  # 直接以零位移为最佳
     else:  # 常规路径：逐轮移动并评价
         for round_index in range(1, config.iterations + 1):  # 移动后状态轮次
@@ -342,6 +350,13 @@ def optimize_macro(
                 moved_segments=candidate_moved,  # 产生本状态时移动的段数
                 elapsed_seconds=time.perf_counter() - started))
             pending_step = pending_next  # 下轮记录使用的步长
+            if owner_count and proposal.valid_probes == 0:  # 移动后无法评价
+                # 必须先于 best 比较终止：valid_probes==0 时 epe 恒 0，若放行
+                # 会被 epe<best 误当成改善状态。
+                stop_reason = "insufficient_probes"
+                stop_detail = (f"round {round_index} 有效 EPE 探针 0 个 / "
+                               f"owner 段 {owner_count} 个，无法评价")
+                break
             if proposal.epe < best_epe:  # 严格更小才更新；相同保留较早轮
                 best_epe = proposal.epe
                 best_round = round_index

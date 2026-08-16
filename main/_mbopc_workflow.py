@@ -19,7 +19,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/lithography 可导入
 
-from layout import DbuBox, LayerSpec, LayoutDB  # 最终光刻输出的版图回读
+from layout import LayerSpec, LayoutDB  # 最终光刻输出的版图回读
 from lithography import ICCAD13Lithography  # 固定 ICCAD13 光刻模型
 from main._macro_pipeline import (  # 共用 macro 生命周期
     MacroPipelineConfig,
@@ -50,6 +50,14 @@ _MBOPC_KEYS = {"iterations", "initial_step_nm", "decay_every", "epe_distance_nm"
 _RESULT_FORMAT_VERSION = 1  # 每 macro result NPZ 结构版本
 # device 只接受 auto / cpu / cuda / cuda:N（N 为非负整数）。
 _DEVICE_PATTERN = re.compile(r"^(auto|cpu|cuda(:[0-9]+)?)$")
+
+
+def _as_int(value: object, name: str) -> int:
+    """拒绝浮点与布尔的严格整数转换（TOML 的 1.5/true 不许静默截断）。"""
+    if not isinstance(value, int) or isinstance(value, bool):
+        # 配置层全部错误统一 ValueError（与同函数其余校验一致）。
+        raise ValueError(f"{name} 必须是整数，不接受 {value!r}")  # noqa: TRY004
+    return int(value)  # 已是严格 int，转换只为类型收窄
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,10 +91,11 @@ def load_config(path: str | Path) -> MBOPCRunConfig:
     missing = [key for key in required if key not in section]  # 缺失键
     if missing:  # 显式报错
         raise ValueError(f"[mbopc] 缺少必填键：{missing}")
-    iterations = int(section["iterations"])  # 迭代数
-    decay_every = int(section["decay_every"])  # 衰减周期
-    batch_size = int(section["batch_size"])  # 批大小
-    target_cache_mb = int(section["target_cache_mb"])  # 缓存上限
+    iterations = _as_int(section["iterations"], "iterations")  # 迭代数
+    decay_every = _as_int(section["decay_every"], "decay_every")  # 衰减周期
+    batch_size = _as_int(section["batch_size"], "batch_size")  # 批大小
+    target_cache_mb = _as_int(  # 缓存上限
+        section["target_cache_mb"], "target_cache_mb")  # 严格整数
     if (iterations < 1 or decay_every < 1 or batch_size < 1
             or target_cache_mb < 0):
         raise ValueError("iterations/decay_every/batch_size 必须为正，cache 为非负")
@@ -296,56 +305,60 @@ def save_final_lithography(
     canvas_pixels = int(plan["canvas_pixels"])  # 画布
     core_dbu = int(plan["core_size_dbu"])  # tile 尺寸
     context_dbu = int(plan["context_dbu"])  # tile 上下文
-    with LayoutDB.open(final_layout) as database:  # 回读最终版图
-        bounds = database.layer_bbox(layer)  # 目标层 bbox
+    with LayoutDB.open(final_layout) as database:  # 打开一次，全程在内物化消费
+        bounds = database.layer_bbox(layer)  # 目标层真实包络（不用魔法框）
         if bounds is None:  # 空层无法出图
             raise ValueError("最终版图目标层为空")
-        batch = database.query(  # 全框物化最终覆盖
-            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()
-    region = batch.region(layer)  # 最终 Region
-    # 独立规整 tile 网格：单 macro 全 ROI 按 core 切分。可视化网格不必复刻
-    # 迭代期 macro 边界，网格参数全部写入 manifest 供对账。
-    macro = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=core_dbu,
-                        context_dbu=context_dbu, pixel_dbu=pixel_dbu,
-                        canvas_pixels=canvas_pixels)[0]
-    output_dir.mkdir(parents=True, exist_ok=True)  # 留档目录
-    threshold = float(model.config.print_threshold)  # 二值阈值
-    core_count = macro.core_count  # tile 总数
-    tiles = []  # manifest 条目
-    with torch.no_grad():  # 纯推理
-        for batch_start in range(0, core_count, batch_size):  # 流式分批
-            specs = [macro.core(index) for index in range(  # 本批 tile
-                batch_start, min(batch_start + batch_size, core_count))]
-            masks = np.stack([rasterize_mask_canvas(  # 每 tile 居中画布
-                region, spec.context_box, pixel_dbu, canvas_pixels,
-                polarity=polarity) for spec in specs])
-            mask_tensor = torch.from_numpy(masks).to(model.device)  # 送设备
-            printed = model.forward_many(  # 一次标称前向
-                mask_tensor, (model.condition("nominal"),))["nominal"]
-            images = printed.cpu().numpy()  # 取回 CPU
-            del printed, mask_tensor  # 每 batch 写完立即释放
-            for spec, image in zip(specs, images):  # 逐 tile 写 PNG
-                tile_id = spec.core_id  # 稳定 tile 编号
-                nominal_png = output_dir / f"{tile_id}_nominal.png"  # 连续灰度
-                Image.fromarray(  # 连续值 0~255
-                    np.rint(image * 255.0).astype(np.uint8), mode="L").save(
-                    nominal_png)
-                binary_png = output_dir / f"{tile_id}_binary.png"  # 阈值二值
-                Image.fromarray(  # 阈值以上 255、其余 0
-                    np.where(image >= threshold, 255, 0).astype(np.uint8),
-                    mode="L").save(binary_png)
-                tiles.append({  # manifest 条目
-                    "tile_id": tile_id,
-                    "ownership_box": [spec.ownership_box.left,
-                                      spec.ownership_box.bottom,
-                                      spec.ownership_box.right,
-                                      spec.ownership_box.top],
-                    "context_box": [spec.context_box.left,
-                                    spec.context_box.bottom,
-                                    spec.context_box.right,
-                                    spec.context_box.top],
-                    "nominal_png": nominal_png.name,
-                    "binary_png": binary_png.name})
+        # 独立规整 tile 网格：单 macro 全 ROI 按 core 切分。可视化网格不必复刻
+        # 迭代期 macro 边界，网格参数全部写入 manifest 供对账。
+        macro = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=core_dbu,
+                            context_dbu=context_dbu, pixel_dbu=pixel_dbu,
+                            canvas_pixels=canvas_pixels)[0]
+        output_dir.mkdir(parents=True, exist_ok=True)  # 留档目录
+        threshold = float(model.config.print_threshold)  # 二值阈值
+        core_count = macro.core_count  # tile 总数
+        tiles = []  # manifest 条目
+
+        def _window_region(spec):
+            """只物化该 tile context 窗口相交的局部几何，用完即弃。"""
+            return (database.query([layer], spec.context_box)  # 窗口查询
+                    .materialize_intersecting()  # 完整相交物化（局部 Region）
+                    .region(layer))  # 局部几何
+
+        with torch.no_grad():  # 纯推理
+            for batch_start in range(0, core_count, batch_size):  # 流式分批
+                specs = [macro.core(index) for index in range(  # 本批 tile
+                    batch_start, min(batch_start + batch_size, core_count))]
+                masks = np.stack([rasterize_mask_canvas(  # 每 tile 窗口就地栅格
+                    _window_region(spec), spec.context_box, pixel_dbu,
+                    canvas_pixels, polarity=polarity) for spec in specs])
+                mask_tensor = torch.from_numpy(masks).to(model.device)  # 送设备
+                printed = model.forward_many(  # 一次标称前向
+                    mask_tensor, (model.condition("nominal"),))["nominal"]
+                images = printed.cpu().numpy()  # 取回 CPU
+                del printed, mask_tensor  # 每 batch 写完立即释放
+                for spec, image in zip(specs, images):  # 逐 tile 写 PNG
+                    tile_id = spec.core_id  # 稳定 tile 编号
+                    nominal_png = output_dir / f"{tile_id}_nominal.png"  # 连续灰度
+                    Image.fromarray(  # 连续值 0~255
+                        np.rint(image * 255.0).astype(np.uint8), mode="L").save(
+                        nominal_png)
+                    binary_png = output_dir / f"{tile_id}_binary.png"  # 阈值二值
+                    Image.fromarray(  # 阈值以上 255、其余 0
+                        np.where(image >= threshold, 255, 0).astype(np.uint8),
+                        mode="L").save(binary_png)
+                    tiles.append({  # manifest 条目
+                        "tile_id": tile_id,
+                        "ownership_box": [spec.ownership_box.left,
+                                          spec.ownership_box.bottom,
+                                          spec.ownership_box.right,
+                                          spec.ownership_box.top],
+                        "context_box": [spec.context_box.left,
+                                        spec.context_box.bottom,
+                                        spec.context_box.right,
+                                        spec.context_box.top],
+                        "nominal_png": nominal_png.name,
+                        "binary_png": binary_png.name})
     manifest = {  # 完整清单
         "format_version": 1,
         "pixel_dbu": pixel_dbu, "canvas_pixels": canvas_pixels,

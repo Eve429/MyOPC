@@ -530,8 +530,9 @@ class TestGeometryMatrix:
 
     def _assert_healthy(self, result, problem):
         """断言结果满足全部结构不变量。"""
-        assert result.stop_reason in {  # 四种合法停止
-            "zero_epe", "no_update", "invalid_geometry", "iteration_limit"}
+        assert result.stop_reason in {  # 五种合法停止
+            "zero_epe", "no_update", "invalid_geometry",
+            "insufficient_probes", "iteration_limit"}
         assert result.records[0].round_index == 0  # baseline 在首位
         if result.stop_reason == "invalid_geometry":
             assert result.stop_detail  # 原因非空
@@ -617,6 +618,22 @@ class TestGeometryMatrix:
         assert len(result.records) == 1
         assert result.best_displacements.shape == (0,)  # 空位移向量
 
+    def test_narrow_wall_with_oversized_probes_is_insufficient(self):
+        """2nm 窄壁 + 8nm 探针：全部探针无效时报告无法评价而非零违规。"""
+        # 壁宽 2nm（外框 10..70、hole 12..68），探针距离 8nm 越过壁落入
+        # 异侧，inner/outer 的 target 语义全部不成立 → valid_probes == 0。
+        region = (kdb.Region(kdb.Box(10, 10, 70, 70)) -
+                  kdb.Region(kdb.Box(12, 12, 68, 68)))  # 壁宽 2nm
+        problem = _problem(region)
+        result = optimize_macro(problem, self._model, _config(
+            iterations=1, epe_distance_dbu=8.0), TargetCanvasCache(0))
+        assert result.stop_reason == "insufficient_probes"  # 不是 zero_epe
+        assert result.records[0].valid_probes == 0  # 确无有效探针
+        assert result.records[0].epe == 0  # epe 恒 0（无法评价 ≠ 零违规）
+        assert "有效 EPE 探针 0 个" in result.stop_detail  # 原因在案
+        assert result.best_round == 0  # 保留零位移 baseline
+        assert len(result.records) == 1  # 无移动后状态
+
 
 class TestRealModelCuda:
     """CUDA 可用时的真实模型直通验证。"""
@@ -629,6 +646,7 @@ class TestRealModelCuda:
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         result = optimize_macro(problem, model, _config(iterations=1),
                                 TargetCanvasCache(0))
-        assert result.stop_reason in {
-            "zero_epe", "no_update", "invalid_geometry", "iteration_limit"}
+        assert result.stop_reason in {  # 五种合法停止
+            "zero_epe", "no_update", "invalid_geometry",
+            "insufficient_probes", "iteration_limit"}
         assert np.all(np.isfinite(result.best_displacements))

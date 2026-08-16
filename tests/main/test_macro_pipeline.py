@@ -161,6 +161,22 @@ class TestConfigValidation:
         with pytest.raises(ValueError, match="round_deltas_nm"):  # 报错含参数名
             pipeline.run(config_path)  # 落格点换算在 run 内用实际 dbu 执行
 
+    @pytest.mark.parametrize(
+        ("old", "new", "field"),
+        [("layer = 1", "layer = 1.5", "layer"),
+         ("layer = 1", "layer = true", "layer"),
+         ("canvas_pixels = 256", "canvas_pixels = 256.0", "canvas_pixels"),
+         ("canvas_pixels = 256", "canvas_pixels = true", "canvas_pixels")],
+        ids=["layer=1.5", "layer=true", "canvas=256.0", "canvas=true"])
+    def test_non_integer_layer_or_canvas_rejected(self, tmp_path, old, new, field):
+        """浮点或布尔的 layer/canvas_pixels 被严格拒绝（审查 P1.3 回归）。"""
+        gds = _write_gds(tmp_path)  # 生成 GDS
+        path = _write_config(tmp_path, gds)  # 基准配置
+        text = path.read_text(encoding="utf-8").replace(old, new)  # 注入类型错误
+        path.write_text(text, encoding="utf-8")  # 写回
+        with pytest.raises(ValueError, match=field):  # 必须报字段名
+            _load(path)  # 宏管线配置加载
+
 
 class TestPrepareProblems:
     """阶段 0/1 的 plan 与 problem 产物。"""

@@ -39,6 +39,14 @@ _ALLOWED_KEYS = {  # 段名 → 允许键集合
 _PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
 
 
+def _as_int(value: object, name: str) -> int:
+    """拒绝浮点与布尔的严格整数转换（TOML 的 1.5/true 不许静默截断）。"""
+    if not isinstance(value, int) or isinstance(value, bool):
+        # 配置层全部错误统一 ValueError（与同函数其余校验一致）。
+        raise ValueError(f"{name} 必须是整数，不接受 {value!r}")  # noqa: TRY004
+    return int(value)  # 已是严格 int，转换只为类型收窄
+
+
 @dataclass(frozen=True, slots=True)
 class MacroPipelineConfig:
     """保存两级网格、problem 准备和 macro 结果写出共同需要的全部显式配置。"""
@@ -108,7 +116,7 @@ def load_macro_config(path: str | Path, *,
     final_cell_mode = str(output_section["final_cell_mode"])  # 最终 Cell 模式
     if final_cell_mode not in ("single_cell", "macro_cells"):  # 模式枚举校验
         raise ValueError(f"未知 final_cell_mode：{final_cell_mode}")
-    canvas_pixels = int(litho_section["canvas_pixels"])  # 画布像素数
+    canvas_pixels = _as_int(litho_section["canvas_pixels"], "canvas_pixels")  # 画布像素数
     if canvas_pixels != 256:  # ICCAD13 契约冻结为 256
         raise ValueError("canvas_pixels 当前固定为 256")
     # macro_grid 规范化：两项正整数 [列, 行]。
@@ -126,7 +134,8 @@ def load_macro_config(path: str | Path, *,
     return MacroPipelineConfig(  # 组装冻结配置对象
         layout_path=layout_path,  # 输入路径
         top_cell=str(input_section["top_cell"]) if "top_cell" in input_section else None,  # 顶层
-        layer=LayerSpec(int(input_section["layer"]), int(input_section["datatype"])),  # 目标层
+        layer=LayerSpec(_as_int(input_section["layer"], "layer"),
+                        _as_int(input_section["datatype"], "datatype")),  # 目标层
         polarity=polarity,  # 极性
         macro_size_nm=macro_size,  # 尺寸模式
         macro_grid=macro_grid,  # 数量模式
@@ -322,8 +331,11 @@ def merge_macro_results(
         if not gds_path.is_file():  # 缺失 macro GDS
             raise FileNotFoundError(f"缺失 macro GDS：{gds_path}")  # 明确失败
         with LayoutDB.open(gds_path) as database:  # 回读完整候选
-            batch = database.query(  # 全框查询目标层
-                [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
+            layer_bounds = database.layer_bbox(layer)  # 候选层真实包络
+            if layer_bounds is None:  # 候选 GDS 目标层为空
+                raise RuntimeError(f"{macro_id} 候选 GDS 目标层为空")
+            batch = database.query(  # 层包络内查询物化（不用魔法框：
+                [layer], layer_bounds).materialize()  #   ±2^30 只盖 int32 域一半)
         region = batch.region(layer)  # 候选 Region
         if not region.has_valid_polygons():  # 无效 polygon
             raise RuntimeError(f"{macro_id} 候选 Region 含无效 polygon")  # 明确失败
@@ -337,13 +349,24 @@ def merge_macro_results(
         patches, output_path, dbu_um,  # patch 集合与 DBU
         cell_mode=cell_mode)  # single_cell 或 macro_cells
     # 回读验证：merge/normalize 只能改变表示方式，不得改变物理覆盖面积。
+    # 逐 macro 在自身 ownership 窗口统计面积后累加——ownership 半开不重叠、
+    # 最终图形不越出 bbox，分块求和与全量面积数学等价，且避免第二个全量
+    # Region 常驻（每窗口 Region 用完即弃）；失败时可定位到具体 macro。
+    area_after = 0  # 回读累计面积
     with LayoutDB.open(written) as database:  # 回读最终版图
-        final_batch = database.query(  # 全框查询目标层
-            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
-    coverage = final_batch.region(layer)  # 最终覆盖
-    if not coverage.has_valid_polygons():  # 无效 polygon
-        raise RuntimeError("最终版图含无效 polygon")  # 明确失败
-    if int(coverage.area()) != area_before:  # 覆盖面积被 normalize 改变
+        for entry in plan["macros"]:  # 逐 macro 窗口
+            ownership = DbuBox(*entry["ownership_box"])  # 该 macro 计分框
+            window = (database.query([layer], ownership)  # 窗口查询
+                      .materialize_intersecting())  # 完整相交物化（不裁剪）
+            # 完整相交会带入跨界 polygon 伸出窗口的部分，必须显式裁回
+            # ownership（与主路径 clipped 同款），否则相邻窗口重复计数。
+            region = (window.region(layer)  # 窗口内覆盖
+                      & kdb.Region(ownership.to_native()))  # 精确裁剪
+            if not region.has_valid_polygons():  # 无效 polygon
+                raise RuntimeError(  # 明确失败并定位 macro
+                    f"{entry['macro_id']} 窗口含无效 polygon")
+            area_after += int(region.area())  # 累计窗口面积
+    if area_after != area_before:  # 覆盖面积被 normalize 改变
         raise RuntimeError(  # 明确失败
-            f"merge 前后覆盖面积改变：{area_before} -> {coverage.area()}")  # 报数值
+            f"merge 前后覆盖面积改变：{area_before} -> {area_after}")  # 报数值
     return written  # 返回最终版图路径

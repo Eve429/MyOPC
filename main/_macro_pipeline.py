@@ -1,4 +1,4 @@
-"""两个真实流程（验证管线与 MB-OPC）共用的 Macro 配置、准备、写出与合并。"""
+"""多个真实流程共用的 macro 生命周期：problem 准备、候选写出与最终合并。"""
 
 import json  # 序列化 plan.json
 import os  # 原子替换与文件系统操作
@@ -6,14 +6,12 @@ import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import tempfile  # 创建与目标同目录的临时文件
 import time  # perf_counter 阶段计时
 from collections.abc import Mapping  # merge 映射参数的只读类型
-from dataclasses import dataclass, fields  # 共享配置结构与子类组装
 from decimal import Decimal  # nm→DBU 的精确十进制换算
 from pathlib import Path  # 全部路径统一使用 Path 对象
 from typing import Literal  # cell_mode 的字面量类型
 
 import klayout.db as kdb  # 写出 macro GDS 与所有权裁剪的原生版图对象
 import psutil  # 阶段 RSS 峰值测量；缺失时直接 ImportError 不降级
-from tomllib import loads as toml_loads  # Python 3.12 标准库 TOML 解析
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
@@ -22,169 +20,18 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
 from layout import DbuBox, LayerSpec, LayoutDB  # 版图打开、层规格与坐标框
-from opc.input import MaskPolarity, plan_macros  # 两级网格规划
+from main.configuration import (  # 统一配置体系（按业务划分的输入）
+    EdgeConfig,
+    LayoutConfig,
+    LithographyConfig,
+    OutputConfig,
+    PartitionConfig,
+)
+from opc.input import plan_macros  # 两级网格规划
 from opc.input.edge import MacroProblem, prepare_macro_problem  # problem 构造
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
-# 宏管线公共四段（不含 output）允许出现的键；未知键一律拒绝，防止拼写错误
-# 被静默忽略。output 段的允许键由调用方声明（work_dir 只属于管线扩展层），
-# 调用方流程专属段（如验证的 [iteration]、MB-OPC 的 [mbopc]、单遍的
-# [iteration]）通过 extra_sections 显式放行，段内键由各流程自己校验。
-_COMMON_ALLOWED_KEYS = {  # 段名 → 允许键集合
-    "input": {"layout", "top_cell", "layer", "datatype", "polarity"},  # 输入版图与目标层
-    "grid": {"macro_grid", "macro_size_nm", "core_size_nm", "context_nm"},  # 两级网格参数
-    "lithography": {"pixel_nm", "canvas_pixels"},  # 光刻采样契约
-    "edge": {"corner_nm", "segment_nm", "max_displacement_nm", "miter_limit"},  # 边段配置
-}
-# output 段的公共键；work_dir 由宏管线加载层追加放行并强制必填。
-_OUTPUT_COMMON_KEYS = frozenset({"final_layout", "final_cell_mode"})
 _PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
-
-
-def _as_int(value: object, name: str) -> int:
-    """拒绝浮点与布尔的严格整数转换（TOML 的 1.5/true 不许静默截断）。"""
-    if not isinstance(value, int) or isinstance(value, bool):
-        # 配置层全部错误统一 ValueError（与同函数其余校验一致）。
-        raise ValueError(f"{name} 必须是整数，不接受 {value!r}")  # noqa: TRY004
-    return int(value)  # 已是严格 int，转换只为类型收窄
-
-
-@dataclass(frozen=True, slots=True)
-class MacroCommonConfig:
-    """保存全部 Macro 流程共享的输入/网格/光刻/边段/输出公共配置。"""
-
-    layout_path: Path                     # 输入 GDS/OASIS/GLP 的绝对路径
-    top_cell: str | None                  # 显式顶层；None 表示要求版图只有一个顶层
-    layer: LayerSpec                      # 本次处理的唯一目标 layer/datatype
-    polarity: MaskPolarity                # 源 polygon 的 clear/opaque 极性
-    macro_size_nm: Decimal | None         # 按 nm 切 macro；与 macro_grid 恰好一个非空
-    macro_grid: tuple[int, int] | None    # 按 [列,行] 数量切 macro
-    core_size_nm: Decimal                 # 名义 core 边长
-    context_nm: Decimal                   # core 每侧通用上下文宽度
-    pixel_nm: Decimal                     # 光刻采样像素尺寸
-    canvas_pixels: int                    # 当前 ICCAD13 固定为 256
-    corner_nm: Decimal                    # 拐角控制段长度
-    segment_nm: Decimal                   # 普通控制段最大长度
-    max_displacement_nm: Decimal          # 允许的绝对位移上限
-    miter_limit: float                    # 拐角重建 miter 上限
-    final_layout: Path                    # 最终完整目标层版图路径
-    final_cell_mode: Literal["single_cell", "macro_cells"]  # 最终 Cell 模式
-
-
-@dataclass(frozen=True, slots=True)
-class MacroPipelineConfig(MacroCommonConfig):
-    """在公共配置之上补充 problem/result/macro GDS/summary 的工作目录。"""
-
-    work_dir: Path                        # 工作产物根目录
-
-
-def load_macro_common_config(
-        path: str | Path, *, extra_sections: tuple[str, ...] = (),
-        output_keys: frozenset[str] = _OUTPUT_COMMON_KEYS,
-        output_required: tuple[str, ...] = ("final_layout", "final_cell_mode"),
-) -> MacroCommonConfig:
-    """严格读取五个公共段 TOML，解析相对路径并拒绝未知或互斥字段。
-
-    这是全部 Macro 流程（验证管线 / simple / gradient / single-pass）公共
-    配置规则的唯一权威实现；output 段只默认必填 final_layout 与
-    final_cell_mode，work_dir 等流程专属键由调用方经 output_keys 放行、
-    经 output_required 追加必填，并在自己的加载层解析。
-    """
-    config_path = Path(path).expanduser().resolve()  # 配置文件绝对路径
-    raw = toml_loads(config_path.read_text(encoding="utf-8"))  # 解析 TOML 文本
-    allowed_keys = {**_COMMON_ALLOWED_KEYS, "output": set(output_keys)}  # 段白名单
-    known_sections = set(allowed_keys) | set(extra_sections)  # 本流程允许的段全集
-    unknown = set(raw) - known_sections  # 检查未知顶层段
-    if unknown:  # 拒绝未知段（拼错的流程段进不了任何白名单）
-        raise ValueError(f"未知配置段：{sorted(unknown)}")
-    for section, allowed in allowed_keys.items():  # 逐段检查未知键
-        keys = set(raw.get(section, {}))  # 该段实际出现的键
-        if keys - allowed:  # 出现允许清单之外的键
-            raise ValueError(f"[{section}] 含未知键：{sorted(keys - allowed)}")
-    input_section = raw.get("input", {})  # 输入段
-    grid_section = raw.get("grid", {})  # 网格段
-    litho_section = raw.get("lithography", {})  # 光刻段
-    edge_section = raw.get("edge", {})  # 边段段
-    output_section = raw.get("output", {})  # 输出段
-    # 必填键收集：缺失直接失败，不在 Python 侧补默认值。
-    for section, required in (  # 各段必填键清单（output 由调用方声明）
-            ("input", ("layout", "layer", "datatype", "polarity")),
-            ("grid", ("core_size_nm", "context_nm")),
-            ("lithography", ("pixel_nm", "canvas_pixels")),
-            ("edge", ("corner_nm", "segment_nm", "max_displacement_nm", "miter_limit")),
-            ("output", output_required)):
-        missing = [key for key in required if key not in raw.get(section, {})]  # 缺失键
-        if missing:  # 显式报错
-            raise ValueError(f"[{section}] 缺少必填键：{missing}")
-    # 互斥检查：macro_grid 与 macro_size_nm 恰好出现一个。
-    has_grid = "macro_grid" in grid_section  # 是否显式给定 macro 数量
-    has_size = "macro_size_nm" in grid_section  # 是否显式给定 macro 尺寸
-    if has_grid == has_size:  # 两者同真或同假都是配置意图不明
-        raise ValueError("macro_grid 与 macro_size_nm 必须恰好填写一个")
-    # 相对路径一律相对 TOML 文件目录解析。
-    base = config_path.parent  # 路径解析基准目录
-    layout_path = (base / str(input_section["layout"])).resolve()  # 输入版图绝对路径
-    final_layout = (base / str(output_section["final_layout"])).resolve()  # 最终版图绝对路径
-    # 极性在配置层就归一化，后续阶段不再处理字符串。
-    try:  # 尝试把极性字符串转为枚举
-        polarity = MaskPolarity(str(input_section["polarity"]))  # clear/opaque
-    except ValueError as exc:  # 未知极性
-        raise ValueError(f"不支持的极性：{input_section['polarity']!r}") from exc
-    final_cell_mode = str(output_section["final_cell_mode"])  # 最终 Cell 模式
-    if final_cell_mode not in ("single_cell", "macro_cells"):  # 模式枚举校验
-        raise ValueError(f"未知 final_cell_mode：{final_cell_mode}")
-    canvas_pixels = _as_int(litho_section["canvas_pixels"], "canvas_pixels")  # 画布像素数
-    if canvas_pixels != 256:  # ICCAD13 契约冻结为 256
-        raise ValueError("canvas_pixels 当前固定为 256")
-    # macro_grid 规范化：两项正整数 [列, 行]。
-    if has_grid:  # 数量模式
-        entries = grid_section["macro_grid"]  # 读取列表
-        if (not isinstance(entries, list) or len(entries) != 2 or
-                not all(isinstance(v, int) and not isinstance(v, bool) and v > 0
-                        for v in entries)):  # 校验两项正整数
-            raise ValueError("macro_grid 必须是两项正整数 [列, 行]")
-        macro_grid: tuple[int, int] | None = (int(entries[0]), int(entries[1]))  # 归一化
-        macro_size: Decimal | None = None  # 另一模式置空
-    else:  # 尺寸模式
-        macro_grid = None  # 置空
-        macro_size = Decimal(str(grid_section["macro_size_nm"]))  # 十进制精确保存
-    return MacroCommonConfig(  # 组装冻结公共配置对象
-        layout_path=layout_path,  # 输入路径
-        top_cell=str(input_section["top_cell"]) if "top_cell" in input_section else None,  # 顶层
-        layer=LayerSpec(_as_int(input_section["layer"], "layer"),
-                        _as_int(input_section["datatype"], "datatype")),  # 目标层
-        polarity=polarity,  # 极性
-        macro_size_nm=macro_size,  # 尺寸模式
-        macro_grid=macro_grid,  # 数量模式
-        core_size_nm=Decimal(str(grid_section["core_size_nm"])),  # core 尺寸
-        context_nm=Decimal(str(grid_section["context_nm"])),  # context 宽度
-        pixel_nm=Decimal(str(litho_section["pixel_nm"])),  # 像素尺寸
-        canvas_pixels=canvas_pixels,  # 画布
-        corner_nm=Decimal(str(edge_section["corner_nm"])),  # 拐角段长
-        segment_nm=Decimal(str(edge_section["segment_nm"])),  # 中段上限
-        max_displacement_nm=Decimal(str(edge_section["max_displacement_nm"])),  # 位移上限
-        miter_limit=float(edge_section["miter_limit"]),  # miter 上限
-        final_layout=final_layout,  # 最终版图
-        final_cell_mode=final_cell_mode)  # Cell 模式
-
-
-def load_macro_config(path: str | Path, *,
-                      extra_sections: tuple[str, ...] = ()) -> MacroPipelineConfig:
-    """严格读取宏管线六段 TOML，解析相对路径并拒绝未知或互斥字段。"""
-    common = load_macro_common_config(  # 五个公共段全部由共享层校验解析
-        path, extra_sections=extra_sections,
-        output_keys=frozenset(_OUTPUT_COMMON_KEYS | {"work_dir"}),  # 放行工作目录
-        output_required=("final_layout", "final_cell_mode", "work_dir"))  # 强制必填
-    config_path = Path(path).expanduser().resolve()  # 再读一次取 work_dir 值
-    output_section = toml_loads(
-        config_path.read_text(encoding="utf-8")).get("output", {})  # 输出段
-    work_dir = (config_path.parent / str(output_section["work_dir"])).resolve()  # 工作目录
-    # replace() 会按基类构造，扩展字段必须显式以子类组装；公共字段按
-    # fields 浅拷贝（asdict 会把嵌套的 LayerSpec 递归转 dict，不可用）。
-    return MacroPipelineConfig(
-        **{field.name: getattr(common, field.name)
-           for field in fields(MacroCommonConfig)},
-        work_dir=work_dir)  # 完整配置
 
 
 def exact_dbu(value_nm: Decimal, dbu_nm: Decimal, name: str) -> int:
@@ -212,26 +59,31 @@ def atomic_write_json(path: Path, payload: dict) -> Path:
     return path  # 返回最终路径
 
 
-def prepare_problems(config: MacroPipelineConfig) -> dict:
+def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
+                     litho: LithographyConfig, edge: EdgeConfig,
+                     output: OutputConfig) -> dict:
     """执行阶段 0/1，逐 macro 生成 problem，并写出 plan.json。"""
+    if output.work_dir is None:  # 本流程要求工作目录（单遍等流程可不填）
+        raise ValueError("此流程要求 [output].work_dir")  # 消费方显式报错
+    layer = LayerSpec(layout.layer, layout.datatype)  # 目标层规格
     started = time.perf_counter()  # 阶段计时起点
     process = psutil.Process()  # RSS 采样进程对象
     peak_rss = process.memory_info().rss  # 峰值初值
-    with LayoutDB.open(config.layout_path, config.top_cell) as database:  # 打开并自动关闭
+    with LayoutDB.open(layout.layout, layout.top_cell) as database:  # 打开并自动关闭
         top_cell_name = database.top_cell_name  # 在库存活期内捕获顶层名
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
-        bounds = database.layer_bbox(config.layer)  # 目标层整体 bbox（原生逐层，不物化）
+        bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生逐层，不物化）
         if bounds is None:  # 目标层在顶层子树内无图形
             raise ValueError(  # 空层无法规划网格
-                f"目标层 {config.layer.layer}/{config.layer.datatype} 不含任何图形")  # 报层号
+                f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")  # 报层号
         # 全部 nm 参数精确换算：不能整除直接失败，不四舍五入吸收误差。
-        core_dbu = exact_dbu(config.core_size_nm, dbu_nm, "core_size_nm")  # core
-        context_dbu = exact_dbu(config.context_nm, dbu_nm, "context_nm")  # context
-        pixel_dbu = exact_dbu(config.pixel_nm, dbu_nm, "pixel_nm")  # pixel
-        corner_dbu = exact_dbu(config.corner_nm, dbu_nm, "corner_nm")  # 拐角段
-        segment_dbu = exact_dbu(config.segment_nm, dbu_nm, "segment_nm")  # 中段
+        core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")  # core
+        context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")  # context
+        pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
+        corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")  # 拐角段
+        segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")  # 中段
         max_displacement_dbu = exact_dbu(  # 位移上限
-            config.max_displacement_nm, dbu_nm, "max_displacement_nm")
+            edge.max_displacement_nm, dbu_nm, "max_displacement_nm")
         if max_displacement_dbu > context_dbu:  # context 必须覆盖最大位移
             raise ValueError("context_nm 必须不小于 max_displacement_nm")
         # 边段数值约束（正长度、segment≥2×corner、非负位移）由 FragmentationConfig
@@ -240,17 +92,17 @@ def prepare_problems(config: MacroPipelineConfig) -> dict:
             corner_length_dbu=float(corner_dbu),  # 拐角段
             max_segment_length_dbu=float(segment_dbu),  # 中段上限
             max_displacement_dbu=float(max_displacement_dbu),  # 位移上限
-            miter_limit=config.miter_limit)  # miter
+            miter_limit=edge.miter_limit)  # miter
         macros = plan_macros(  # 两级网格规划（内部完成像素/画布校验）
-            bounds, macro_grid=config.macro_grid, macro_size_dbu=(
-                exact_dbu(config.macro_size_nm, dbu_nm, "macro_size_nm")  # 尺寸模式换算
-                if config.macro_size_nm is not None else None),  # 数量模式为空
+            bounds, macro_grid=partition.macro_grid, macro_size_dbu=(
+                exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm")  # 尺寸模式换算
+                if partition.macro_size_nm is not None else None),  # 数量模式为空
             core_size_dbu=core_dbu, context_dbu=context_dbu,  # core/context
-            pixel_dbu=pixel_dbu, canvas_pixels=config.canvas_pixels)  # 画布契约
+            pixel_dbu=pixel_dbu, canvas_pixels=litho.canvas_pixels)  # 画布契约
         # 阶段 0 步骤 7：ownership 复核——面积和恰等于父框即无正面积重叠。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积守恒
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
-        problems_dir = config.work_dir / "problems"  # problem 存放目录
+        problems_dir = output.work_dir / "problems"  # problem 存放目录
         problems_dir.mkdir(parents=True, exist_ok=True)  # 创建目录结构
         entries = []  # 逐 macro 计划条目
         segment_count_sum = 0  # 段数累计
@@ -259,9 +111,9 @@ def prepare_problems(config: MacroPipelineConfig) -> dict:
         maximum_problem_macro_id = ""  # 最大 problem 所属 macro
         for macro in macros:  # 按行优先顺序逐 macro 准备
             batch = database.query(  # 完整相交物化（不裁剪 occurrence）
-                [config.layer], macro.query_box).materialize_intersecting()  # 惰性查询执行
+                [layer], macro.query_box).materialize_intersecting()  # 惰性查询执行
             problem = prepare_macro_problem(  # 一次完成提边/分段/切线分裂/ownership
-                batch, config.layer, config.polarity, fragmentation, macro)  # 阶段 1 核心
+                batch, layer, layout.polarity, fragmentation, macro)  # 阶段 1 核心
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
             problem_bytes = problem_path.stat().st_size  # 文件字节数即持久字节数
             segment_count_sum += problem.segments.segment_count  # 累计段数
@@ -284,25 +136,25 @@ def prepare_problems(config: MacroPipelineConfig) -> dict:
     prepare_seconds = time.perf_counter() - started  # 阶段耗时
     plan = {  # 完整计划（后续阶段唯一允许消费的产物）
         "format_version": _PLAN_FORMAT_VERSION,  # 计划版本
-        "layout": str(config.layout_path),  # 输入版图
+        "layout": str(layout.layout),  # 输入版图
         "top_cell": top_cell_name,  # 实际选定的顶层 Cell 名
         "dbu_um": float(dbu_nm / 1000),  # DBU 微米值（写出最终 GDS 用）
-        "layer": [config.layer.layer, config.layer.datatype],  # 目标层
-        "polarity": config.polarity.value,  # 极性
+        "layer": [layer.layer, layer.datatype],  # 目标层
+        "polarity": layout.polarity.value,  # 极性
         "core_size_dbu": core_dbu,  # core
         "context_dbu": context_dbu,  # context
         "pixel_dbu": pixel_dbu,  # pixel
-        "canvas_pixels": config.canvas_pixels,  # canvas
+        "canvas_pixels": litho.canvas_pixels,  # canvas
         "macro_count": len(macros),  # macro 总数
         "core_count": sum(macro.core_count for macro in macros),  # core 总数
         "fragmentation": {  # 边段配置
             "corner_length_dbu": float(corner_dbu),  # 拐角段
             "max_segment_length_dbu": float(segment_dbu),  # 中段上限
             "max_displacement_dbu": float(max_displacement_dbu),  # 位移上限
-            "miter_limit": config.miter_limit},  # miter
-        "work_dir": str(config.work_dir),  # 工作目录
-        "final_layout": str(config.final_layout),  # 最终版图
-        "final_cell_mode": config.final_cell_mode,  # Cell 模式
+            "miter_limit": edge.miter_limit},  # miter
+        "work_dir": str(output.work_dir),  # 工作目录
+        "final_layout": str(output.final_layout),  # 最终版图
+        "final_cell_mode": output.final_cell_mode,  # Cell 模式
         "macros": entries,  # 逐 macro 条目
         "segment_count_sum": segment_count_sum,  # 段数总计
         "membership_count_sum": membership_count_sum,  # membership 总计
@@ -310,7 +162,7 @@ def prepare_problems(config: MacroPipelineConfig) -> dict:
         "maximum_problem_macro_id": maximum_problem_macro_id,  # 最大 problem macro
         "prepare_seconds": prepare_seconds,  # 准备耗时
         "prepare_peak_rss_bytes": peak_rss}  # 准备 RSS 峰值
-    atomic_write_json(config.work_dir / "plan.json", plan)  # 原子写出计划
+    atomic_write_json(output.work_dir / "plan.json", plan)  # 原子写出计划
     return plan  # 返回内存计划供调用方直接消费
 
 

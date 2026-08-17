@@ -16,7 +16,7 @@ from main.configuration import (
     load_config,
 )
 
-# 完整合法 TOML：含全部七个注册段，作为多数用例的基底（请求谁由用例决定）。
+# 完整合法 TOML：含全部八个注册段，作为多数用例的基底（请求谁由用例决定）。
 _FULL_TOML = """
 [layout]
 layout = "reticle.gds"
@@ -34,6 +34,12 @@ context_nm = 400
 pixel_nm = 8
 canvas_pixels = 256
 device = "auto"
+
+[edge]
+corner_nm = 16
+segment_nm = 32
+max_displacement_nm = 24
+miter_limit = 4.0
 
 [mbopc]
 iterations = 8

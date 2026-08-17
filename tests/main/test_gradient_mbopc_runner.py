@@ -11,6 +11,7 @@ import torch
 
 import main._mbopc_workflow as workflow
 from layout import DbuBox, LayerSpec, LayoutDB
+from main.configuration import load_config
 
 _TARGET_LAYER = LayerSpec(1, 0)  # 生成式版图唯一目标层
 
@@ -51,14 +52,14 @@ def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", **overrides):
         "show_progress": "false", "final_cell_mode": "single_cell"}
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
-[input]
+[layout]
 layout = "{layout_path.as_posix()}"
 top_cell = "TOP"
 layer = 1
 datatype = 0
 polarity = "clear"
 
-[grid]
+[partition]
 macro_grid = {values["macro_grid"]}
 core_size_nm = {values["core_size_nm"]}
 context_nm = {values["context_nm"]}
@@ -66,6 +67,7 @@ context_nm = {values["context_nm"]}
 [lithography]
 pixel_nm = {values["pixel_nm"]}
 canvas_pixels = 256
+device = "{values["device"]}"
 
 [edge]
 corner_nm = {values["corner_nm"]}
@@ -73,7 +75,7 @@ segment_nm = {values["segment_nm"]}
 max_displacement_nm = {values["max_displacement_nm"]}
 miter_limit = {values["miter_limit"]}
 
-[gradient_mbopc]
+[gradient]
 iterations = {values["iterations"]}
 learning_rate_nm = {values["learning_rate_nm"]}
 weight_nominal_l2 = {values["weight_nominal_l2"]}
@@ -82,12 +84,11 @@ weight_pvband = {values["weight_pvband"]}
 epe_distance_nm = {values["epe_distance_nm"]}
 batch_size = {values["batch_size"]}
 target_cache_mb = {values["target_cache_mb"]}
-device = "{values["device"]}"
-save_final_lithography = {values["save_final_lithography"]}
-show_progress = {values["show_progress"]}
 
 [output]
 work_dir = "{(tmp_path / "work").as_posix()}"
+save_final_lithography = {values["save_final_lithography"]}
+show_progress = {values["show_progress"]}
 final_layout = "{(tmp_path / "final.gds").as_posix()}"
 final_cell_mode = "{values["final_cell_mode"]}"
 """
@@ -105,7 +106,7 @@ def _coverage(path, layer=_TARGET_LAYER):
 
 
 class TestGradientConfig:
-    """[gradient_mbopc] 配置段的专属校验（TEST-013）。"""
+    """[gradient] 配置段的专属校验（TEST-013）。"""
 
     def _config_path(self, tmp_path, **overrides):
         """生成配置并返回路径。"""
@@ -113,23 +114,33 @@ class TestGradientConfig:
         return _write_config(tmp_path, gds, **overrides)  # 带覆盖
 
     def test_valid_config_loads(self, tmp_path):
-        """合法配置解析出全部字段与 Decimal 学习率。"""
+        """合法配置解析出 Gradient/Lithography/Output 三 Config 字段。"""
         gds = _write_gds(tmp_path)  # 生成版图
-        config = workflow.load_gradient_config(_write_config(tmp_path, gds))
-        assert config.iterations == 1  # 迭代
-        assert str(config.learning_rate_nm) == "1.0"  # Decimal 学习率
-        assert config.weight_pvband == pytest.approx(0.1)  # 权重
-        assert config.device == "cpu"  # 设备
-        assert config.save_final_lithography is True  # 留档开关
+        from main.configuration import (  # 按入口顺序请求六 Config
+            EdgeConfig,
+            GradientConfig,
+            LayoutConfig,
+            LithographyConfig,
+            OutputConfig,
+            PartitionConfig,
+        )
+        _, _, litho, _, gradient, output = load_config(
+            _write_config(tmp_path, gds), LayoutConfig, PartitionConfig,
+            LithographyConfig, EdgeConfig, GradientConfig, OutputConfig)
+        assert gradient.iterations == 1  # 迭代
+        assert str(gradient.learning_rate_nm) == "1.0"  # Decimal 学习率
+        assert gradient.weight_pvband == pytest.approx(0.1)  # 权重
+        assert litho.device == "cpu"  # 设备在光刻段
+        assert output.save_final_lithography is True  # 留档开关在输出段
 
     def test_unknown_gradient_key_rejected(self, tmp_path):
-        """[gradient_mbopc] 段未知键失败。"""
+        """[gradient] 段未知键失败。"""
         path = self._config_path(tmp_path)  # 基准配置
         text = path.read_text(encoding="utf-8").replace(  # 注入未知键
-            "[gradient_mbopc]", "[gradient_mbopc]\nbogus = 1")
+            "[gradient]", "[gradient]\nbogus = 1")
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="未知键"):
-            workflow.load_gradient_config(path)
+            workflow.run_gradient_mbopc(path)  # 统一加载在入口内
 
     def test_missing_required_key_rejected(self, tmp_path):
         """缺必填键失败。"""
@@ -138,7 +149,7 @@ class TestGradientConfig:
             "learning_rate_nm = 1.0\n", "")
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="缺少必填键"):
-            workflow.load_gradient_config(path)
+            workflow.run_gradient_mbopc(path)  # 统一加载在入口内
 
     @pytest.mark.parametrize(
         "overrides, pattern",
@@ -147,8 +158,8 @@ class TestGradientConfig:
          ({"batch_size": 2.0}, "batch_size"),
          ({"target_cache_mb": "true"}, "target_cache_mb"),
          ({"iterations": 0}, "必须为正"),
-         ({"learning_rate_nm": 0}, "有限正数"),
-         ({"learning_rate_nm": -1.5}, "有限正数"),
+         ({"learning_rate_nm": 0}, "必须为正"),
+         ({"learning_rate_nm": -1.5}, "必须为正"),
          ({"weight_nominal_l2": -0.1}, "非负"),
          ({"weight_nominal_l2": 0, "weight_process_l2": 0,
            "weight_pvband": 0}, "至少一个为正"),
@@ -161,7 +172,7 @@ class TestGradientConfig:
     def test_invalid_values_fail(self, tmp_path, overrides, pattern):
         """类型、数值与语义非法的配置全部失败（ERR-001）。"""
         with pytest.raises(ValueError, match=pattern):
-            workflow.load_gradient_config(
+            workflow.run_gradient_mbopc(  # 类型错在加载层、跨段错在装配层
                 self._config_path(tmp_path, **overrides))
 
     def test_float_epe_not_exact_dbu_fails(self, tmp_path):
@@ -172,23 +183,25 @@ class TestGradientConfig:
             workflow.run_gradient_mbopc(config)  # exact_dbu 层拦截
 
     def test_oversized_learning_rate_warns_without_modifying(self, tmp_path):
-        """lr 超过位移上限：UserWarning 提示但配置原样构造（审查问题 5）。"""
+        """lr 超过位移上限：装配处 UserWarning 且求解继续（不硬拒不改参）。"""
         gds = _write_gds(tmp_path)  # 生成版图（max_displacement_nm 默认 10）
         with pytest.warns(UserWarning, match="max_displacement"):  # 风险提示
-            config = workflow.load_gradient_config(
+            summary = workflow.run_gradient_mbopc(  # 完整小跑（CPU 生成式图）
                 _write_config(tmp_path, gds, learning_rate_nm=20))
-        assert str(config.learning_rate_nm) == "20"  # 参数原样保留
+        assert summary["macro_count"] >= 1  # 流程照常完成（参数未被拒绝）
 
     def test_normal_learning_rate_does_not_warn(self, tmp_path):
-        """lr 不超过位移上限时不产生该提示。"""
+        """lr 不超过位移上限时全程不产生该提示。"""
         import warnings as warnings_module  # 局部捕获
         gds = _write_gds(tmp_path)  # 生成版图
         for learning_rate_nm in (10, 1):  # 恰等于限与常规值
             with warnings_module.catch_warnings(record=True) as caught:
                 warnings_module.simplefilter("always")  # 全部捕获
-                workflow.load_gradient_config(
+                workflow.run_gradient_mbopc(  # 完整小跑（无提示断言在下方）
                     _write_config(tmp_path, gds,
                                   learning_rate_nm=learning_rate_nm))
+                assert not [w for w in caught  # 只过滤本提示
+                            if "max_displacement" in str(w.message)]
             assert not [w for w in caught
                         if "max_displacement" in str(w.message)]  # 无提示
 

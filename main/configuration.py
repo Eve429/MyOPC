@@ -1,5 +1,6 @@
 """统一配置体系：按业务划分的 Config 与单一 load_config 入口（每 Config 一个 TOML section）。"""
 
+import re  # device 字符串格式校验
 import sys  # 仓库根加入模块路径，保证免安装直接运行
 import types  # X | None 联合类型的运行时判定
 from dataclasses import MISSING, dataclass, fields  # 字段元数据驱动解析
@@ -15,6 +16,9 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 opc 可导入
 
 from tomllib import loads as toml_loads  # Python 3.12 标准库 TOML 解析
+
+# device 只接受 auto / cpu / cuda / cuda:N（N 为非负整数）。
+_DEVICE_PATTERN = re.compile(r"^(auto|cpu|cuda(:[0-9]+)?)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,11 +61,32 @@ class LithographyConfig:
     device: str = "auto"                          # 全 run 执行环境 auto/cpu/cuda[:N]
 
     def __post_init__(self) -> None:
-        """画布冻结与像素正数契约。"""
+        """画布冻结、像素正数与设备枚举契约。"""
         if self.canvas_pixels != 256:  # 模型资产契约
             raise ValueError("canvas_pixels 当前固定为 256")  # 报冻结
         if self.pixel_nm <= 0:  # 像素非法
             raise ValueError("pixel_nm 必须为正")  # 报范围
+        if not _DEVICE_PATTERN.match(self.device):  # 设备枚举
+            raise ValueError(  # 报设备
+                f"未知 device：{self.device}（只接受 auto/cpu/cuda[:N]）")
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeConfig:
+    """边段化共享参数（[edge] 段），算法无关。"""
+
+    corner_nm: Decimal                             # 拐角控制段长度
+    segment_nm: Decimal                            # 普通控制段最大长度
+    max_displacement_nm: Decimal                   # 允许的绝对位移上限
+    miter_limit: float                             # 拐角重建 miter 上限
+
+    def __post_init__(self) -> None:
+        """边段几何契约：正长度与位移上限、miter 正数。"""
+        if (self.corner_nm <= 0 or self.segment_nm <= 0  # 段长
+                or self.max_displacement_nm <= 0):  # 位移
+            raise ValueError("corner_nm/segment_nm/max_displacement_nm 必须为正")  # 报
+        if self.miter_limit <= 0.0:  # miter
+            raise ValueError("miter_limit 必须为正数")  # 报
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +149,20 @@ class SinglePassConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ValidationConfig:
+    """验证管线双轮位移（[iteration] 段），冻结 [+2,-2] nm 精确回零。"""
+
+    round_deltas_nm: tuple[Decimal, Decimal]  # 双轮位移（nm）
+
+    def __post_init__(self) -> None:
+        """双轮位移冻结为 [+2,-2]：只查和为零会放行 [3,-3]，回零失去约束力。"""
+        if self.round_deltas_nm != (Decimal(2), Decimal(-2)):  # 值不符
+            raise ValueError(  # 报冻结要求与实际值
+                f"round_deltas_nm 当前冻结为 [+2nm, -2nm]，"
+                f"实际为 {list(self.round_deltas_nm)}")  # 报值
+
+
+@dataclass(frozen=True, slots=True)
 class OutputConfig:
     """输出行为与工作目录（[output] 段），算法无关。"""
 
@@ -139,9 +178,11 @@ CONFIG_SECTIONS: dict[type, str] = {
     LayoutConfig: "layout",                       # 输入版图段
     PartitionConfig: "partition",                  # 空间划分段
     LithographyConfig: "lithography",             # 光刻与环境段
+    EdgeConfig: "edge",                           # 边段化共享段
     MBOPCConfig: "mbopc",                         # simple 算法段
     GradientConfig: "gradient",                   # gradient 算法段
     SinglePassConfig: "single_pass",              # 单遍专属段
+    ValidationConfig: "iteration",                # 验证管线专属段
     OutputConfig: "output",                       # 输出段
 }
 _SECTION_TO_TYPE = {name: cls for cls, name in CONFIG_SECTIONS.items()}  # 反查表

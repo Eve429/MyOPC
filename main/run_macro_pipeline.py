@@ -9,7 +9,6 @@ from pathlib import Path  # 全部路径统一使用 Path 对象
 
 import numpy as np  # 位移状态与统计数组的载体
 import psutil  # 阶段 RSS 峰值测量；缺失时直接 ImportError 不降级
-from tomllib import loads as toml_loads  # Python 3.12 标准库 TOML 解析
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
@@ -20,37 +19,23 @@ from layout import LayerSpec, LayoutDB  # 回零验证的版图查询
 from main._macro_pipeline import (  # 两个真实流程共用的 macro 生命周期
     atomic_write_json,
     exact_dbu,
-    load_macro_config,
     merge_macro_results,
     prepare_problems,
     write_macro_gds,
+)
+from main.configuration import (  # 统一配置体系
+    EdgeConfig,
+    LayoutConfig,
+    LithographyConfig,
+    OutputConfig,
+    PartitionConfig,
+    ValidationConfig,
+    load_config,
 )
 from opc.input import rasterize_mask_canvas  # run_round 的居中光刻画布
 from opc.input.edge import MacroProblem, reconstruct_region  # problem 加载与重建
 
 _RESULT_FORMAT_VERSION = 1  # 每轮 result NPZ 结构版本
-
-
-def load_validation_deltas(path: str | Path) -> tuple[Decimal, Decimal]:
-    """解析验证专属 [iteration] 段并把双轮位移冻结为精确 [+2,-2] nm。"""
-    config_path = Path(path).expanduser().resolve()  # 配置绝对路径
-    raw = toml_loads(config_path.read_text(encoding="utf-8"))  # 解析 TOML 文本
-    section = raw.get("iteration", {})  # 验证段
-    unknown = set(section) - {"round_deltas_nm"}  # 段内未知键
-    if unknown:  # 拒绝拼错键
-        raise ValueError(f"[iteration] 含未知键：{sorted(unknown)}")
-    if "round_deltas_nm" not in section:  # 缺必填键
-        raise ValueError("[iteration] 缺少必填键：['round_deltas_nm']")
-    deltas = section["round_deltas_nm"]  # 双轮位移列表
-    if not isinstance(deltas, list) or len(deltas) != 2:  # 恰好两轮
-        raise ValueError("round_deltas_nm 必须是恰好两个数值的列表")
-    pair = (Decimal(str(deltas[0])), Decimal(str(deltas[1])))  # 十进制保存
-    # 双轮位移冻结为 [+2nm,-2nm]（设计文档 §5.2）：只查和为零会放行 [3,-3] 等配置，
-    # 让「回零验证」失去对固定步长的约束力；DBU 落格点检查在 run 内用实际 dbu 换算。
-    if pair != (Decimal(2), Decimal(-2)):  # 值不符即拒绝
-        raise ValueError(  # 报错列出冻结要求与实际值
-            f"round_deltas_nm 当前冻结为 [+2nm, -2nm]，实际为 {list(pair)}")
-    return pair  # 返回精确十进制对
 
 
 def run_round(plan: dict, round_index: int, delta_dbu: int) -> dict:
@@ -155,10 +140,12 @@ def collect_round_macro_gds(plan: dict, round_index: int) -> dict[str, Path]:
 def run(config_path: str | Path) -> dict:
     """按准备、两轮迭代、最终合并、验证顺序执行完整流程并返回摘要。"""
     total_started = time.perf_counter()  # 全流程计时
-    config = load_macro_config(  # 宏管线六段（放行验证专属 iteration 段）
-        config_path, extra_sections=("iteration",))  # 严格加载
-    deltas = load_validation_deltas(config_path)  # [+2,-2] nm 冻结检查
-    plan = prepare_problems(config)  # 阶段 0/1（共用生命周期）
+    layout, partition, litho, edge, validation, output = load_config(  # 六 Config
+        config_path, LayoutConfig, PartitionConfig, LithographyConfig,
+        EdgeConfig, ValidationConfig, OutputConfig)
+    deltas = validation.round_deltas_nm  # [+2,-2] nm 冻结在 Config 内校验
+    plan = prepare_problems(  # 阶段 0/1（共用生命周期）
+        layout, partition, litho, edge, output)
     dbu_nm = Decimal(str(plan["dbu_um"])) * 1000  # plan 内 DBU 的 nm 值
     deltas_dbu = tuple(  # 双轮位移精确换算（2nm 落不了格点在此失败）
         exact_dbu(value, dbu_nm, "round_deltas_nm") for value in deltas)
@@ -167,8 +154,8 @@ def run(config_path: str | Path) -> dict:
     macro_gds = collect_round_macro_gds(plan, 2)  # 校验轮次并显式映射
     merge_started = time.perf_counter()  # 合并计时
     final_path = merge_macro_results(  # 阶段 3 合并写出（共用生命周期）
-        plan, macro_gds, config.final_layout,  # 显式映射与输出路径
-        cell_mode=config.final_cell_mode)  # Cell 模式
+        plan, macro_gds, output.final_layout,  # 显式映射与输出路径
+        cell_mode=output.final_cell_mode)  # Cell 模式
     merge_seconds = time.perf_counter() - merge_started  # 合并耗时
     # 说明：单次采样无法回溯进程历史峰值，此处取合并完成后的即时 RSS 作为
     # 近似上界，具体口径在测试报告如实记录。
@@ -214,7 +201,7 @@ def run(config_path: str | Path) -> dict:
         "final_cell_mode": plan["final_cell_mode"],  # Cell 模式
         "final_layout": str(final_path),  # 最终版图
         "final_xor_area": final_xor_area}  # 回零 XOR 面积
-    atomic_write_json(config.work_dir / "summary.json", summary)  # 落盘摘要
+    atomic_write_json(Path(plan["work_dir"]) / "summary.json", summary)  # 落盘摘要（plan 值为字符串需 Path 化）
     return summary  # 返回摘要
 
 

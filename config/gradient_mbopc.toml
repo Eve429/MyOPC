@@ -1,20 +1,21 @@
 # gcd_45nm 多 macro 梯度 MB-OPC smoke；一轮更新可验证完整状态循环。
 
-[input]
-layout = "../TestReticle/gcd_45nm.gds"
+[layout]
+layout = "../TestReticle/gcd_30um.gds"
 top_cell = "TOP"
 layer = 11
 datatype = 0
 polarity = "clear"
 
-[grid]
-macro_grid = [2, 2]
+[partition]
+macro_grid = [1, 1]
 core_size_nm = 1024
-context_nm = 400
+context_nm = 512
 
 [lithography]
 pixel_nm = 8
 canvas_pixels = 256
+device = "auto"
 
 [edge]
 corner_nm = 16
@@ -22,8 +23,8 @@ segment_nm = 32
 max_displacement_nm = 24
 miter_limit = 4.0
 
-[gradient_mbopc]
-iterations = 1
+[gradient]
+iterations = 10
 learning_rate_nm = 1.0
 weight_nominal_l2 = 1.0
 weight_process_l2 = 0.5
@@ -31,11 +32,10 @@ weight_pvband = 0.1
 epe_distance_nm = 16
 batch_size = 8
 target_cache_mb = 512
-device = "auto"
-save_final_lithography = true
-show_progress = true
 
 [output]
+save_final_lithography = true
+show_progress = true
 work_dir = "../output/gradient_mbopc"
 final_layout = "../output/gradient_mbopc/gcd_45nm_gradient_mbopc.gds"
 final_cell_mode = "single_cell"

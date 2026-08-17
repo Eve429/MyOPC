@@ -6,7 +6,7 @@ import pytest
 
 import main.run_single_pass as single_pass
 from layout import LayerSpec, LayoutDB
-from main._macro_pipeline import load_macro_config
+from main.configuration import LayoutConfig, load_config
 
 # 测试版图：DBU=1nm。正向位移用「锚框 + 完全内部 donut」——贴着层 bbox 的
 # 图形外扩会全部落在 macro ownership 之外被正确裁掉，无法证明外扩生效；
@@ -67,14 +67,14 @@ def _write_config(tmp_path, layout_path, **overrides):
         "final_cell_mode": "single_cell"}
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
-[input]
+[layout]
 layout = "{layout_path.as_posix()}"
 top_cell = "TOP"
 layer = 1
 datatype = 0
 polarity = "clear"
 
-[grid]
+[partition]
 macro_grid = {values["macro_grid"]}
 core_size_nm = {values["core_size_nm"]}
 context_nm = {values["context_nm"]}
@@ -89,7 +89,7 @@ segment_nm = {values["segment_nm"]}
 max_displacement_nm = {values["max_displacement_nm"]}
 miter_limit = {values["miter_limit"]}
 
-[iteration]
+[single_pass]
 displacement_nm = {values["displacement_nm"]}
 
 [output]
@@ -99,6 +99,22 @@ final_cell_mode = "{values["final_cell_mode"]}"
     config_path = tmp_path / "single_pass.toml"  # 配置路径
     config_path.write_text(text, encoding="utf-8")  # 写盘
     return config_path  # 返回路径
+
+
+def _load(path):
+    """经统一 load_config 加载单遍六 Config 并按序返回元组。"""
+    from main.configuration import (  # 按业务顺序请求六 Config
+        EdgeConfig,
+        LayoutConfig,
+        LithographyConfig,
+        OutputConfig,
+        PartitionConfig,
+        SinglePassConfig,
+        load_config,
+    )
+    return load_config(path, LayoutConfig, PartitionConfig,  # 六 Config 元组
+                       LithographyConfig, EdgeConfig, SinglePassConfig,
+                       OutputConfig)
 
 
 def _final_region(path, layer=None):
@@ -117,8 +133,8 @@ class TestRingExpansion:
     def test_positive_displacement_expands_ring_both_ways(self, tmp_path):
         """+5 nm：donut 外环外扩 5、孔壁内收 5，环带宽 20→30。"""
         gds = _write_anchored_gds(tmp_path)  # 生成锚框版图
-        config = single_pass.load_config(_write_config(tmp_path, gds))  # 加载
-        final = single_pass.run_single_pass(config)  # 执行
+        configs = _load(_write_config(tmp_path, gds))  # 加载
+        final = single_pass.run_single_pass(*configs)  # 执行
         # donut 外扩 5、孔缩 5；锚框外扩被 bbox 裁剪，仅内边各进 5。
         expected = (kdb.Region(kdb.Box(20, 20, 100, 31)) +  # 下锚框（顶边 26→31）
                     kdb.Region(kdb.Box(20, 69, 100, 80)) +  # 上锚框（底边 74→69）
@@ -130,9 +146,9 @@ class TestRingExpansion:
     def test_negative_displacement_shrinks_ring_both_ways(self, tmp_path):
         """-5 nm：外环内收 5、孔壁外扩 5，环带宽 20→10。"""
         gds = _write_plain_donut_gds(tmp_path)  # 生成独立 donut 版图
-        config = single_pass.load_config(  # 加载（负位移）
+        configs = _load(  # 加载（负位移）
             _write_config(tmp_path, gds, displacement_nm=-5))  # 覆盖位移
-        final = single_pass.run_single_pass(config)  # 执行
+        final = single_pass.run_single_pass(*configs)  # 执行
         expected = _donut((25, 25, 95, 75), (37, 37, 77, 63))  # 手算期望（孔 30×16 扩 5）
         actual = _final_region(final)  # 实际覆盖
         assert (actual ^ expected).area() == 0  # XOR 零
@@ -145,8 +161,8 @@ class TestArtifactContract:
     def test_final_layout_is_the_only_artifact(self, tmp_path):
         """执行后输出目录树中仅存在 final_layout 一个文件。"""
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
-        config = single_pass.load_config(_write_config(tmp_path, gds))  # 加载
-        single_pass.run_single_pass(config)  # 执行
+        configs = _load(_write_config(tmp_path, gds))  # 加载
+        single_pass.run_single_pass(*configs)  # 执行
         out_dir = tmp_path / "out"  # 输出目录
         files = [p for p in out_dir.rglob("*") if p.is_file()]  # 全部文件
         assert files == [out_dir / "final.gds"]  # 唯一产物
@@ -156,8 +172,8 @@ class TestArtifactContract:
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS（含 2/0 对照层）
         with LayoutDB.open(gds) as db:  # 回读源
             assert db.layers() == (LayerSpec(1, 0), LayerSpec(2, 0))  # 源确有两层
-        config = single_pass.load_config(_write_config(tmp_path, gds))  # 加载
-        final = single_pass.run_single_pass(config)  # 执行
+        configs = _load(_write_config(tmp_path, gds))  # 加载
+        final = single_pass.run_single_pass(*configs)  # 执行
         with LayoutDB.open(final) as db:  # 回读最终版图
             assert db.layers() == (LayerSpec(1, 0),)  # 只有目标层被复制
 
@@ -170,9 +186,9 @@ class TestArtifactContract:
         for mode in ("single_cell", "macro_cells"):  # 两种模式
             base = tmp_path / mode  # 独立目录
             base.mkdir()  # 创建
-            config = single_pass.load_config(  # 各自配置
-                _write_config(base, gds, final_cell_mode=mode))  # 覆盖模式
-            coverage[mode] = _final_region(single_pass.run_single_pass(config))  # 覆盖
+            coverage[mode] = _final_region(  # 覆盖
+                single_pass.run_single_pass(*_load(  # 逐模式加载执行
+                    _write_config(base, gds, final_cell_mode=mode))))
         assert (coverage["single_cell"] ^ coverage["macro_cells"]).area() == 0  # XOR 零
 
 
@@ -182,18 +198,18 @@ class TestConfigValidation:
     def test_displacement_off_grid_fails_with_parameter_name(self, tmp_path):
         """位移无法精确落 DBU 格点时失败并写明参数名。"""
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
-        config = single_pass.load_config(  # 0.5nm 无法落 1nm 格点
+        configs = _load(  # 0.5nm 无法落 1nm 格点
             _write_config(tmp_path, gds, displacement_nm=5.5))  # 覆盖位移
         with pytest.raises(ValueError, match="displacement_nm"):  # 报错含参数名
-            single_pass.run_single_pass(config)  # 执行
+            single_pass.run_single_pass(*configs)  # 执行
 
     def test_displacement_above_limit_fails(self, tmp_path):
         """位移绝对值超过 max_displacement 时阶段 0 校验失败。"""
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
-        config = single_pass.load_config(  # 9 > max_disp=8
+        configs = _load(  # 9 > max_disp=8
             _write_config(tmp_path, gds, displacement_nm=9))  # 覆盖位移
         with pytest.raises(ValueError, match="max_displacement"):  # 必须报错
-            single_pass.run_single_pass(config)  # 执行
+            single_pass.run_single_pass(*configs)  # 执行
 
     def test_macro_entry_exclusivity(self, tmp_path):
         """macro_grid 与 macro_size_nm 同现或同缺都失败。"""
@@ -203,7 +219,7 @@ class TestConfigValidation:
             "macro_grid = [2, 2]", "macro_grid = [2, 2]\nmacro_size_nm = 60")  # 双入口
         both.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="恰好填写一个"):  # 必须报错
-            single_pass.load_config(both)  # 加载
+            _load(both)  # 统一加载（解析即校验）
 
     @pytest.mark.parametrize(
         ("original", "injected", "field"),
@@ -230,31 +246,24 @@ class TestConfigValidation:
         text = path.read_text(encoding="utf-8").replace(original, injected)  # 注入
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match=field):  # 统一 ValueError 含字段名
-            single_pass.load_config(path)  # 加载
+            _load(path)  # 统一加载（解析即校验）
 
-    def test_work_dir_is_rejected(self, tmp_path):
-        """[output] 出现 work_dir 按未知键拒绝（本入口无工作目录契约）。"""
+    def test_work_dir_optional_and_unused(self, tmp_path):
+        """不填 work_dir 可加载（None 默认），单遍不产生工作目录产物。"""
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
-        path = _write_config(tmp_path, gds)  # 基础配置
-        text = path.read_text(encoding="utf-8").replace(  # 注入管线专属键
-            "[output]", '[output]\nwork_dir = "somewhere"')  # 本入口不放行
-        path.write_text(text, encoding="utf-8")  # 写回
-        with pytest.raises(ValueError, match="未知键"):  # 不静默忽略
-            single_pass.load_config(path)  # 加载
+        configs = _load(_write_config(tmp_path, gds))  # 模板无 work_dir
+        assert configs[-1].work_dir is None  # 可选字段默认 None
+        final = single_pass.run_single_pass(*configs)  # 执行
+        assert final.is_file()  # 唯一产物照常
 
-    def test_shared_rejection_matches_macro_pipeline(self, tmp_path):
-        """同一非法公共输入在两个加载器中同语义拒绝（防平行漂移回归）。"""
+    def test_shared_rejection_single_loader(self, tmp_path):
+        """同一非法公共输入在只请求 LayoutConfig 与全量请求下同语义拒绝。"""
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
         path = _write_config(tmp_path, gds)  # 基础配置
         text = path.read_text(encoding="utf-8").replace(  # 注入浮点层号
-            "layer = 1", "layer = 1.5")  # 两侧同款非法值
+            "layer = 1", "layer = 1.5")  # 同款非法值
         path.write_text(text, encoding="utf-8")  # 写回
-        with pytest.raises(ValueError, match="layer"):  # single-pass 拒绝
-            single_pass.load_config(path)  # 加载
-        macro_config = tmp_path / "macro.toml"  # 宏管线对照配置
-        macro_text = path.read_text(encoding="utf-8").replace(  # 去掉专属段
-            "\n[iteration]\ndisplacement_nm = 5\n", "\n").replace(  # 补管线必填键
-            "[output]", '[output]\nwork_dir = "w"')  # 其余完全相同
-        macro_config.write_text(macro_text, encoding="utf-8")  # 写盘
-        with pytest.raises(ValueError, match="layer"):  # 权威实现同样拒绝
-            load_macro_config(macro_config)  # 加载
+        with pytest.raises(ValueError, match="layer"):  # 单 Config 请求拒绝
+            load_config(path, LayoutConfig)  # 只请求版图
+        with pytest.raises(ValueError, match="layer"):  # 全量请求同样拒绝
+            _load(path)  # 六 Config 全量

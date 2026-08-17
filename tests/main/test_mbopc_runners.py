@@ -48,14 +48,14 @@ def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", **overrides):
         "show_progress": "false", "final_cell_mode": "single_cell"}
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
-[input]
+[layout]
 layout = "{layout_path.as_posix()}"
 top_cell = "TOP"
 layer = 1
 datatype = 0
 polarity = "clear"
 
-[grid]
+[partition]
 macro_grid = {values["macro_grid"]}
 core_size_nm = {values["core_size_nm"]}
 context_nm = {values["context_nm"]}
@@ -63,6 +63,7 @@ context_nm = {values["context_nm"]}
 [lithography]
 pixel_nm = {values["pixel_nm"]}
 canvas_pixels = 256
+device = "{values["device"]}"
 
 [edge]
 corner_nm = {values["corner_nm"]}
@@ -77,12 +78,11 @@ decay_every = {values["decay_every"]}
 epe_distance_nm = {values["epe_distance_nm"]}
 batch_size = {values["batch_size"]}
 target_cache_mb = {values["target_cache_mb"]}
-device = "{values["device"]}"
-save_final_lithography = {values["save_final_lithography"]}
-show_progress = {values["show_progress"]}
 
 [output]
 work_dir = "{(tmp_path / "work").as_posix()}"
+save_final_lithography = {values["save_final_lithography"]}
+show_progress = {values["show_progress"]}
 final_layout = "{(tmp_path / "final.gds").as_posix()}"
 final_cell_mode = "{values["final_cell_mode"]}"
 """
@@ -365,7 +365,7 @@ class TestConfigValidation:
             "[mbopc]", "[mbopc]\nbogus = 1")
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="未知键"):
-            workflow.load_config(path)
+            workflow.run_mbopc(path)  # 装配前置检查在准备前毫秒级抛出
 
     @pytest.mark.parametrize(
         "overrides, pattern",
@@ -377,7 +377,7 @@ class TestConfigValidation:
     def test_invalid_values_fail(self, tmp_path, overrides, pattern):
         """越界迭代参数、步长/探针越限与未知设备都失败。"""
         with pytest.raises(ValueError, match=pattern):
-            workflow.load_config(self._config_path(tmp_path, **overrides))
+            workflow.run_mbopc(self._config_path(tmp_path, **overrides))
 
     @pytest.mark.parametrize(
         ("overrides", "field"),
@@ -389,4 +389,4 @@ class TestConfigValidation:
     def test_non_integer_values_fail(self, tmp_path, overrides, field):
         """浮点或布尔的整数配置被严格拒绝，不静默截断（审查 P1.3 回归）。"""
         with pytest.raises(ValueError, match=field):
-            workflow.load_config(self._config_path(tmp_path, **overrides))
+            workflow.run_mbopc(self._config_path(tmp_path, **overrides))

@@ -108,7 +108,7 @@ class TestSingleMacroRunner:
         """执行一次单 macro 完整流程并返回 (tmp, summary)。"""
         tmp = tmp_path_factory.mktemp("single")  # 独立目录
         gds = _write_gds(tmp)  # 生成版图
-        summary = workflow.run_single_macro(_write_config(tmp, gds))  # 完整流程
+        summary = workflow.run_mbopc(_write_config(tmp, gds))  # 完整流程
         return tmp, summary  # 两件套
 
     def test_summary_and_artifacts(self, single):
@@ -154,55 +154,6 @@ class TestSingleMacroRunner:
             assert len(tile["ownership_box"]) == 4  # 计分框四元组
         assert summary["final_lithography_tiles"] == manifest["tile_count"]
 
-    def test_rejects_multiple_macros(self, tmp_path):
-        """单 macro 入口拒绝 macro_grid=[2,2] 配置。"""
-        gds = _write_gds(tmp_path)  # 生成版图
-        config = _write_config(  # 两个 macro
-            tmp_path, gds, macro_grid="[2, 2]")  # 多 macro 配置
-        with pytest.raises(ValueError, match="恰好 1 个 macro"):
-            workflow.run_single_macro(config)  # 入口约束
-
-    def test_rejects_single_tile_macro(self, tmp_path):
-        """每 macro 至少 2 个 tile：core 尺寸盖满 macro 时拒绝。"""
-        gds = _write_gds(tmp_path)  # 生成版图
-        config = _write_config(  # core=160 覆盖全 ROI → 单 tile macro
-            tmp_path, gds, macro_grid="[1, 1]", core_size_nm=160)
-        with pytest.raises(ValueError, match="至少 2 个 tile"):
-            workflow.run_single_macro(config)  # 入口约束
-
-
-class TestPreflightValidation:
-    """macro_grid 模式的非法配置必须在昂贵准备之前失败（审查问题 2）。"""
-
-    def test_single_entry_rejects_grid_before_prepare(self, tmp_path, monkeypatch):
-        """single + [2,2]：prepare 与模型构造零执行，直接 ValueError。"""
-        gds = _write_gds(tmp_path)  # 生成版图
-
-        def _forbidden(*args, **kwargs):
-            """昂贵函数被调用即为回归。"""
-            raise AssertionError("非法配置不应执行 problem 准备或模型构造")
-
-        monkeypatch.setattr(workflow, "prepare_problems", _forbidden)
-        monkeypatch.setattr(workflow, "ICCAD13Lithography", _forbidden)
-        with pytest.raises(ValueError, match="恰好 1 个 macro"):  # 直接失败
-            workflow.run_single_macro(  # 单 macro 入口 + 多 macro 网格
-                _write_config(tmp_path, gds, macro_grid="[2, 2]"))
-
-    def test_multi_entry_rejects_grid_before_prepare(self, tmp_path, monkeypatch):
-        """multi + [1,1]：prepare 与模型构造零执行，直接 ValueError。"""
-        gds = _write_gds(tmp_path)  # 生成版图
-
-        def _forbidden(*args, **kwargs):
-            """昂贵函数被调用即为回归。"""
-            raise AssertionError("非法配置不应执行 problem 准备或模型构造")
-
-        monkeypatch.setattr(workflow, "prepare_problems", _forbidden)
-        monkeypatch.setattr(workflow, "ICCAD13Lithography", _forbidden)
-        with pytest.raises(ValueError, match="大于 1"):  # 直接失败
-            workflow.run_multi_macro(  # 多 macro 入口 + 单 macro 网格
-                _write_config(tmp_path, gds, macro_grid="[1, 1]"))
-
-
 class TestMultiMacroRunner:
     """多 macro 入口的独立迭代、一次合并与差异量化。"""
 
@@ -212,7 +163,7 @@ class TestMultiMacroRunner:
         """执行一次多 macro 完整流程并返回 (tmp, summary)。"""
         tmp = tmp_path_factory.mktemp("multi")  # 独立目录
         gds = _write_gds(tmp)  # 生成版图（与单 macro 同一份几何）
-        summary = workflow.run_multi_macro(  # 2×2 macro
+        summary = workflow.run_mbopc(  # 2×2 macro
             _write_config(tmp, gds, macro_grid="[2, 2]"))
         return tmp, summary  # 两件套
 
@@ -240,15 +191,8 @@ class TestMultiMacroRunner:
             calls.append(1)
             return real(*args, **kwargs)
         monkeypatch.setattr(workflow, "merge_macro_results", _counting)
-        workflow.run_multi_macro(config)  # 完整流程
+        workflow.run_mbopc(config)  # 完整流程
         assert calls == [1]  # 恰一次
-
-    def test_rejects_single_macro(self, tmp_path):
-        """多 macro 入口拒绝 macro_grid=[1,1] 配置。"""
-        gds = _write_gds(tmp_path)  # 生成版图
-        config = _write_config(tmp_path, gds, macro_grid="[1, 1]")  # 单 macro
-        with pytest.raises(ValueError, match="大于 1"):
-            workflow.run_multi_macro(config)  # 入口约束
 
     def test_macro_order_does_not_change_coverage(self, tmp_path, monkeypatch):
         """macro 正逆序求解的最终物理覆盖 XOR 为零（独立 macro 性质）。"""
@@ -266,7 +210,7 @@ class TestMultiMacroRunner:
             config = _write_config(base, gds, macro_grid="[2, 2]")  # 配置
             if reverse:
                 monkeypatch.setattr(macro_pipeline, "plan_macros", _reversed)
-            finals[tag] = workflow.run_multi_macro(config)["final_layout"]
+            finals[tag] = workflow.run_mbopc(config)["final_layout"]
             monkeypatch.undo()  # 立即恢复
         assert int((_coverage(finals["forward"]) ^  # 覆盖一致
                     _coverage(finals["reverse"])).area()) == 0
@@ -280,7 +224,7 @@ class TestMultiMacroRunner:
             base.mkdir()  # 创建
             config = _write_config(  # 仅批大小不同
                 base, gds, macro_grid="[2, 2]", batch_size=batch_size)
-            summary = workflow.run_multi_macro(config)  # 完整流程
+            summary = workflow.run_mbopc(config)  # 完整流程
             path = (base / "work" / "macros" /
                     summary["macros"][0]["macro_id"] / "result.npz")
             with np.load(path, allow_pickle=False) as data:  # 读 best
@@ -306,7 +250,7 @@ class TestMultiMacroRunner:
             return real_reconstruct(problem, displacements)
         monkeypatch.setattr(simple, "reconstruct_region", _failing_for_second_macro)
         config = _write_config(tmp_path, gds, macro_grid="[2, 2]")  # 配置
-        summary = workflow.run_multi_macro(config)  # 完整流程
+        summary = workflow.run_mbopc(config)  # 完整流程
         by_id = {m["macro_id"]: m for m in summary["macros"]}  # 索引
         assert by_id["mr0c1"]["stop_reason"] == "invalid_geometry"  # 停止原因
         assert "hole escaped" in by_id["mr0c1"]["stop_detail"]  # 原因在案
@@ -325,9 +269,9 @@ class TestSingleVersusMulti:
         multi_base = tmp_path / "multi"  # 独立目录
         single_base.mkdir()  # 创建
         multi_base.mkdir()  # 创建
-        single = workflow.run_single_macro(  # 全 ROI 一个 macro
+        single = workflow.run_mbopc(  # 全 ROI 一个 macro
             _write_config(single_base, gds, macro_grid="[1, 1]"))
-        multi = workflow.run_multi_macro(  # 2×2 macro
+        multi = workflow.run_mbopc(  # 2×2 macro
             _write_config(multi_base, gds, macro_grid="[2, 2]"))
         difference = int(  # 差异面积（独立 context 取舍的量化结果）
             (_coverage(single["final_layout"]) ^
@@ -360,10 +304,10 @@ class TestDirectExecution:
     def test_multi_runs_outside_repository(self, outside_config, project_root):
         """从仓库外直跑 multi 入口退出码 0 并产出全部关键标记。"""
         tmp, config = outside_config  # 解包
-        script = project_root / "main" / "run_mbopc_multi_macro.py"  # 入口
+        script = project_root / "main" / "run_mbopc.py"  # 入口
         completed = self._run(script, config, tmp)  # cwd=仓库外
         assert completed.returncode == 0, completed.stderr  # 正常退出
-        for marker in ("多 macro simple MB-OPC 执行完成", "device：",
+        for marker in ("simple MB-OPC 执行完成", "device：",
                        "合并", "最终版图"):  # 摘要标记
             assert marker in completed.stdout, marker
 
@@ -371,14 +315,14 @@ class TestDirectExecution:
         """从仓库外直跑 single 入口同样成功。"""
         gds = _write_gds(tmp_path)  # 生成版图
         config = _write_config(tmp_path, gds, macro_grid="[1, 1]")  # 单 macro
-        script = project_root / "main" / "run_mbopc_single_macro.py"  # 入口
+        script = project_root / "main" / "run_mbopc.py"  # 入口
         completed = self._run(script, config, tmp_path)  # cwd=仓库外
         assert completed.returncode == 0, completed.stderr  # 正常退出
-        assert "单 macro simple MB-OPC 执行完成" in completed.stdout  # 标题
+        assert "simple MB-OPC 执行完成" in completed.stdout  # 标题
 
     def test_progress_output_only_when_enabled(self, tmp_path, project_root):
         """show_progress=true 时 stderr 有进度条，false 时完全静默。"""
-        script = project_root / "main" / "run_mbopc_multi_macro.py"  # 入口
+        script = project_root / "main" / "run_mbopc.py"  # 入口
         quiet_dir = tmp_path / "quiet"  # 静默目录
         quiet_dir.mkdir()  # 创建
         verbose_dir = tmp_path / "verbose"  # 进度目录
@@ -398,7 +342,7 @@ class TestDirectExecution:
 
     def test_missing_argument_returns_usage(self, project_root):
         """无参数运行打印用法并以退出码 2 结束。"""
-        script = project_root / "main" / "run_mbopc_single_macro.py"  # 入口
+        script = project_root / "main" / "run_mbopc.py"  # 入口
         completed = subprocess.run(  # 无参数直跑
             [sys.executable, str(script)], cwd=project_root,
             capture_output=True, text=True, timeout=60, check=False)

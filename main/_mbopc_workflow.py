@@ -205,36 +205,16 @@ def solve_macro(
     return result, best_gds  # 结果与 GDS 路径
 
 
-def _run_mbopc(config_path: str | Path, *, require_multiple_macros: bool) -> dict:
-    """执行两个入口共有的准备、逐 macro 求解、最终合并和结果保存。"""
+def run_mbopc(config_path: str | Path) -> dict:
+    """按 config 实际网格逐 macro 独立求解 simple MB-OPC，一次合并产出。
+
+    macro 数量不加人为约束：macro_grid/macro_size_nm 是几就按几求解。
+    """
     total_started = time.perf_counter()  # 全流程计时
     run_config = load_config(config_path)  # 配置层全部校验
     pipeline = run_config.pipeline  # 宏管线配置
-    # 入口数量约束前置：macro_grid 数量模式在配置层即可判定，非法配置在
-    # 昂贵的 problem 准备与光刻模型构造之前立即失败。
-    grid = pipeline.macro_grid  # 数量模式（None = size 模式，未知）
-    if grid is not None:  # 可判定模式
-        grid_count = grid[0] * grid[1]  # macro 总数
-        if require_multiple_macros and grid_count <= 1:  # 多 macro 入口
-            raise ValueError(
-                f"多 macro 入口要求 macro 数大于 1，macro_grid={list(grid)}")
-        if not require_multiple_macros and grid_count != 1:  # 单 macro 入口
-            raise ValueError(
-                f"单 macro 入口要求恰好 1 个 macro，macro_grid={list(grid)}")
     plan = prepare_problems(pipeline)  # 阶段 0/1（共用生命周期）
     macro_count = plan["macro_count"]  # macro 总数
-    if require_multiple_macros:  # 多 macro 入口的数量约束
-        if macro_count <= 1:
-            raise ValueError(f"多 macro 入口要求 macro 数大于 1，实际 {macro_count}")
-    elif macro_count != 1:  # 单 macro 入口的数量约束
-        raise ValueError(f"单 macro 入口要求恰好 1 个 macro，实际 {macro_count}")
-    for entry in plan["macros"]:  # 每个 macro 必须有多个 tile
-        if entry["core_count"] <= 1:
-            raise ValueError(
-                f"{entry['macro_id']} 只有 {entry['core_count']} 个 tile，"
-                "入口要求每 macro 至少 2 个 tile")
-    # 全部入口校验通过后才做单位换算、设备解析与模型构造（size 模式的
-    # macro 数量只能由 plan 判定，故兜底检查保留在 prepare 之后）。
     dbu_nm = Decimal(str(plan["dbu_um"])) * 1000  # DBU 的 nm 值
     solver_config = SimpleMBOPCConfig(  # nm 参数精确换算为 DBU
         iterations=run_config.iterations,
@@ -252,7 +232,7 @@ def _run_mbopc(config_path: str | Path, *, require_multiple_macros: bool) -> dic
     macro_gds: dict[str, Path] = {}  # macro_id → best GDS（merge 显式映射）
     macro_summaries = []  # 逐 macro 摘要
     outer_bar = None  # 多 macro 外层进度条
-    if require_multiple_macros and run_config.show_progress:
+    if macro_count > 1 and run_config.show_progress:
         from tqdm import tqdm  # 进度显示库
         outer_bar = tqdm(total=macro_count, desc="macros",  # 外层 macro 单位
                          unit="macro", position=0)  # 占第 0 行
@@ -325,16 +305,6 @@ def _run_mbopc(config_path: str | Path, *, require_multiple_macros: bool) -> dic
         "final_lithography_tiles": None if manifest is None else manifest["tile_count"]}
     atomic_write_json(pipeline.work_dir / "summary.json", summary)  # 落盘
     return summary  # 返回摘要
-
-
-def run_single_macro(config_path: str | Path) -> dict:
-    """准备并求解恰好一个 macro、多个 tile，使用统一 merge 写最终结果。"""
-    return _run_mbopc(config_path, require_multiple_macros=False)
-
-
-def run_multi_macro(config_path: str | Path) -> dict:
-    """逐个独立求解多个 macro，全部完成后只执行一次 merge。"""
-    return _run_mbopc(config_path, require_multiple_macros=True)
 
 
 @dataclass(frozen=True, slots=True)

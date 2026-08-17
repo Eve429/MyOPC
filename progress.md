@@ -212,3 +212,21 @@
   merge（P1-2 复现）；③ 30µm 16s 4/4 改善；④ 100µm 176s 16/16 改善，
   CUDA 峰 495MiB 与 30µm 相同（显存与 core 数解耦实证）。
 - 批 C：20 GDS + 脚本 + 计划文档提交；test_manual smoke 数据源句更新。
+
+### 2026-08-18（会话：配置系统重构，四批+批 0）
+
+- 用户规格评估：核心原则全部合理；7 项按现状调整获批（GradientConfig
+  解读=算法段、ILTConfig 不建、final_cell_mode 保留、以仓库为准、补
+  Decimal、补单遍/验证管线、solver DBU 包豁免保留）。
+- 批 0（94cd621）：上轮已批的入口合并落地（run_mbopc 单入口、删数量
+  约束，用户已自删大半，本批收尾）。
+- 批 1（1db593d）：configuration.py（8→最终 9 Config + load_config/
+  parse_scalar 声明式映射）+ 20 例 loader 行为测试。
+- 批 2+3（8f71b5a）：实施中补 EdgeConfig（两轮遗漏）与 ValidationConfig
+  （[iteration] 同名冲突）；四流程全迁移、四旧 Config+五旧 loader 删除、
+  5 toml 段名键位迁移（layout 切 bench_30um——gcd_45nm 已删）；四测试
+  文件模板同步；途中四枚陷阱（模板正则、切片错位、plan str、幽灵调用）
+  记 findings。
+- 批 4：全量 444 passed；四 smoke 全绿（simple 47.6s EPE 至 497、
+  gradient 用户参数 205s loss −50%、管线 XOR=0、单遍 0.12s）；两报告
+  + 手册同步。

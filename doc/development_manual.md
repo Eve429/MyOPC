@@ -66,8 +66,8 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 | 居中光刻画布 | `rasterize_mask_canvas` / `ownership_canvas` |
 | DBU 点→画布坐标 | `opc.input.points_to_canvas`（含 padding 项，禁手写公式） |
 | 最终双模式写出 | `geometry.PatchWriter.write_macro_results` |
-| 宏管线共享配置 | `main._macro_pipeline.MacroPipelineConfig` / `load_macro_config`（extra_sections 放行流程段） |
-| MB-OPC 运行配置 | `main._mbopc_workflow.MBOPCRunConfig` / `load_config` |
+| 统一配置体系 | `main.configuration`：9 个业务 Config + `load_config(path, *types)`（单次读、声明式映射、未知段/字段严格）；段：layout/partition/lithography/edge/mbopc/gradient/single_pass/iteration/output |
+| 跨段契约与派生值 | 各 workflow 装配处（步长/探针≤上限、lr 超限 warning；nm→DBU 内联换算） |
 
 ## 5. 光刻模型 lithography（ICCAD13，2026-08-16 迁移）
 

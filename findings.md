@@ -323,3 +323,28 @@
   （LayerNotFoundError 11/0，调用链确认）。
 - 生成器 TestReticle/build_reticles.py（仅依赖 klayout，--list/--only，
   幂等）；20 份 GDS 已入库；单测仍用自建生成式 GDS（纪律不变）。
+
+## 配置系统重构事实（2026-08-18）
+
+- **两轮都漏了 EdgeConfig**：方案 §4 与批准计划的首批清单都没有 [edge]
+  段的归属——边段化（corner/segment/max_disp/miter）是 simple/gradient/
+  验证/单遍四方共用的算法无关配置，实施时补第八个 Config。
+- **[iteration] 同名冲突**：单遍（displacement_nm）与验证管线
+  （round_deltas_nm）共用段名但字段不同——全量未知字段检查会互相误伤；
+  单遍改 [single_pass]、验证建 ValidationConfig（冻结 ±2nm 迁入
+  __post_init__，load_validation_deltas 删除）。
+- **f-string 模板的正则清理陷阱**：`device = "{values["device"]}"` 行被
+  两次不同正则删（一次删错一次补回），模板键挪移用"段尾锚点插入"比
+  "先删后补"稳。
+- **_prepare 元组切片错位**：configs[:5] 把 Validation 当 output 传入
+  （Validation 无 work_dir 属性报 AttributeError）——元组多态装配必须
+  解包命名，不能位置切片。
+- **plan dict 的值是 str**：run_macro_pipeline 里 plan["work_dir"] / x
+  报 str/str TypeError——plan JSON 序列化产物一律 Path() 包裹再拼接。
+- **workflow.load_config 幽灵调用**：_mbopc_workflow 从 configuration
+  import 了 load_config → 旧测试 workflow.load_config(path) 不 AttributeError
+  而是静默返回空元组（无 config_types）→ "DID NOT RAISE"——跨模块同名
+  导入会制造静默成功路径，测试调用点要显式传类型。
+- smoke：simple（bench_30um 8 轮）47.6s best_epe 至 497；gradient
+  （用户实验 config gcd_30um [1,1] 10 轮）205s loss −50%；管线 XOR=0。
+  gcd_45nm 已删，旧基线数字不可比（报告如实记录口径）。

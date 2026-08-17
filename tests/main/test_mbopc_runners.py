@@ -171,6 +171,38 @@ class TestSingleMacroRunner:
             workflow.run_single_macro(config)  # 入口约束
 
 
+class TestPreflightValidation:
+    """macro_grid 模式的非法配置必须在昂贵准备之前失败（审查问题 2）。"""
+
+    def test_single_entry_rejects_grid_before_prepare(self, tmp_path, monkeypatch):
+        """single + [2,2]：prepare 与模型构造零执行，直接 ValueError。"""
+        gds = _write_gds(tmp_path)  # 生成版图
+
+        def _forbidden(*args, **kwargs):
+            """昂贵函数被调用即为回归。"""
+            raise AssertionError("非法配置不应执行 problem 准备或模型构造")
+
+        monkeypatch.setattr(workflow, "prepare_problems", _forbidden)
+        monkeypatch.setattr(workflow, "ICCAD13Lithography", _forbidden)
+        with pytest.raises(ValueError, match="恰好 1 个 macro"):  # 直接失败
+            workflow.run_single_macro(  # 单 macro 入口 + 多 macro 网格
+                _write_config(tmp_path, gds, macro_grid="[2, 2]"))
+
+    def test_multi_entry_rejects_grid_before_prepare(self, tmp_path, monkeypatch):
+        """multi + [1,1]：prepare 与模型构造零执行，直接 ValueError。"""
+        gds = _write_gds(tmp_path)  # 生成版图
+
+        def _forbidden(*args, **kwargs):
+            """昂贵函数被调用即为回归。"""
+            raise AssertionError("非法配置不应执行 problem 准备或模型构造")
+
+        monkeypatch.setattr(workflow, "prepare_problems", _forbidden)
+        monkeypatch.setattr(workflow, "ICCAD13Lithography", _forbidden)
+        with pytest.raises(ValueError, match="大于 1"):  # 直接失败
+            workflow.run_multi_macro(  # 多 macro 入口 + 单 macro 网格
+                _write_config(tmp_path, gds, macro_grid="[1, 1]"))
+
+
 class TestMultiMacroRunner:
     """多 macro 入口的独立迭代、一次合并与差异量化。"""
 

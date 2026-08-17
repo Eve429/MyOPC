@@ -7,6 +7,7 @@ import sys
 import klayout.db as kdb
 import numpy as np
 import pytest
+import torch
 
 import main._mbopc_workflow as workflow
 from layout import DbuBox, LayerSpec, LayoutDB
@@ -240,6 +241,37 @@ class TestGradientRunner:
         for tile in manifest["tiles"]:  # 逐 tile 检查
             assert (out_dir / tile["nominal_png"]).is_file()  # 连续 PNG
             assert (out_dir / tile["binary_png"]).is_file()  # 二值 PNG
+
+
+class TestCudaStatsDevice:
+    """CUDA 峰值统计必须显式传入目标设备（审查问题 1）。"""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="无 CUDA")
+    def test_peak_stats_receive_explicit_device(self, tmp_path, monkeypatch):
+        """reset/max 收到显式 torch.device（透传真实现的真实小跑）。"""
+        gds = _write_gds(tmp_path)  # 生成版图
+        received = {"reset": [], "max": []}  # 记录收到的 device 参数
+        real_reset = torch.cuda.reset_peak_memory_stats  # 真实现
+        real_max = torch.cuda.max_memory_allocated  # 真实现
+
+        def _spy_reset(device=None):
+            """记录并透传重置。"""
+            received["reset"].append(device)
+            return real_reset(device)
+
+        def _spy_max(device=None):
+            """记录并透传读取。"""
+            received["max"].append(device)
+            return real_max(device)
+
+        monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", _spy_reset)
+        monkeypatch.setattr(torch.cuda, "max_memory_allocated", _spy_max)
+        config = _write_config(tmp_path, gds, device="cuda")  # 显式 CUDA
+        summary = workflow.run_gradient_mbopc(config)  # 真实小跑
+        assert summary["cuda_peak_bytes"] >= 0  # 正常读到峰值
+        # 两次调用都收到显式 device 对象（非 None 即证明不再依赖当前设备）。
+        assert received["reset"] == [torch.device("cuda")]
+        assert received["max"] == [torch.device("cuda")]
 
 
 class TestGradientMultiMacro:

@@ -209,7 +209,31 @@ def _run_mbopc(config_path: str | Path, *, require_multiple_macros: bool) -> dic
     total_started = time.perf_counter()  # 全流程计时
     run_config = load_config(config_path)  # 配置层全部校验
     pipeline = run_config.pipeline  # 宏管线配置
+    # 入口数量约束前置：macro_grid 数量模式在配置层即可判定，非法配置在
+    # 昂贵的 problem 准备与光刻模型构造之前立即失败。
+    grid = pipeline.macro_grid  # 数量模式（None = size 模式，未知）
+    if grid is not None:  # 可判定模式
+        grid_count = grid[0] * grid[1]  # macro 总数
+        if require_multiple_macros and grid_count <= 1:  # 多 macro 入口
+            raise ValueError(
+                f"多 macro 入口要求 macro 数大于 1，macro_grid={list(grid)}")
+        if not require_multiple_macros and grid_count != 1:  # 单 macro 入口
+            raise ValueError(
+                f"单 macro 入口要求恰好 1 个 macro，macro_grid={list(grid)}")
     plan = prepare_problems(pipeline)  # 阶段 0/1（共用生命周期）
+    macro_count = plan["macro_count"]  # macro 总数
+    if require_multiple_macros:  # 多 macro 入口的数量约束
+        if macro_count <= 1:
+            raise ValueError(f"多 macro 入口要求 macro 数大于 1，实际 {macro_count}")
+    elif macro_count != 1:  # 单 macro 入口的数量约束
+        raise ValueError(f"单 macro 入口要求恰好 1 个 macro，实际 {macro_count}")
+    for entry in plan["macros"]:  # 每个 macro 必须有多个 tile
+        if entry["core_count"] <= 1:
+            raise ValueError(
+                f"{entry['macro_id']} 只有 {entry['core_count']} 个 tile，"
+                "入口要求每 macro 至少 2 个 tile")
+    # 全部入口校验通过后才做单位换算、设备解析与模型构造（size 模式的
+    # macro 数量只能由 plan 判定，故兜底检查保留在 prepare 之后）。
     dbu_nm = Decimal(str(plan["dbu_um"])) * 1000  # DBU 的 nm 值
     solver_config = SimpleMBOPCConfig(  # nm 参数精确换算为 DBU
         iterations=run_config.iterations,
@@ -222,28 +246,6 @@ def _run_mbopc(config_path: str | Path, *, require_multiple_macros: bool) -> dic
         target_cache_bytes=run_config.target_cache_mb * 1024 * 1024)
     device = _resolve_device(run_config.device)  # 设备解析（auto→实际）
     model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
-    # 入口数量约束前置：macro_grid 数量模式在配置层即可判定，错误配置不再
-    # 先跑完昂贵的 problem 准备才失败（size 模式仍由 plan 后的实际数兜底）。
-    grid = pipeline.macro_grid  # 数量模式（None = size 模式，未知）
-    if grid is not None:  # 可判定模式
-        grid_count = grid[0] * grid[1]  # macro 总数
-        if require_multiple_macros and grid_count <= 1:  # 多 macro 入口
-            raise ValueError(
-                f"多 macro 入口要求 macro 数大于 1，macro_grid={list(grid)}")
-        if not require_multiple_macros and grid_count != 1:  # 单 macro 入口
-            raise ValueError(
-                f"单 macro 入口要求恰好 1 个 macro，macro_grid={list(grid)}")
-    macro_count = plan["macro_count"]  # macro 总数
-    if require_multiple_macros:  # 多 macro 入口的数量约束
-        if macro_count <= 1:
-            raise ValueError(f"多 macro 入口要求 macro 数大于 1，实际 {macro_count}")
-    elif macro_count != 1:  # 单 macro 入口的数量约束
-        raise ValueError(f"单 macro 入口要求恰好 1 个 macro，实际 {macro_count}")
-    for entry in plan["macros"]:  # 每个 macro 必须有多个 tile
-        if entry["core_count"] <= 1:
-            raise ValueError(
-                f"{entry['macro_id']} 只有 {entry['core_count']} 个 tile，"
-                "入口要求每 macro 至少 2 个 tile")
     target_cache = TargetCanvasCache(solver_config.target_cache_bytes)  # 跨 macro 共享
     macros_dir = pipeline.work_dir / "macros"  # 逐 macro 产物根目录
     macro_gds: dict[str, Path] = {}  # macro_id → best GDS（merge 显式映射）
@@ -468,9 +470,13 @@ def run_gradient_mbopc(config_path: str | Path) -> dict:
         batch_size=run_config.batch_size,
         target_cache_bytes=run_config.target_cache_mb * 1024 * 1024)
     device = _resolve_device(run_config.device)  # 设备解析（auto→实际）
+    # CUDA 峰值统计设备必须显式指定：不传 device 时 PyTorch 统计当前设备
+    # （默认 cuda:0），多卡下会量错卡；这里不改进程全局设备（不 set_device）。
+    cuda_stats_device = (torch.device(device)
+                         if device.startswith("cuda") else None)  # 统计目标
     model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
-    if device.startswith("cuda"):  # CUDA 峰值从模型加载后开始计量
-        torch.cuda.reset_peak_memory_stats()  # 重置峰值统计
+    if cuda_stats_device is not None:  # CUDA 峰值从模型加载后开始计量
+        torch.cuda.reset_peak_memory_stats(cuda_stats_device)  # 显式统计设备
     macro_count = plan["macro_count"]  # macro 总数（本入口接受任意 ≥1）
     target_cache = TargetCanvasCache(solver_config.target_cache_bytes)  # 跨 macro 共享
     macros_dir = pipeline.work_dir / "macros"  # 逐 macro 产物根目录
@@ -541,8 +547,8 @@ def run_gradient_mbopc(config_path: str | Path) -> dict:
             plan, final_path, model, run_config.batch_size,
             pipeline.work_dir / "final_lithography")
     peak_rss = max(peak_rss, process.memory_info().rss)  # 收尾前采峰
-    cuda_peak = (int(torch.cuda.max_memory_allocated())  # CUDA 峰值字节数
-                 if device.startswith("cuda") else None)  # CPU 时为 None
+    cuda_peak = (int(torch.cuda.max_memory_allocated(cuda_stats_device))  # 同卡峰值
+                 if cuda_stats_device is not None else None)  # CPU 时为 None
     summary = {  # 完整摘要
         "method": "gradient_mbopc",
         "macro_count": macro_count,

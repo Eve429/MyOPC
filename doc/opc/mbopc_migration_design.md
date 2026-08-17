@@ -149,7 +149,7 @@ opc/input/edge/                 # 边段型共有输入与重建
 opc/iteration/mbopc/            # 本次离散 EPE 方法
 opc/iteration/diffopc/          # 未来目录，本轮不创建
 opc/iteration/ilt/              # 未来目录，本轮不创建
-main/                           # 直接入口和全局状态编排
+main/                           # 直接入口、进度和 macro 结果编排
 ```
 
 ## 5. 第一版独立 macro 迭代与最终合并
@@ -284,7 +284,7 @@ y_canvas = (y_dbu - context.bottom) / pixel_dbu - 0.5 + low_y_padding
 ### 8.1 `LithographyModel` 此时才合理
 
 独立迁移 ICCAD13 时只有一个模型且没有通用消费者，所以光刻计划没有建立抽象。本轮
-`run_macro_step()` 成为第一个真实求解器调用方，Protocol 有当前实现和当前调用者，不再是
+`evaluate_and_propose()` 成为第一个真实求解器调用方，Protocol 有当前实现和当前调用者，不再是
 一次性抽象。它只描述求解器消费的能力，不包含 kernel、资产路径或 FFT 细节。
 
 新增 `lithography/contracts.py`：
@@ -439,6 +439,7 @@ class SimpleMBOPCResult:
     records: tuple[IterationRecord, ...]  # records[0] 固定为 baseline
     best_round: int                       # 0 表示零位移 baseline 最优
     stop_reason: str                      # zero_epe/no_update/invalid_geometry/iteration_limit
+    stop_detail: str | None               # 非法候选的明确原因；正常停止为 None
 ```
 
 改为独立 macro 完整迭代后，Record 和 Result 都有当前真实调用方，因此恢复这两个领域结构。
@@ -545,7 +546,7 @@ def optimize_macro(
 ```python
 @dataclass(frozen=True, slots=True)
 class MacroPipelineConfig:
-    """保存 Problem 准备和全局状态写出共同配置。"""
+    """保存 Problem 准备和 macro 结果写出共同配置。"""
     layout_path: Path
     top_cell: str | None
     layer: LayerSpec
@@ -575,14 +576,15 @@ def prepare_problems(config: MacroPipelineConfig) -> dict: ...
 def write_macro_gds(
     problem: MacroProblem, region: kdb.Region, path: Path, dbu_um: float,
 ) -> Path: ...
-def merge_macro_gds(
-    plan: dict, macro_gds_dir: Path, output_path: Path, *,
+def merge_macro_results(
+    plan: dict, macro_gds_paths: Mapping[str, Path], output_path: Path, *,
     cell_mode: Literal["single_cell", "macro_cells"],
 ) -> Path: ...
 ```
 
 规则：代码从现有 runner 移动而非复制；`prepare_problems()` 不读取 `[iteration]`；
-`merge_macro_gds()` 不猜 result NPZ；各 runner 校验自己的 state 文件；不移动到
+`merge_macro_results()` 不猜 result NPZ，也不关心调用发生在最终还是未来某一轮；各 runner
+校验自己的结果文件；函数消费显式 `macro_id -> GDS Path`，不依赖某一种目录命名；不移动到
 `opc.input`，因为 TOML/文件生命周期属于应用编排。`main/` 每一行继续有中文注释。
 
 ### 11.3 修改 `main/run_macro_pipeline.py`
@@ -597,11 +599,27 @@ def run(...): ...
 def main(...): ...
 ```
 
-已有 +2/-2 文件数量、位移 NPZ、错误语义和 gcd_45nm 最终 XOR 必须不变。
+已有 +2/-2 文件数量、位移 NPZ、错误语义和 gcd_45nm 最终 XOR 必须不变；验证 runner
+把最终一轮 macro GDS 显式映射传给 `merge_macro_results()`。
 
-## 12. `main/run_mbopc.py` 设计
+## 12. 两个 main 与共享 MB-OPC 工作流
 
-### 12.1 运行配置
+### 12.1 为什么是两个入口、一个共享工作流
+
+新增两个直接运行入口：
+
+```text
+main/run_mbopc_single_macro.py    # 恰好一个 macro，macro 内多个 tile
+main/run_mbopc_multi_macro.py     # 多个 macro，每个 macro 内多个 tile
+```
+
+两个入口只负责默认配置路径、命令行、异常转退出码和摘要打印；MB-OPC 共有业务放在
+`main/_mbopc_workflow.py`。不再新增第三个 `main_test_mbopc.py`，避免三个入口重复。
+
+以后迁移 ILT 时，layout/config/macro 规划/progress/最终 merge 的调用结构可以保持；方法相关的
+Problem 准备和 solve 调用替换为 ILT 对应实现即可。本轮不为未来 ILT 建工厂或注册器。
+
+### 12.2 `main/_mbopc_workflow.py` 运行配置
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -616,144 +634,145 @@ class MBOPCRunConfig:
     target_cache_mb: int
     device: str
     save_final_lithography: bool
+    show_progress: bool
 
 
 def load_config(path: str | Path) -> MBOPCRunConfig: ...
 ```
 
-### 12.2 状态目录与 NPZ
+### 12.3 结果目录与 NPZ
 
 ```text
 work_dir/
   plan.json
   problems/mr*.npz
-  state_000/
-    results/mr*.npz
-    gds/mr*.gds
-    state.gds
-    metrics.json
-  state_001/...
+  macros/
+    mr0c0/
+      result.npz
+      best.gds
+      metrics.json
+    mr0c1/...
+  final.gds
   final_lithography/
   summary.json
 ```
 
-每个 state result：
+每个 `result.npz`：
 
 ```text
 format_version            int32[1]
 macro_id                  unicode[1]
-state_index               int32[1]
-segment_displacements     float64[S]
+best_round                int32[1]
+best_displacements        float64[S]
+stop_reason               unicode[1]
 ```
 
-metrics 不重复写进 NPZ；每 state 统一写 `metrics.json`。NPZ 只用 `allow_pickle=False`，
-经同目录临时文件原子替换。
+逐轮标量记录统一写 `metrics.json`；`records[0]` 是 baseline，`records[1]` 是第一次移动后的
+评价，`stop_detail` 也只写 JSON（正常停止为 null）。NPZ 不重复保存 metrics；只用
+`allow_pickle=False`，经同目录临时文件替换。
 
-### 12.3 函数
+### 12.4 共享工作流函数
 
 ```python
-def initialize_state(plan: dict) -> Path:
-    """从全部 MacroProblem 的零位移构造并发布 state_000。"""
+def solve_macro(
+    problem: MacroProblem,
+    model: LithographyModel,
+    config: SimpleMBOPCConfig,
+    target_cache: TargetCanvasCache,
+    output_dir: Path,
+    *,
+    show_progress: bool,
+    progress_position: int,
+    leave_progress: bool,
+) -> tuple[SimpleMBOPCResult, Path]:
+    """显示 tile 进度，让一个 macro 完成全部迭代并写出 best GDS。"""
     ...
 
-def run_iteration(
-    plan: dict, state_index: int, model: LithographyModel,
-    config: SimpleMBOPCConfig, target_cache: TargetCanvasCache,
+def _run_mbopc(
+    config_path: str | Path, *, require_multiple_macros: bool,
 ) -> dict:
-    """评价一个全局状态，并在允许时原子发布下一状态。"""
+    """执行两个入口共有的准备、逐 macro 求解、最终合并和结果保存。"""
+    ...
+
+def run_single_macro(config_path: str | Path) -> dict:
+    """准备并求解恰好一个 macro、多个 tile，使用统一 merge 写最终结果。"""
+    ...
+
+def run_multi_macro(config_path: str | Path) -> dict:
+    """逐个独立求解多个 macro，全部完成后只执行一次 merge。"""
     ...
 
 def save_final_lithography(
-    plan: dict, state_path: Path, model: LithographyModel,
+    plan: dict, final_layout: Path, model: LithographyModel,
     batch_size: int, output_dir: Path,
 ) -> dict:
-    """流式保存最佳状态每 core 的 nominal 连续/二值 PNG 和 manifest。"""
-    ...
-
-def run(config_path: str | Path) -> dict:
-    """执行准备、初始化、迭代、最佳状态输出和摘要。"""
-    ...
-
-def main() -> int:
-    """读取可选 TOML 路径，成功返回 0，错误显示并返回 2。"""
+    """流式保存最终版图每 tile 的 nominal 连续/二值 PNG 和 manifest。"""
     ...
 ```
 
-`initialize_state()` 是独立可验证阶段，不是仅缩短 `run()` 的包装函数。
+`_run_mbopc()` 有两个当前调用方，用布尔参数只表达入口已经确定的单/多 macro 约束，不选择
+OPC/ILT 方法。`solve_macro()` 创建 `tqdm`，最大 total 为 `(iterations+1)×core_count`，因为
+baseline 和每个移动后状态都要计算全部 tile。提前停止时按实际完成量关闭，不强行补到 100%。
+`bar.update(batch_count)` 只通过 `on_tiles_completed` 在 batch 完成、张量释放后调用；自动
+测试把 `show_progress` 设为 false，避免进度输出污染断言。
 
-### 12.4 `run_iteration()` 流程
+### 12.5 单 macro main
 
-1. 打开 `state_i/state.gds` 一次；
-2. 逐 macro 加载 Problem 和 state_i 位移；
-3. 用 `macro.query_box` 查询 current Region；
-4. 调用 `run_macro_step()` 并累计全局指标；
-5. 若还能更新，把下一位移和候选 macro GDS 写到同卷临时 state 目录；
-6. 任一 `reconstruct_region()` 失败：不发布临时目录，记录 macro/state/原因，整代拒绝；
-7. 全部合法后 `merge_macro_gds()` 生成临时 `state.gds`；
-8. 回读确认目标层和文件数量完整，再原子发布目录；
-9. 当前 state metrics 原子写入当前目录；
-10. 返回当前指标、是否发布和停止条件。
+`main/run_mbopc_single_macro.py` 只定义 `main()`：加载配置并调用 `run_single_macro()`。
+workflow 要求 `macro_count==1` 且 `core_count>1`，然后构造模型/cache、调用 `solve_macro()`，
+最后把唯一 best GDS 交给 `merge_macro_results()`。单 macro 也走统一 merge 函数，用同一路径
+验证 ownership 裁剪和写出，不维护第二套输出实现。
 
-只把 `ReconstructionError` 转换成明确算法拒绝；文件损坏、Torch、KLayout、I/O 和未知
-RuntimeError 不捕获降级，直接失败。
+### 12.6 多 macro main
 
-### 12.5 全局 best
+`main/run_mbopc_multi_macro.py` 只定义 `main()`：加载配置并调用 `run_multi_macro()`。
+workflow 要求 `macro_count>1` 且每个 macro `core_count>1`，按稳定顺序逐 macro 完成全部迭代，
+收集 `macro_id -> best.gds`，全部成功后只调用一次 `merge_macro_results()`。
 
-```text
-for state_index in 0..iterations:
-    record = run_iteration(...)
-    EPE 更小时记录 best_state
-    epe==0          -> zero_epe
-    最终评价态      -> iteration_limit
-    moved==0        -> no_update
-    候选非法        -> invalid_geometry
-```
+多 macro 使用两层 tqdm：外层 `unit="macro"`，内层 `unit="tile"`；当前主机逐 macro 求解，
+不并行运行多个 tile 进度条。候选几何非法属于已定义的算法停止：保留该 macro 较早 best 并
+继续后续 macro；I/O、Torch、KLayout 和未知异常原样传播，不拿已完成 macro 拼半份最终 GDS。
 
-相同 EPE 保留较早 state。最终输出直接复制已存在的 `state_{best}/state.gds`，不拼各 macro
-局部最佳，不输出未评价候选。
+### 12.7 main 对未来 ILT 的改动边界
 
-### 12.6 最终光刻图案
+两个入口文件本身不包含边段/EPE 逻辑。未来 ILT 新增自己的 workflow；若保持相同入口交互，
+只替换 workflow import 和调用。公共 `_macro_pipeline.py` 的读取、网格描述、写 macro 和
+`merge_macro_results()` 不改；ILT 不得伪造 MacroProblem。
 
-`save_final_lithography=true` 时：只对最佳 state 额外运行一次；逐 macro/core 流式 batch；
-每个 core 只保存自身 ownership 区域的 nominal 连续灰度 PNG 和阈值二值 PNG；manifest
-记录 macro/core、ownership/context、pixel、padding 和文件名；dose_max/defocus_min 只用于
-PVBand，不默认保存；每 batch 写完立即释放。完整 reticle 单张像素拼图不在本轮实现。
+### 12.8 最终光刻图案
 
-## 13. `main/main_test_mbopc.py`
+`save_final_lithography=true` 时只对最终合并 GDS 运行一次；逐 macro/tile 流式 batch；每 tile
+只保存 ownership 区域的 nominal 连续灰度 PNG 和阈值二值 PNG；manifest 记录 macro/tile、
+ownership/context、pixel、padding 和文件名；每 batch 写完立即释放。完整 reticle 单张像素
+拼图不在本轮实现。
 
-定位：生成式小版图、默认 CPU、无需安装、逐阶段中文解释、`main/` 每行有注释。
+## 13. 两个 main 的直接验证要求
 
-```python
-def write_demo_layout(path: Path) -> None:
-    """生成跨 core/macro、带孔和斜边的小型两层 GDS。"""
-    ...
+两个入口都必须可从仓库外直接运行，不要求安装项目。自动测试生成小型 GDS 和临时 TOML：
 
-def write_demo_config(layout: Path, output: Path, device: str) -> Path:
-    """写出两 macro、两次更新的最小 TOML。"""
-    ...
-
-def run_demo(temp: Path, device: str = "cpu") -> dict:
-    """运行完整 simple MB-OPC 并解释输入、输出和指标。"""
-    ...
-
-def main() -> int:
-    """解析 device，创建临时工作区并运行演示。"""
-    ...
-```
-
-必须展示：Problem 数、state_000、两代评价/发布、每轮 macro GDS、EPE/L2/PVBand、valid/
-ambiguous/moved、best state、最终 GDS、nominal PNG manifest、耗时/RSS/CUDA peak，以及未处理
-层不进入修正结果。
+- single：一个 macro、至少 2×2 tile，包含矩形、hole、斜边；
+- multi：至少 2×2 macro，每个 macro 至少 2×2 tile，包含跨 macro polygon；
+- 默认 CPU，可用时另测 CUDA；
+- 展示 macro/tile 进度、baseline、移动后每轮指标、局部 best、最终 merge、GDS/PNG、耗时/内存；
+- 未处理层不得进入输出。
 
 运行：
 
 ```powershell
-D:\app\miniforge\envs\myopc\python.exe main\main_test_mbopc.py
+D:\app\miniforge\envs\myopc\python.exe main\run_mbopc_single_macro.py config\mbopc_single_macro.toml
+D:\app\miniforge\envs\myopc\python.exe main\run_mbopc_multi_macro.py config\mbopc_multi_macro.toml
 ```
 
 ## 14. 配置文件
 
-新增 `config/mbopc.toml`：
+新增两个字段相同、macro 划分不同的配置：
+
+```text
+config/mbopc_single_macro.toml   # macro_grid=[1,1]
+config/mbopc_multi_macro.toml    # 默认 macro_grid=[2,2]
+```
+
+以下为多 macro 示例：
 
 ```toml
 [input]
@@ -788,55 +807,61 @@ batch_size = 8
 target_cache_mb = 512
 device = "auto"
 save_final_lithography = true
+show_progress = true
 
 [output]
-work_dir = "../output/mbopc"
-final_layout = "../output/mbopc/gcd_45nm_mbopc.gds"
+work_dir = "../output/mbopc_multi_macro"
+final_layout = "../output/mbopc_multi_macro/gcd_45nm_mbopc.gds"
 final_cell_mode = "single_cell"
 ```
 
 新增校验：step/epe distance 精确换算 DBU；step≤max displacement；epe distance≤context；
-iterations/decay/batch>0；cache≥0；device 只接受 auto/cpu/cuda[:index]。
+iterations/decay/batch>0；cache≥0；device 只接受 auto/cpu/cuda[:index]；show_progress 为 bool；
+single/multi main 分别校验自身 macro/tile 数量。
 
 ## 15. 文件级改动清单
 
 ### 15.1 新增文件
 
-| 文件 | 核心内容 |
-|---|---|
-| `evaluation/__init__.py` | 导出 EPEEvaluation 和三项指标。 |
-| `evaluation/metrics.py` | L2、PVBand、EPE 探针评价。 |
-| `lithography/contracts.py` | 首个真实求解器需要的薄模型 Protocol。 |
-| `opc/iteration/__init__.py` | 中文模块 docstring，不建注册器。 |
-| `opc/iteration/mbopc/__init__.py` | 导出 Config、Cache、Step、run_macro_step。 |
-| `opc/iteration/mbopc/simple.py` | 最简离散 EPE macro step。 |
-| `main/_macro_pipeline.py` | 两个 runner 共有的准备、写 macro、merge。 |
-| `main/run_mbopc.py` | GDS 到全局最佳状态的主流程。 |
-| `main/main_test_mbopc.py` | 本次全部功能的可读验证入口。 |
-| `config/mbopc.toml` | 默认运行配置。 |
-| `tests/evaluation/__init__.py` | 中文模块 docstring。 |
-| `tests/evaluation/test_metrics.py` | 指标与方向测试。 |
-| `tests/opc/iteration/__init__.py` | 中文模块 docstring。 |
-| `tests/opc/iteration/test_simple_mbopc.py` | solver 单元/集成测试。 |
-| `tests/main/test_mbopc.py` | 全局状态和直接运行测试。 |
-| `doc/opc/mbopc_development_report.md` | 实施、偏差、性能、简化审计。 |
-| `doc/opc/mbopc_test_report.md` | 命令、场景、CPU/CUDA、coverage。 |
+| 文件 | 类型 | 核心内容 |
+|---|---|---|
+| `evaluation/__init__.py` | 业务代码·包导出 | 导出 EPEEvaluation 和三项指标。 |
+| `evaluation/metrics.py` | 业务代码·评价 | L2、PVBand、EPE 探针评价。 |
+| `lithography/contracts.py` | 业务代码·接口契约 | 首个真实求解器需要的薄模型 Protocol。 |
+| `opc/iteration/__init__.py` | 业务代码·包导出 | 中文模块 docstring，不建注册器。 |
+| `opc/iteration/mbopc/__init__.py` | 业务代码·包导出 | 导出 Config、Cache、Step、Record、Result 和两个算法函数。 |
+| `opc/iteration/mbopc/simple.py` | 业务代码·迭代算法 | 状态评价、提案和单 macro 完整离散 EPE 迭代。 |
+| `main/_macro_pipeline.py` | 应用代码·公共编排 | 公共配置、Problem 准备、macro GDS、独立 merge 函数。 |
+| `main/_mbopc_workflow.py` | 应用代码·MB-OPC 编排 | 两个入口共享的 solve、tqdm、结果和最终光刻输出。 |
+| `main/run_mbopc_single_macro.py` | 运行入口 | 一个 macro、多个 tile 的直接运行 main。 |
+| `main/run_mbopc_multi_macro.py` | 运行入口 | 多个 macro、每 macro 多 tile 的直接运行 main。 |
+| `config/mbopc_single_macro.toml` | 配置文件 | 单 macro 默认运行参数。 |
+| `config/mbopc_multi_macro.toml` | 配置文件 | 多 macro 默认运行参数。 |
+| `doc/opc/mbopc_migration_design.md` | 设计文档 | 本文件；作为审核通过后的唯一实施依据。 |
+| `tests/evaluation/__init__.py` | 测试代码·包标记 | 中文模块 docstring。 |
+| `tests/evaluation/test_metrics.py` | 测试代码·单元测试 | 指标与方向测试。 |
+| `tests/opc/iteration/__init__.py` | 测试代码·包标记 | 中文模块 docstring。 |
+| `tests/opc/iteration/test_simple_mbopc.py` | 测试代码·算法测试 | solver、round 后指标、进度回调和真实模型测试。 |
+| `tests/main/test_mbopc_runners.py` | 测试代码·端到端测试 | 单/多 macro 两个入口、最终一次 merge 和直接运行。 |
+| `doc/opc/mbopc_development_report.md` | 开发报告 | 实施、偏差、性能、简化审计。 |
+| `doc/opc/mbopc_test_report.md` | 测试报告 | 命令、场景、CPU/CUDA、coverage。 |
 
 ### 15.2 修改文件
 
-| 文件 | 核心改动 |
-|---|---|
-| `lithography/__init__.py` | 增加 `LithographyModel` 导出，不改 ICCAD13 数值。 |
-| `opc/input/raster.py` | 增加 `points_to_canvas()`，不改变已有栅格结果。 |
-| `opc/input/__init__.py` | 导出新坐标函数。 |
-| `main/run_macro_pipeline.py` | 移动共有代码，验证行为不变。 |
-| 现有 raster 测试文件 | 增加 padding 坐标回归，不建单测试文件。 |
-| `tests/main/test_macro_pipeline.py` | 锁定重构前后 +2/-2 和 XOR。 |
-| `doc/development_manual.md` | 增加状态代、接口、目录和运行说明。 |
-| `doc/test_manual.md` | 增加测试、main 和 smoke 命令。 |
-| `task_plan.md` | lithography/evaluation 后增加 simple MB-OPC 子阶段。 |
-| `findings.md` | 记录跨 macro context、坐标、性能事实。 |
-| `progress.md` | 记录提交、测试、smoke 和偏差。 |
+| 文件 | 类型 | 核心改动 |
+|---|---|---|
+| `lithography/__init__.py` | 业务代码·包导出 | 增加 `LithographyModel` 导出，不改 ICCAD13 数值。 |
+| `opc/input/raster.py` | 业务代码·坐标工具 | 增加 `points_to_canvas()`，不改变已有栅格结果。 |
+| `opc/input/__init__.py` | 业务代码·包导出 | 导出新坐标函数。 |
+| `main/run_macro_pipeline.py` | 运行入口·现有回归 | 移动共有代码并调用独立 merge，验证行为不变。 |
+| 现有 raster 测试文件 | 测试代码·回归测试 | 增加 padding 坐标回归，不建单测试文件。 |
+| `tests/main/test_macro_pipeline.py` | 测试代码·回归测试 | 锁定重构前后 +2/-2 和 XOR。 |
+| `requirements.txt` | 依赖清单 | 增加 `tqdm`；不因进度条引入其他 UI 库。 |
+| `doc/development_manual.md` | 开发手册 | 增加独立 macro 语义、接口、目录、进度和运行说明。 |
+| `doc/test_manual.md` | 测试手册 | 增加两个 main、测试和 smoke 命令。 |
+| `task_plan.md` | 项目计划 | lithography/evaluation 后增加 simple MB-OPC 子阶段。 |
+| `findings.md` | 研究记录 | 记录独立 macro context 取舍、坐标和性能事实。 |
+| `progress.md` | 进度记录 | 记录提交、测试、smoke 和偏差。 |
 
 ### 15.3 明确不修改
 
@@ -888,41 +913,46 @@ output/
 - SREF/AREF 展开后跨 macro；
 - clear/opaque。
 
-非法候选必须整代拒绝。代表测试保存边段/owner/probe/方向 PNG 到 pytest 临时目录，并在
-测试报告中引用；默认测试不得写仓库 `output/`。
+非法候选必须停止当前 macro、保留最后合法 best，并以 `invalid_geometry` 明确记录；多 macro
+流程仍可用该 best 继续，但 summary 必须暴露停止原因。代表测试保存边段/owner/probe/方向
+PNG 到 pytest 临时目录并在报告引用；默认测试不得写仓库 `output/`。
 
-### 16.4 全局屏障
+### 16.4 独立 macro、round 语义和最终 merge
 
-- 两 macro 都读 state_000，不读临时 state_001；
-- state 发布前 result/GDS 数量完整；
-- 任一 macro 失败时下一 state 不发布；
-- 下一轮边界 core 包含邻 macro 已发布变化；
-- macro 正序/逆序 metrics 相同、state XOR=0；
+- 每个 macro 内全部 tile 同轮读取同一 current，不能看到本轮已生成的 next；
+- 多 macro 第一版不读取邻 macro 已移动状态，边界 context 固定为参考几何；
+- `records[0]` 是 baseline，`records[1]` 必须是第一次移动后的实际评价；
+- `iterations=1` 恰好包含 baseline 和一次移动后评价；
+- 指标改善/恶化与记录对应 GDS/位移一致；
+- macro 正序/逆序产生相同局部结果，最终 merge 后 XOR=0；
 - batch 大小不改变位移；
-- 全局 best 不能拼局部 best；
-- final state 有对应 metrics；
-- `iterations=1` 评价 state_000/state_001；
-- zero_epe/no_update/invalid_geometry/iteration_limit 准确。
+- 一个 macro `invalid_geometry` 保留其较早 best，并在 summary 明确记录；
+- 所有 macro 完成前不得调用最终 merge；
+- single 和 multi 都只调用 `merge_macro_results()`，multi 全流程调用恰好一次；
+- 多 macro 与单 macro 整 ROI 结果允许不同，但差异面积和边界带位置必须被量化；
+- zero_epe/no_update/invalid_geometry/iteration_limit 停止原因准确；
+- tqdm 每个完成 batch 按真实 tile 数更新，提前停止不伪造 100%。
 
 ### 16.5 现有流程和直接运行
 
 - `run_macro_pipeline.py` +2/-2 输出、文件数、XOR 不变；
 - 全量 layout/geometry/opc.input/main 回归；
-- subprocess 从仓库外运行 `main_test_mbopc.py` 和 `run_mbopc.py`；
-- 检查 summary、states、macro GDS、final GDS、PNG manifest；不要求 pip install。
+- subprocess 从仓库外分别运行 single/multi 两个 main；
+- 检查 summary、每 macro result/best GDS、最终 GDS、PNG manifest；不要求 pip install；
+- 捕获终端输出证明进度描述包含 macro ID、tile 单位和实际完成数；关闭进度时无 tqdm 输出。
 
 ## 17. 性能与内存
 
-CPU：一次只加载一个 MacroProblem 和一个 macro current Region；每 state GDS 只打开一次；
-target `uint8` cache 严格有界；current mask 只保留当前 batch；不复制 polygon/edge/segment
-为 Python 对象列表。KLayout 第一版仍逐 core 栅格，这是明确基线，只有基准证明瓶颈后再改。
+CPU：一次只加载一个 MacroProblem；当前 Region 由该 macro 位移在内存重建，不写每轮全局
+GDS；target `uint8` cache 严格有界；current mask 只保留当前 batch；不复制 polygon/edge/
+segment 为 Python 对象列表。KLayout 第一版仍逐 tile 栅格，这是明确基线。
 
 GPU batch 主要包含 target/mask/ownership、三张 printed 和光刻临时场。simple MB-OPC 使用
 `no_grad()`，每 batch 立即释放，不保存整张 reticle。
 
-报告必须记录：准备、初始化、每 state/macro 的 raster/lithography/evaluation/reconstruct/
-write 时间，cache hit/miss/peak，RSS、CUDA peak，segment/membership/core/macro 数，以及
-gcd_45nm 至少一个完整状态的数据。本轮不预设速度达标数字，不得空口称“高性能”。
+报告必须记录：准备、每 macro baseline/round 的 raster/lithography/evaluation/reconstruct、
+最终一次 merge 时间，cache hit/miss/peak，tqdm 实际 tile 数，RSS、CUDA peak，segment/
+membership/tile/macro 数，以及 gcd_45nm 单/多 macro 数据。本轮不预设速度达标数字。
 
 ## 18. 实施阶段与提交
 
@@ -957,29 +987,32 @@ feat(opc-input): 统一居中画布点坐标换算
 refactor(main): 提取两个真实流程共用的 macro 生命周期
 ```
 
-### 阶段 D：单 macro 状态步
+### 阶段 D：单 macro 完整优化
 
-实现 Config/Cache/Step/run_macro_step；完成图形、同步、batch、真实模型测试；审计无旧差分
-快路、重复坐标和未使用 helper。
+实现 Config/Cache/Step/IterationRecord/Result、`evaluate_and_propose()` 和 `optimize_macro()`；
+完成初态评价、移动后评价、同步 batch、进度回调、图形合法性和真实模型测试；审计无旧差分
+快路、重复坐标和未使用 helper。此阶段只处理一个 macro，不读取或合并其他 macro 的中间状态。
 
 ```text
-feat(mbopc): 实现同步 EPE 驱动的单 macro 状态步
+feat(mbopc): 实现同步 EPE 驱动的单 macro 完整优化
 ```
 
-### 阶段 E：全局主流程
+### 阶段 E：两个主流程与最终合并
 
-实现配置、state_000、全局屏障、整代发布、best、final GDS/PNG；测试顺序不变性、跨 macro
-context 和整代回滚。
+实现共享 `_mbopc_workflow.py`、单 macro 入口、多 macro 入口、各自配置、macro/tile 进度条、
+per-macro best、独立 `merge_macro_results()`、final GDS/PNG。多 macro 流程中，每个 macro
+独立完成全部迭代并写出 best，全部结束后只合并一次；测试 macro 执行顺序不影响最终物理覆盖，
+并明确量化边界 context 固定在参考状态带来的精度限制。
 
 ```text
-feat(main): 增加全局状态屏障的 simple MB-OPC 流程
+feat(main): 增加单宏与多宏 simple MB-OPC 入口
 ```
 
 ### 阶段 F：验证与报告
 
-新增 `main_test_mbopc.py`；CPU 全量、可用时 CUDA；gcd_45nm 至少完成初态评价和一次合法
-更新尝试，时间允许再跑默认全部迭代；更新手册/报告/规划；做差异、未调用函数、重复实现、
-异常入口、coverage 和 bug 补偿逻辑审计。
+直接运行 `run_mbopc_single_macro.py` 和 `run_mbopc_multi_macro.py`；CPU 全量、可用时 CUDA；
+gcd_45nm 至少完成初态评价和一次合法更新尝试，时间允许再跑默认全部迭代；更新手册/报告/
+规划；做差异、未调用函数、重复实现、异常入口、coverage 和 bug 补偿逻辑审计。
 
 ```text
 test(mbopc): 完成端到端验证与迁移报告
@@ -990,60 +1023,70 @@ test(mbopc): 完成端到端验证与迁移报告
 ```powershell
 D:\app\miniforge\envs\myopc\python.exe -m pytest -q tests\evaluation
 D:\app\miniforge\envs\myopc\python.exe -m pytest -q tests\opc\iteration
-D:\app\miniforge\envs\myopc\python.exe -m pytest -q tests\main\test_mbopc.py
+D:\app\miniforge\envs\myopc\python.exe -m pytest -q tests\main\test_mbopc_runners.py
 D:\app\miniforge\envs\myopc\python.exe -m pytest -q tests
 D:\app\miniforge\envs\myopc\python.exe -m ruff check evaluation lithography opc main tests
 D:\app\miniforge\envs\myopc\python.exe -m compileall -q evaluation lithography opc main tests
-D:\app\miniforge\envs\myopc\python.exe main\main_test_mbopc.py
-D:\app\miniforge\envs\myopc\python.exe main\run_mbopc.py config\mbopc.toml
+D:\app\miniforge\envs\myopc\python.exe main\run_mbopc_single_macro.py config\mbopc_single_macro.toml
+D:\app\miniforge\envs\myopc\python.exe main\run_mbopc_multi_macro.py config\mbopc_multi_macro.toml
 ```
 
-coverage 必须命中三种 EPE/ambiguous、cache 全路径、publish/拒绝、final state、跨 macro、
-invalid geometry、CPU real model 和可用时 CUDA；不以总百分比掩盖关键分支。
+coverage 必须命中三种 EPE/ambiguous、cache 全路径、初态与移动后指标、进度回调、合法发布/
+非法候选停止、最终只合并一次、固定边界 context、CPU real model 和可用时 CUDA；不以总
+百分比掩盖关键分支。
 
 ## 20. 报告要求
 
-开发报告记录：实际文件、计划偏差、OpenILT/归档取舍、全局状态代、Protocol 引入理由、
-三个必要结构理由、旧 Result/Record/差分快路未迁原因、性能、异常边界、简化审计、是否修改
-layout/geometry（应为否）、本地 commit 和未推送。
+开发报告记录：实际文件、计划偏差、OpenILT/归档取舍、独立 macro 策略及其边界精度取舍、
+Protocol 引入理由、Config/Cache/Step/IterationRecord/Result 的当前调用方和必要性、
+`merge_macro_results()` 的独立边界、旧差分快路未迁原因、性能、异常边界、简化审计、是否
+修改 layout/geometry（应为否）、本地 commit 和未推送。
 
-测试报告记录：环境版本、全部命令、图形矩阵、states/best、顺序/batch 不变性、hole/矩形
-越界拒绝、斜边/跨边界图、clear/opaque、真实 ICCAD13 CPU/CUDA、gcd_45nm 规模/耗时/内存/
-停止原因/产物，以及诚实的未覆盖分支。
+测试报告记录：环境版本、全部命令、图形矩阵、baseline/每轮移动后指标/best、batch 与 macro
+顺序不变性、进度条实际计数、最终合并调用次数、hole/矩形越界拒绝、斜边/跨边界图、固定
+边界 context 与同步全局 context 的差异样例、clear/opaque、真实 ICCAD13 CPU/CUDA、
+gcd_45nm 规模/耗时/内存/停止原因/产物，以及诚实的未覆盖分支。
 
 ## 21. 最终调用关系
 
 ```text
-main/run_mbopc.py::main()
-└─ run(config_path)
-   ├─ load_config() -> load_macro_config()
-   ├─ prepare_problems() -> prepare_macro_problem()      # 每 macro 一次
-   ├─ ICCAD13Lithography(...)
-   ├─ initialize_state()
-   │  ├─ MacroProblem.load()
-   │  ├─ reconstruct_region(zeros)
-   │  ├─ write_macro_gds()
-   │  └─ merge_macro_gds()                              # state_000
-   ├─ for state_i
-   │  └─ run_iteration()
-   │     ├─ LayoutDB.open(state_i.gds)                  # 每 state 一次
-   │     ├─ for macro
-   │     │  ├─ load Problem/state displacement
-   │     │  ├─ query(macro.query_box)                   # 只 raster
-   │     │  ├─ run_macro_step()
-   │     │  │  ├─ target/current/ownership canvas
-   │     │  │  ├─ model.forward_many()
-   │     │  │  ├─ L2/PVBand
-   │     │  │  ├─ edge_probe_points()
-   │     │  │  ├─ points_to_canvas()
-   │     │  │  └─ evaluate_edge_probes()
-   │     │  ├─ reconstruct_region(next)
-   │     │  └─ write next macro result/GDS
-   │     └─ merge_macro_gds()                           # 全部合法后发布
-   ├─ 选择全局 best
-   ├─ 写 final_layout
-   ├─ save_final_lithography()                          # 仅 best
-   └─ atomic_write_json(summary.json)
+main/run_mbopc_single_macro.py::main()
+└─ run_single_macro(config_path)
+   └─ _run_mbopc(config_path, require_multiple_macros=False)
+      ├─ load_config() -> load_macro_config()
+      ├─ prepare_problems() -> prepare_macro_problem()   # 恰好一个 macro
+      ├─ ICCAD13Lithography(...)
+      ├─ solve_macro(problem, model, progress)
+      │  └─ optimize_macro(...)
+      │     ├─ evaluate_and_propose(zeros)               # baseline/round 0
+      │     │  ├─ target/current/ownership canvas
+      │     │  ├─ model.forward_many()
+      │     │  ├─ L2/PVBand
+      │     │  ├─ edge_probe_points()
+      │     │  ├─ points_to_canvas()
+      │     │  └─ evaluate_edge_probes()
+      │     └─ for round_i
+      │        ├─ reconstruct_region(next)
+      │        ├─ evaluate_and_propose(candidate)        # round_i 移动后指标
+      │        └─ 更新 macro best/下一轮提案
+      ├─ write_macro_gds(best)
+      ├─ merge_macro_results(plan, {id: best}, final)    # 统一 ownership/写出路径
+      ├─ save_final_lithography()
+      └─ atomic_write_json(summary.json)
+
+main/run_mbopc_multi_macro.py::main()
+└─ run_multi_macro(config_path)
+   └─ _run_mbopc(config_path, require_multiple_macros=True)
+      ├─ load_config() -> load_macro_config()
+      ├─ prepare_problems() -> prepare_macro_problem()   # 每 macro 一次
+      ├─ ICCAD13Lithography(...)
+      ├─ for macro                                      # macro 间不交换中间状态
+      │  ├─ 建立该 macro 的 tile tqdm
+      │  ├─ solve_macro() -> optimize_macro()           # 独立完成全部轮次
+      │  └─ write_macro_gds(best)
+      ├─ merge_macro_results(plan, best_paths, final)   # 全部完成后只调用一次
+      ├─ save_final_lithography()
+      └─ atomic_write_json(summary.json)
 ```
 
 依赖保持：`layout -> geometry -> opc.input -> opc.input.edge -> opc.iteration.mbopc`；
@@ -1051,12 +1094,19 @@ iteration 可消费顶层 lithography/evaluation；基础层不得反向依赖�
 
 ## 22. 后续兼容性边界
 
-梯度 MB-OPC 可复用 MacroProblem、owner/membership、points_to_canvas、光刻/evaluation、全局
-state 屏障和 merge；需独立实现可微软 raster、Torch 参数、optimizer、loss 和自己的 Config。
-不得继承 simple Config 或调用 simple step。
+梯度 MB-OPC 可复用 MacroProblem、owner/membership、points_to_canvas、光刻/evaluation 和
+`merge_macro_results()`；需独立实现可微软 raster、Torch 参数、optimizer、loss、Problem
+扩展数据和自己的 Config。不得继承 simple Config 或调用 simple step。
 
-ILT 可复用网格、canvas、光刻/evaluation、全局 state 发布；不能复用 segment/owner/EPE
-重建，应有自己的 raster Problem/state。
+ILT 可复用配置加载、macro/core 网格、canvas、光刻/evaluation、进度显示和最终合并生命周期；
+不能复用 segment/owner/EPE 重建，应有自己的 raster Problem/state 和 workflow。两个 MB-OPC
+入口保持薄层；若以后希望同一入口切换 ILT，只替换 workflow 的导入与调用，不在本轮增加
+注册器或工厂。
+
+如果以后确认需要“每轮同步跨 macro 的动态光学 context”，编排层可在每轮收齐各 macro
+候选后调用同一个 `merge_macro_results()`，再从合并状态生成下一轮 context；该升级会改变
+调用时机和 context 来源，不要求改写几何合并函数。第一版不实现这一同步模式，也不能宣称
+边界结果等价于全版图同步求解。
 
 动态 SRAF 会改变 polygon/segment 数，必须另行设计稳定 ID、owner/membership、state format
 version 和跨 macro 发布。本轮不预留空字段假装支持。
@@ -1068,6 +1118,7 @@ version 和跨 macro 发布。本轮不预留空字段假装支持。
 | 读取 `00_PAST/opc/input/problem.py` 失败 | 旧问题实际位于 `edge/builder.py` | 改读搜索确认的真实路径。 |
 | Windows 下 `rg 00_PAST/main/*mbopc*.py` 失败 | ripgrep 未接收 PowerShell 通配展开 | 改用 `Get-ChildItem` 和精确路径。 |
 | 首次完整计划补丁校验失败 | 一行遗漏新增行前缀 | 原文件未部分修改；记录后用修正补丁重建。 |
+| 组合更新第 11～14 节补丁失败 | 同一补丁跨越已修改章节，旧上下文不再匹配 | 拆成按章节的小补丁；文件未发生部分修改。 |
 
 ## 24. 最终完成标准
 
@@ -1077,18 +1128,20 @@ version 和跨 macro 发布。本轮不预留空字段假装支持。
 - [ ] LithographyModel 有 ICCAD13 实现和当前 MB-OPC 调用方；
 - [ ] points_to_canvas 修正 padding，原 raster 逐值不变；
 - [ ] +2/-2 runner 提取前后行为不变；
-- [ ] simple solver 只有 Config/Cache/Step 三个必要结构；
+- [ ] simple solver 只有 Config/Cache/Step/IterationRecord/Result 五个有当前调用方的必要结构；
 - [ ] 无旧 MBOPCProblem/PhysicalMask/polygon 差分快路兼容层；
-- [ ] 所有 macro 从同一 state 读取，全部合法后才发布下一 state；
-- [ ] 边界 core 能看到邻 macro 已发布变化；
+- [ ] 每个 macro 独立完成全部轮次，macro 内 tile 同轮只读同一 current；
+- [ ] 多 macro 完成后只调用一次 `merge_macro_results()`，不做逐轮全局合并；
+- [ ] 跨 macro 边界使用固定参考 context 的限制已在报告中量化，未宣称等价于全局同步；
 - [ ] EPE 选全局 best，L2/PVBand 只诊断；
-- [ ] final state 已完整评价；
+- [ ] round 0 是 baseline，round N 指标属于第 N 次位移后的候选，最终候选已完整评价；
 - [ ] inner/outer/ambiguous 全测试；
 - [ ] 矩形、窄壁 hole、越界、凹形、多 hole、斜边、跨 core/macro、SREF/AREF 覆盖；
 - [ ] batch 和 macro 顺序不改变结果；
 - [ ] CPU 真实 ICCAD13 端到端通过，可用时 CUDA 通过；
-- [ ] main_test_mbopc.py 可从仓库外直接运行；
-- [ ] run_mbopc.py 可从 GDS/OASIS 直接运行；
+- [ ] 两个 main 的 tile/macro tqdm 计数正确，`show_progress=false` 时完全关闭；
+- [ ] run_mbopc_single_macro.py 可从 GDS/OASIS 直接运行并拒绝非单 macro 配置；
+- [ ] run_mbopc_multi_macro.py 可从 GDS/OASIS 直接运行并拒绝非多 macro/macro 内单 tile 配置；
 - [ ] final GDS、summary、best nominal PNG manifest 存在；
 - [ ] 不修改 layout/geometry/00_PAST/用户数据；
 - [ ] pytest、ruff、compileall 全绿；

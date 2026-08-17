@@ -11,7 +11,7 @@ polarity = "clear"
 macro_grid = [1, 1]
 # macro_size_nm = 4096
 core_size_nm = 1024
-context_nm = 400
+context_nm = 1024
 
 [lithography]
 pixel_nm = 8

@@ -305,3 +305,21 @@
   了 target 量化、漏了 nominal 连续带，如实记录。
 - **lr 超限 UserWarning**：load_gradient_config 在 lr>max_displacement 时
   warnings.warn（stacklevel=2），合法集合不变、参数原样；不自动截断。
+
+## TestReticle 版图集事实（2026-08-17）
+
+- **纯空白不贡献 layer bbox**：稀疏版图必须有角标记图形撑开包围盒，
+  否则"空 macro"根本进不了网格域——sparse_6um 用右下/左上两个 200²
+  标记（刻意避开右上象限）撑到 5.7×5.7µm，实测右上宏 S=0。
+- **正负板成对产出**：GDS 不携带极性，_clear/_opaque 文件字节相同，
+  文件名即预期 config 极性值（防呆）；SHA-256 抽查一致。
+- **bench 尺寸实测**：母题（六族两列自然摆位）≈9.6×10.5µm；30µm 版 =
+  母题 3×2 = 32×21µm/672 core；100µm 版 = 母题 10×7 = 109×76µm/
+  8025 core。原"格框"设计在图形自然尺寸下撑不满格，实施改为平铺。
+- **100µm 压力实测**：16 macro/8025 core 梯度一轮 CUDA 176s（≈46 core/s，
+  稀疏图形快于 gcd 的 21 core/s）；CUDA 峰值 495MiB 与 30µm 版完全相同
+  ——批内张量尺寸不随 core 数变化，显存与规模解耦，瓶颈在吞吐。
+- **P1-2 素材有效**：sparse_6um [2,2] 3.1s 后精确失败于 merge
+  （LayerNotFoundError 11/0，调用链确认）。
+- 生成器 TestReticle/build_reticles.py（仅依赖 klayout，--list/--only，
+  幂等）；20 份 GDS 已入库；单测仍用自建生成式 GDS（纪律不变）。

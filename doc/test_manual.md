@@ -29,7 +29,9 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 ## 3. 测试纪律
 
 - **全生成式数据**：GDS/TOML/NPZ 一律在 `tmp_path` 内动态生成；不依赖
-  `TestReticle/*.gds` 用户数据（该目录仅 gcd_45nm 供最终 smoke，只读）。
+  `TestReticle/*.gds` 用户数据。TestReticle 下另有一套参数化测试版图集
+  （10 场景 × 正负板，生成器与规格见该目录 `reticle_build_plan.md`/
+  `build_reticles.py`）供真实 smoke 与算法研究，同样不进测试断言。
 - 每个几何不变量成组断言：零位移 XOR == 0、owner 唯一（`0≤o<C`，不是
   owners 值互异）、own⊆membership、ring 拓扑保持、法向单位向量。
 - 阶段边界用 monkeypatch 调用计数证明，不用注释或口头约定。

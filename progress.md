@@ -159,6 +159,7 @@
 | 2026-08-17 | 全量（梯度 MB-OPC 后） | 410 passed |
 | 2026-08-17 | gcd_45nm 梯度 smoke（CUDA，iterations=1） | 41.61s，四 macro best_state=1，loss −10.1% |
 | 2026-08-17 | 全量（P1-1 修复后）+ 梯度 smoke 复跑 | 411 passed；state0 逐位不变、state1 loss −0.12% |
+| 2026-08-17 | 全量（P1-3 修复后）+ 单遍 smoke | 422 passed；单遍 0.78s 产物照常 |
 
 ### 2026-08-17（会话：全项目审查 + P1-1 修复）
 
@@ -171,3 +172,17 @@
   累加断言（Spy Adam 捕获 grad、上下半 core 线性叠加）。
 - 验证：定向 45+54 绿；全量 411 passed；smoke state0 逐位不变（前向零
   漂移）、state1 全指标一致小幅改善（loss −0.12%、EPE −60 段）。
+
+### 2026-08-17（会话：P1-3 修复）
+
+- 用户裁决本次只修 P1-3（P1-2/P1-4 暂不修）。按用户修复规格 §4 实施：
+  _macro_pipeline 抽 MacroCommonConfig + load_macro_common_config（公共
+  五段唯一权威解析层）；run_single_pass 删除约 80 行复制的校验，改共享层
+  + [iteration] 专属解析；exact_dbu 改从 _macro_pipeline 导入（消除
+  入口→入口依赖）。
+- 途中两枚 dataclass 组装陷阱（replace 按基类构造、asdict 递归转 dict）
+  改用 fields() 浅拷贝，记 findings。
+- 新增 11 例回归：layer/datatype/canvas_pixels × float/bool/string 严格
+  拒绝、work_dir 未知键拒绝、跨 loader 一致拒绝。
+- 验证：定向 49 绿；全量 422 passed；gcd_45nm 单遍 smoke 0.78s 产物照常；
+  load_macro_config 重构零行为漂移（macro_pipeline 30 例全绿）。

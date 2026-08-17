@@ -2,7 +2,7 @@
 
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import time  # 阶段计时（本入口保留的唯一统计）
-from dataclasses import dataclass  # 定义唯一配置结构 SinglePassConfig
+from dataclasses import dataclass, fields  # 配置结构与公共层组装
 from decimal import Decimal  # nm→DBU 的精确十进制换算
 from pathlib import Path  # 全部路径统一使用 Path 对象
 
@@ -16,127 +16,48 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
-from layout import LayerSpec, LayoutDB  # 层规格与版图打开
-from main.run_macro_pipeline import exact_dbu  # 精确 nm→DBU 换算（复用，不复制第二份）
-from opc.input import MaskPolarity, plan_macros  # 极性枚举与两级网格规划
+from layout import LayoutDB  # 版图打开
+from main._macro_pipeline import (  # 共享配置解析与精确换算（消除入口间依赖）
+    MacroCommonConfig,
+    exact_dbu,
+    load_macro_common_config,
+)
+from opc.input import plan_macros  # 两级网格规划
 from opc.input.edge import (  # problem 构造与位移重建
     prepare_macro_problem,
     reconstruct_region,
 )
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
-# 每个 TOML 段允许出现的键；未知键一律拒绝，防止拼写错误被静默忽略。
-_ALLOWED_KEYS = {  # 段名 → 允许键集合
-    "input": {"layout", "top_cell", "layer", "datatype", "polarity"},  # 输入版图与目标层
-    "grid": {"macro_grid", "macro_size_nm", "core_size_nm", "context_nm"},  # 两级网格参数
-    "lithography": {"pixel_nm", "canvas_pixels"},  # 仅供网格契约校验，本入口不栅格化
-    "edge": {"corner_nm", "segment_nm", "max_displacement_nm", "miter_limit"},  # 边段配置
-    "iteration": {"displacement_nm"},  # 单遍位移（正=沿外法向）
-    "output": {"final_layout", "final_cell_mode"},  # 唯一产物位置与 Cell 模式
-}
-
 
 @dataclass(frozen=True, slots=True)
-class SinglePassConfig:
-    """保存一次单遍偏置扩张所需的全部显式配置。"""
+class SinglePassConfig(MacroCommonConfig):
+    """在公共 Macro 配置之上补充单遍位移参数。"""
 
-    layout_path: Path                     # 输入 GDS/OASIS/GLP 的绝对路径
-    top_cell: str | None                  # 显式顶层；None 表示要求版图只有一个顶层
-    layer: LayerSpec                      # 本次处理的唯一目标 layer/datatype
-    polarity: MaskPolarity                # 源 polygon 的 clear/opaque 极性
-    macro_size_nm: Decimal | None         # 按 nm 切 macro；与 macro_grid 恰好一个非空
-    macro_grid: tuple[int, int] | None    # 按 [列,行] 数量切 macro
-    core_size_nm: Decimal                 # 名义 core 边长
-    context_nm: Decimal                   # core 每侧通用上下文宽度
-    pixel_nm: Decimal                     # 光刻采样像素尺寸（契约校验用）
-    canvas_pixels: int                    # 冻结为 ICCAD13 画布 256
-    corner_nm: Decimal                    # 拐角控制段长度
-    segment_nm: Decimal                   # 普通控制段最大长度
-    max_displacement_nm: Decimal          # 允许的绝对位移上限
-    miter_limit: float                    # 拐角重建 miter 上限
     displacement_nm: Decimal              # 单遍位移；正=沿外法向，负=反向
-    final_layout: Path                    # 唯一产物：最终目标层版图路径
-    final_cell_mode: str                  # single_cell 或 macro_cells
 
 
 def load_config(path: str | Path) -> SinglePassConfig:
-    """严格读取单遍 TOML、解析相对路径并拒绝未知或互斥字段。"""
+    """严格读取单遍 TOML：公共段走共享解析器，专属段只查 displacement_nm。"""
     config_path = Path(path).expanduser().resolve()  # 配置文件绝对路径
-    raw = toml_loads(config_path.read_text(encoding="utf-8"))  # 解析 TOML 文本
-    unknown = set(raw) - set(_ALLOWED_KEYS)  # 检查未知顶层段
-    if unknown:  # 拒绝未知段
-        raise ValueError(f"未知配置段：{sorted(unknown)}")  # 报段名
-    for section, allowed in _ALLOWED_KEYS.items():  # 逐段检查未知键
-        keys = set(raw.get(section, {}))  # 该段实际出现的键
-        if keys - allowed:  # 出现允许清单之外的键
-            raise ValueError(f"[{section}] 含未知键：{sorted(keys - allowed)}")  # 报键名
-    input_section = raw.get("input", {})  # 输入段
-    grid_section = raw.get("grid", {})  # 网格段
-    litho_section = raw.get("lithography", {})  # 光刻段
-    edge_section = raw.get("edge", {})  # 边段段
+    # 公共五段（input/grid/lithography/edge/output）全部由共享层校验解析；
+    # 本入口 [output] 不放行 work_dir（出现即按未知键拒绝），产物契约不变。
+    common = load_macro_common_config(
+        config_path, extra_sections=("iteration",))  # 专属段白名单放行
+    raw = toml_loads(config_path.read_text(encoding="utf-8"))  # 再读一次取专属段
     iter_section = raw.get("iteration", {})  # 迭代段
-    output_section = raw.get("output", {})  # 输出段
-    # 必填键收集：缺失直接失败，不在 Python 侧补默认值。
-    for section, required in (  # 各段必填键清单
-            ("input", ("layout", "layer", "datatype", "polarity")),
-            ("grid", ("core_size_nm", "context_nm")),
-            ("lithography", ("pixel_nm", "canvas_pixels")),
-            ("edge", ("corner_nm", "segment_nm", "max_displacement_nm", "miter_limit")),
-            ("iteration", ("displacement_nm",)),
-            ("output", ("final_layout", "final_cell_mode"))):
-        missing = [key for key in required if key not in raw.get(section, {})]  # 缺失键
-        if missing:  # 显式报错
-            raise ValueError(f"[{section}] 缺少必填键：{missing}")  # 报缺失清单
-    # 互斥检查：macro_grid 与 macro_size_nm 恰好出现一个。
-    has_grid = "macro_grid" in grid_section  # 是否显式给定 macro 数量
-    has_size = "macro_size_nm" in grid_section  # 是否显式给定 macro 尺寸
-    if has_grid == has_size:  # 两者同真或同假都是配置意图不明
-        raise ValueError("macro_grid 与 macro_size_nm 必须恰好填写一个")  # 报互斥
-    # 相对路径一律相对 TOML 文件目录解析。
-    base = config_path.parent  # 路径解析基准目录
-    layout_path = (base / str(input_section["layout"])).resolve()  # 输入版图绝对路径
-    final_layout = (base / str(output_section["final_layout"])).resolve()  # 最终版图绝对路径
-    # 极性在配置层就归一化，后续阶段不再处理字符串。
-    try:  # 尝试把极性字符串转为枚举
-        polarity = MaskPolarity(str(input_section["polarity"]))  # clear/opaque
-    except ValueError as exc:  # 未知极性
-        raise ValueError(f"不支持的极性：{input_section['polarity']!r}") from exc  # 报极性
-    final_cell_mode = str(output_section["final_cell_mode"])  # 最终 Cell 模式
-    if final_cell_mode not in ("single_cell", "macro_cells"):  # 模式枚举校验
-        raise ValueError(f"未知 final_cell_mode：{final_cell_mode}")  # 报模式
-    canvas_pixels = int(litho_section["canvas_pixels"])  # 画布像素数
-    if canvas_pixels != 256:  # ICCAD13 契约冻结为 256
-        raise ValueError("canvas_pixels 当前固定为 256")  # 报画布
-    # macro_grid 规范化：两项正整数 [列, 行]。
-    if has_grid:  # 数量模式
-        entries = grid_section["macro_grid"]  # 读取列表
-        if (not isinstance(entries, list) or len(entries) != 2 or
-                not all(isinstance(v, int) and not isinstance(v, bool) and v > 0
-                        for v in entries)):  # 校验两项正整数
-            raise ValueError("macro_grid 必须是两项正整数 [列, 行]")  # 报格式
-        macro_grid: tuple[int, int] | None = (int(entries[0]), int(entries[1]))  # 归一化
-        macro_size: Decimal | None = None  # 另一模式置空
-    else:  # 尺寸模式
-        macro_grid = None  # 置空
-        macro_size = Decimal(str(grid_section["macro_size_nm"]))  # 十进制精确保存
-    return SinglePassConfig(  # 组装冻结配置对象
-        layout_path=layout_path,  # 输入路径
-        top_cell=str(input_section["top_cell"]) if "top_cell" in input_section else None,  # 顶层
-        layer=LayerSpec(int(input_section["layer"]), int(input_section["datatype"])),  # 目标层
-        polarity=polarity,  # 极性
-        macro_size_nm=macro_size,  # 尺寸模式
-        macro_grid=macro_grid,  # 数量模式
-        core_size_nm=Decimal(str(grid_section["core_size_nm"])),  # core 尺寸
-        context_nm=Decimal(str(grid_section["context_nm"])),  # context 宽度
-        pixel_nm=Decimal(str(litho_section["pixel_nm"])),  # 像素尺寸
-        canvas_pixels=canvas_pixels,  # 画布
-        corner_nm=Decimal(str(edge_section["corner_nm"])),  # 拐角段长
-        segment_nm=Decimal(str(edge_section["segment_nm"])),  # 中段上限
-        max_displacement_nm=Decimal(str(edge_section["max_displacement_nm"])),  # 位移上限
-        miter_limit=float(edge_section["miter_limit"]),  # miter 上限
-        displacement_nm=Decimal(str(iter_section["displacement_nm"])),  # 单遍位移
-        final_layout=final_layout,  # 最终版图
-        final_cell_mode=final_cell_mode)  # Cell 模式
+    unknown = set(iter_section) - {"displacement_nm"}  # 段内未知键
+    if unknown:  # 拒绝拼错键
+        raise ValueError(f"[iteration] 含未知键：{sorted(unknown)}")  # 报键名
+    if "displacement_nm" not in iter_section:  # 必填显式报错
+        raise ValueError("[iteration] 缺少必填键：['displacement_nm']")  # 报缺失
+    displacement_nm = Decimal(str(iter_section["displacement_nm"]))  # 十进制精确保存
+    # replace() 会按基类构造，专属字段必须显式以子类组装；公共字段按
+    # fields 浅拷贝（asdict 会把嵌套的 LayerSpec 递归转 dict，不可用）。
+    return SinglePassConfig(
+        **{field.name: getattr(common, field.name)
+           for field in fields(MacroCommonConfig)},
+        displacement_nm=displacement_nm)  # 组装
 
 
 def run_single_pass(config: SinglePassConfig) -> Path:

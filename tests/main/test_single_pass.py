@@ -6,6 +6,7 @@ import pytest
 
 import main.run_single_pass as single_pass
 from layout import LayerSpec, LayoutDB
+from main._macro_pipeline import load_macro_config
 
 # 测试版图：DBU=1nm。正向位移用「锚框 + 完全内部 donut」——贴着层 bbox 的
 # 图形外扩会全部落在 macro ownership 之外被正确裁掉，无法证明外扩生效；
@@ -203,3 +204,57 @@ class TestConfigValidation:
         both.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="恰好填写一个"):  # 必须报错
             single_pass.load_config(both)  # 加载
+
+    @pytest.mark.parametrize(
+        ("original", "injected", "field"),
+        [("layer = 1", "layer = 1.5", "layer"),
+         ("layer = 1", "layer = true", "layer"),
+         ("layer = 1", 'layer = "1"', "layer"),
+         ("datatype = 0", "datatype = 0.5", "datatype"),
+         ("datatype = 0", "datatype = true", "datatype"),
+         ("datatype = 0", 'datatype = "0"', "datatype"),
+         ("canvas_pixels = 256", "canvas_pixels = 256.0", "canvas_pixels"),
+         ("canvas_pixels = 256", "canvas_pixels = true", "canvas_pixels"),
+         ("canvas_pixels = 256", 'canvas_pixels = "256"', "canvas_pixels")],
+        ids=["layer=1.5", "layer=true", "layer=str", "dt=0.5", "dt=true",
+             "dt=str", "canvas=256.0", "canvas=true", "canvas=str"])
+    def test_common_integer_fields_strictly_typed(
+            self, tmp_path, original, injected, field):
+        """公共整数字段拒绝 float/bool/string（审查 P1-3 回归）。
+
+        修复前 single-pass 复制的解析层用裸 int()：1.5 截断为 1、true 当 1、
+        字符串 "1" 被接受；公共段收敛到共享层后与权威实现同语义。
+        """
+        gds = _write_anchored_gds(tmp_path)  # 生成 GDS
+        path = _write_config(tmp_path, gds)  # 基础配置
+        text = path.read_text(encoding="utf-8").replace(original, injected)  # 注入
+        path.write_text(text, encoding="utf-8")  # 写回
+        with pytest.raises(ValueError, match=field):  # 统一 ValueError 含字段名
+            single_pass.load_config(path)  # 加载
+
+    def test_work_dir_is_rejected(self, tmp_path):
+        """[output] 出现 work_dir 按未知键拒绝（本入口无工作目录契约）。"""
+        gds = _write_anchored_gds(tmp_path)  # 生成 GDS
+        path = _write_config(tmp_path, gds)  # 基础配置
+        text = path.read_text(encoding="utf-8").replace(  # 注入管线专属键
+            "[output]", '[output]\nwork_dir = "somewhere"')  # 本入口不放行
+        path.write_text(text, encoding="utf-8")  # 写回
+        with pytest.raises(ValueError, match="未知键"):  # 不静默忽略
+            single_pass.load_config(path)  # 加载
+
+    def test_shared_rejection_matches_macro_pipeline(self, tmp_path):
+        """同一非法公共输入在两个加载器中同语义拒绝（防平行漂移回归）。"""
+        gds = _write_anchored_gds(tmp_path)  # 生成 GDS
+        path = _write_config(tmp_path, gds)  # 基础配置
+        text = path.read_text(encoding="utf-8").replace(  # 注入浮点层号
+            "layer = 1", "layer = 1.5")  # 两侧同款非法值
+        path.write_text(text, encoding="utf-8")  # 写回
+        with pytest.raises(ValueError, match="layer"):  # single-pass 拒绝
+            single_pass.load_config(path)  # 加载
+        macro_config = tmp_path / "macro.toml"  # 宏管线对照配置
+        macro_text = path.read_text(encoding="utf-8").replace(  # 去掉专属段
+            "\n[iteration]\ndisplacement_nm = 5\n", "\n").replace(  # 补管线必填键
+            "[output]", '[output]\nwork_dir = "w"')  # 其余完全相同
+        macro_config.write_text(macro_text, encoding="utf-8")  # 写盘
+        with pytest.raises(ValueError, match="layer"):  # 权威实现同样拒绝
+            load_macro_config(macro_config)  # 加载

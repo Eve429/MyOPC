@@ -265,3 +265,23 @@
   缩放被自适应 largely 掩盖——这是 owner-only 采样未被 smoke 发现的原因。
 - 其余 P1/P2（空 macro merge 崩溃、run_single_pass 校验漂移、simple loader
   NaN、cuda:N 峰值、EPE 阈值解耦等）已记录待用户裁决处置。
+
+## P1-3 修复事实（2026-08-17，single-pass 配置收敛）
+
+- **共享配置层**：`_macro_pipeline.MacroCommonConfig`（17 公共字段，frozen
+  slots 基类）+ `load_macro_common_config(path, extra_sections, output_keys,
+  output_required)`；`MacroPipelineConfig`/`SinglePassConfig` 继承基类各自加
+  work_dir / displacement_nm——字段访问与消费方零改动。
+- **dataclass 组装陷阱两枚**：`dataclasses.replace(基类实例, 扩展字段=…)`
+  按基类构造直接 TypeError；`asdict` 会把嵌套 LayerSpec 递归转 dict
+  （unhashable）。正确做法 `子类(**{f.name: getattr(common, f.name) for f
+  in fields(基类)}, 扩展字段=…)` 浅拷贝。
+- **output 段参数化**：公共层默认只必填 final_layout/final_cell_mode；
+  work_dir 由 load_macro_config 经 output_keys 放行 + output_required 保序
+  追加必填（错误文本与旧版逐字一致）；single-pass 不放行 work_dir（配置里
+  出现即未知键拒绝，不静默忽略）。
+- **入口→入口依赖消除**：run_single_pass 改从 `main._macro_pipeline`
+  import exact_dbu/load_macro_common_config（原 `from
+  main.run_macro_pipeline import exact_dbu`）。
+- 用户裁决：P1-2（空 macro merge 崩溃）与 P1-4（Decimal 击穿）暂不修，
+  立案待办。

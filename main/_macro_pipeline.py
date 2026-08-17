@@ -6,7 +6,7 @@ import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import tempfile  # 创建与目标同目录的临时文件
 import time  # perf_counter 阶段计时
 from collections.abc import Mapping  # merge 映射参数的只读类型
-from dataclasses import dataclass  # 定义唯一共享配置结构 MacroPipelineConfig
+from dataclasses import dataclass, fields  # 共享配置结构与子类组装
 from decimal import Decimal  # nm→DBU 的精确十进制换算
 from pathlib import Path  # 全部路径统一使用 Path 对象
 from typing import Literal  # cell_mode 的字面量类型
@@ -26,16 +26,18 @@ from opc.input import MaskPolarity, plan_macros  # 两级网格规划
 from opc.input.edge import MacroProblem, prepare_macro_problem  # problem 构造
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
-# 宏管线自身六个段允许出现的键；未知键一律拒绝，防止拼写错误被静默忽略。
-# 调用方流程专属段（如验证的 [iteration]、MB-OPC 的 [mbopc]）通过
-# load_macro_config 的 extra_sections 显式放行，段内键由各流程自己校验。
-_ALLOWED_KEYS = {  # 段名 → 允许键集合
+# 宏管线公共四段（不含 output）允许出现的键；未知键一律拒绝，防止拼写错误
+# 被静默忽略。output 段的允许键由调用方声明（work_dir 只属于管线扩展层），
+# 调用方流程专属段（如验证的 [iteration]、MB-OPC 的 [mbopc]、单遍的
+# [iteration]）通过 extra_sections 显式放行，段内键由各流程自己校验。
+_COMMON_ALLOWED_KEYS = {  # 段名 → 允许键集合
     "input": {"layout", "top_cell", "layer", "datatype", "polarity"},  # 输入版图与目标层
     "grid": {"macro_grid", "macro_size_nm", "core_size_nm", "context_nm"},  # 两级网格参数
     "lithography": {"pixel_nm", "canvas_pixels"},  # 光刻采样契约
     "edge": {"corner_nm", "segment_nm", "max_displacement_nm", "miter_limit"},  # 边段配置
-    "output": {"work_dir", "final_layout", "final_cell_mode"},  # 产物位置与最终 Cell 模式
 }
+# output 段的公共键；work_dir 由宏管线加载层追加放行并强制必填。
+_OUTPUT_COMMON_KEYS = frozenset({"final_layout", "final_cell_mode"})
 _PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
 
 
@@ -48,8 +50,8 @@ def _as_int(value: object, name: str) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class MacroPipelineConfig:
-    """保存两级网格、problem 准备和 macro 结果写出共同需要的全部显式配置。"""
+class MacroCommonConfig:
+    """保存全部 Macro 流程共享的输入/网格/光刻/边段/输出公共配置。"""
 
     layout_path: Path                     # 输入 GDS/OASIS/GLP 的绝对路径
     top_cell: str | None                  # 显式顶层；None 表示要求版图只有一个顶层
@@ -65,21 +67,37 @@ class MacroPipelineConfig:
     segment_nm: Decimal                   # 普通控制段最大长度
     max_displacement_nm: Decimal          # 允许的绝对位移上限
     miter_limit: float                    # 拐角重建 miter 上限
-    work_dir: Path                        # problem/result/macro GDS/summary 根目录
     final_layout: Path                    # 最终完整目标层版图路径
     final_cell_mode: Literal["single_cell", "macro_cells"]  # 最终 Cell 模式
 
 
-def load_macro_config(path: str | Path, *,
-                      extra_sections: tuple[str, ...] = ()) -> MacroPipelineConfig:
-    """严格读取宏管线六段 TOML，解析相对路径并拒绝未知或互斥字段。"""
+@dataclass(frozen=True, slots=True)
+class MacroPipelineConfig(MacroCommonConfig):
+    """在公共配置之上补充 problem/result/macro GDS/summary 的工作目录。"""
+
+    work_dir: Path                        # 工作产物根目录
+
+
+def load_macro_common_config(
+        path: str | Path, *, extra_sections: tuple[str, ...] = (),
+        output_keys: frozenset[str] = _OUTPUT_COMMON_KEYS,
+        output_required: tuple[str, ...] = ("final_layout", "final_cell_mode"),
+) -> MacroCommonConfig:
+    """严格读取五个公共段 TOML，解析相对路径并拒绝未知或互斥字段。
+
+    这是全部 Macro 流程（验证管线 / simple / gradient / single-pass）公共
+    配置规则的唯一权威实现；output 段只默认必填 final_layout 与
+    final_cell_mode，work_dir 等流程专属键由调用方经 output_keys 放行、
+    经 output_required 追加必填，并在自己的加载层解析。
+    """
     config_path = Path(path).expanduser().resolve()  # 配置文件绝对路径
     raw = toml_loads(config_path.read_text(encoding="utf-8"))  # 解析 TOML 文本
-    known_sections = set(_ALLOWED_KEYS) | set(extra_sections)  # 本流程允许的段全集
+    allowed_keys = {**_COMMON_ALLOWED_KEYS, "output": set(output_keys)}  # 段白名单
+    known_sections = set(allowed_keys) | set(extra_sections)  # 本流程允许的段全集
     unknown = set(raw) - known_sections  # 检查未知顶层段
     if unknown:  # 拒绝未知段（拼错的流程段进不了任何白名单）
         raise ValueError(f"未知配置段：{sorted(unknown)}")
-    for section, allowed in _ALLOWED_KEYS.items():  # 逐段检查未知键
+    for section, allowed in allowed_keys.items():  # 逐段检查未知键
         keys = set(raw.get(section, {}))  # 该段实际出现的键
         if keys - allowed:  # 出现允许清单之外的键
             raise ValueError(f"[{section}] 含未知键：{sorted(keys - allowed)}")
@@ -89,12 +107,12 @@ def load_macro_config(path: str | Path, *,
     edge_section = raw.get("edge", {})  # 边段段
     output_section = raw.get("output", {})  # 输出段
     # 必填键收集：缺失直接失败，不在 Python 侧补默认值。
-    for section, required in (  # 各段必填键清单
+    for section, required in (  # 各段必填键清单（output 由调用方声明）
             ("input", ("layout", "layer", "datatype", "polarity")),
             ("grid", ("core_size_nm", "context_nm")),
             ("lithography", ("pixel_nm", "canvas_pixels")),
             ("edge", ("corner_nm", "segment_nm", "max_displacement_nm", "miter_limit")),
-            ("output", ("work_dir", "final_layout", "final_cell_mode"))):
+            ("output", output_required)):
         missing = [key for key in required if key not in raw.get(section, {})]  # 缺失键
         if missing:  # 显式报错
             raise ValueError(f"[{section}] 缺少必填键：{missing}")
@@ -106,7 +124,6 @@ def load_macro_config(path: str | Path, *,
     # 相对路径一律相对 TOML 文件目录解析。
     base = config_path.parent  # 路径解析基准目录
     layout_path = (base / str(input_section["layout"])).resolve()  # 输入版图绝对路径
-    work_dir = (base / str(output_section["work_dir"])).resolve()  # 工作目录绝对路径
     final_layout = (base / str(output_section["final_layout"])).resolve()  # 最终版图绝对路径
     # 极性在配置层就归一化，后续阶段不再处理字符串。
     try:  # 尝试把极性字符串转为枚举
@@ -131,7 +148,7 @@ def load_macro_config(path: str | Path, *,
     else:  # 尺寸模式
         macro_grid = None  # 置空
         macro_size = Decimal(str(grid_section["macro_size_nm"]))  # 十进制精确保存
-    return MacroPipelineConfig(  # 组装冻结配置对象
+    return MacroCommonConfig(  # 组装冻结公共配置对象
         layout_path=layout_path,  # 输入路径
         top_cell=str(input_section["top_cell"]) if "top_cell" in input_section else None,  # 顶层
         layer=LayerSpec(_as_int(input_section["layer"], "layer"),
@@ -147,9 +164,27 @@ def load_macro_config(path: str | Path, *,
         segment_nm=Decimal(str(edge_section["segment_nm"])),  # 中段上限
         max_displacement_nm=Decimal(str(edge_section["max_displacement_nm"])),  # 位移上限
         miter_limit=float(edge_section["miter_limit"]),  # miter 上限
-        work_dir=work_dir,  # 工作目录
         final_layout=final_layout,  # 最终版图
         final_cell_mode=final_cell_mode)  # Cell 模式
+
+
+def load_macro_config(path: str | Path, *,
+                      extra_sections: tuple[str, ...] = ()) -> MacroPipelineConfig:
+    """严格读取宏管线六段 TOML，解析相对路径并拒绝未知或互斥字段。"""
+    common = load_macro_common_config(  # 五个公共段全部由共享层校验解析
+        path, extra_sections=extra_sections,
+        output_keys=frozenset(_OUTPUT_COMMON_KEYS | {"work_dir"}),  # 放行工作目录
+        output_required=("final_layout", "final_cell_mode", "work_dir"))  # 强制必填
+    config_path = Path(path).expanduser().resolve()  # 再读一次取 work_dir 值
+    output_section = toml_loads(
+        config_path.read_text(encoding="utf-8")).get("output", {})  # 输出段
+    work_dir = (config_path.parent / str(output_section["work_dir"])).resolve()  # 工作目录
+    # replace() 会按基类构造，扩展字段必须显式以子类组装；公共字段按
+    # fields 浅拷贝（asdict 会把嵌套的 LayerSpec 递归转 dict，不可用）。
+    return MacroPipelineConfig(
+        **{field.name: getattr(common, field.name)
+           for field in fields(MacroCommonConfig)},
+        work_dir=work_dir)  # 完整配置
 
 
 def exact_dbu(value_nm: Decimal, dbu_nm: Decimal, name: str) -> int:

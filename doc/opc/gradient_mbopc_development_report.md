@@ -102,6 +102,39 @@ doc_ 文档三提交，业务代码零漂移。
 - 24 GiB GPU / 64 GiB RAM 未实测；本 smoke 仅证明 4GB 显存 + ~1.2GiB RSS 可跑
   2×2 macro workload，不宣称整张 reticle。
 
+## 审查修复轮（2026-08-17，P1-1：跨 core 边界段梯度累加）
+
+用户发起全项目审查，发现本实现反向采样用 `owner_segments_for_core`（每段只
+在 owner core 采样一次），偏离规格 §10.2/REQ-007 的"全部 membership 条目中
+owner 段都采样、跨 tile 累加"。复现：2×2 core 跨边界矩形，规格应采样 40 条
+membership、实现仅 24 条（丢 40%，全部集中在跨 core 边界段）——前向用完整
+context 几何、反向丢邻 tile 贡献，前向/反向不对称。
+
+修复（按用户修复规格 `P1-1_cross_core_gradient_fix.md`）：
+
+- 梯度采样集合改为 `segments_for_core(c)` 过滤 `segment_to_parameter >= 0`
+  （membership 决定采样、core 决定 canvas、参数索引决定累加目标、owner 只管
+  发布）；聚合由 `parameters[owned]` gather 的 autograd SUM 天然保证；
+- EPE 探针保持 owner-core 语义（用户规格 §5），其 batch_index 拆出独立
+  `probe_slots` 收集器（此前与梯度条目共用数组，条目数不同后必须分离）；
+- 测试 `_surrogate_gradients` helper 同步为 membership 采样；
+  `test_cross_core_geometry` 增加采样条目计数断言（24→40）；新增
+  `test_cross_core_contributions_sum`（Spy Adam 捕获 step 前累积梯度，限制
+ 采样侧 membership 到上半/下半 core，断言 full ≈ upper+lower，同时排除
+  owner-only/last-write/average 三种错误形态）。
+
+smoke 前后对比（同配置 gcd_45nm CUDA，state0 三 macro 逐位不变——前向零
+漂移）：
+
+| macro | state1 loss | L2 | EPE |
+|---|---|---|---|
+| mr0c0 | 0.150141→0.149959 | 393807→393252 | 34255→34195 |
+| mr1c1 | 0.123579→0.123475 | 295002→294804 | 24497→24450 |
+
+边界段梯度补全的预期温和改善（一轮 1nm 位移下边界段占比小；损失幅值差异
+本就被 Adam 自适应 largely 掩盖，主要收益在两侧拉动方向冲突时的正确性）。
+全量 410 → **411 passed**（+1 累加断言）。
+
 ## 清理与审计（§23）
 
 - 调用点检查：`_resolve_device`/`_as_number` 均有两个真实调用方；未引入

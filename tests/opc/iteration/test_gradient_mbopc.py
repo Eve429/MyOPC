@@ -15,7 +15,11 @@ from opc.input import (
     points_to_canvas,
     rasterize_mask_canvas,
 )
-from opc.input.edge import prepare_macro_problem, reconstruct_region
+from opc.input.edge import (
+    MacroProblem,
+    prepare_macro_problem,
+    reconstruct_region,
+)
 from opc.input.edge.fragmentation import FragmentationConfig
 from opc.iteration.mbopc import (
     GradientMBOPCConfig,
@@ -542,11 +546,73 @@ class TestGeometryMatrix:
         result = _optimize(problem, _LinearModel(), _config())
         self._assert_valid_publication(problem, result)
 
-    def test_cross_core_geometry(self):
-        """跨全部 core 的图形：梯度按 tile 累加到同一参数。"""
+    def test_cross_core_geometry(self, monkeypatch):
+        """跨全部 core 的图形：梯度按全部 membership 采样（40 条）。"""
         problem = _problem(kdb.Region(kdb.Box(10, 10, 70, 70)))  # 跨 2×2 core
+        counts = []  # 每次 apply 实际进入采样路径的条目数
+
+        class _CountingMask(_EdgeGradientMask):
+            """记录采样条目数的代理（backward 逻辑继承不变）。"""
+
+            @staticmethod
+            def forward(ctx, hard_masks, local_displacements, batch_indices,
+                        midpoints_xy):
+                counts.append(int(midpoints_xy.shape[0]))  # 采样条目计数
+                return _EdgeGradientMask.forward(
+                    ctx, hard_masks, local_displacements, batch_indices,
+                    midpoints_xy)
+
+        monkeypatch.setattr(gradient_module, "_EdgeGradientMask", _CountingMask)
         result = _optimize(problem, _LinearModel(), _config(batch_size=1))
         self._assert_valid_publication(problem, result)
+        # state0 共 4 次 apply（batch_size=1 逐 core）；40 条 = 全部 membership
+        # 中 owner 段（修复前 owner-only 仅 24 条，丢跨 core 边界段邻 tile 贡献）。
+        assert sum(counts[:4]) == 40
+
+    def test_cross_core_contributions_sum(self, monkeypatch):
+        """同一参数的跨 core 梯度贡献严格求和（防 owner-only/覆盖/平均）。"""
+        problem = _problem(kdb.Region(kdb.Box(10, 10, 70, 70)))  # 恰跨 4 core 交界
+        captured = {}  # Spy 捕获的首个 step 前完整累积梯度
+
+        class _GradCapture(torch.optim.Adam):
+            """在首个 step 前捕获 state0 的累积梯度。"""
+
+            def step(self, *args, **kwargs):
+                if "grad" not in captured:
+                    parameters = self.param_groups[0]["params"][0]
+                    captured["grad"] = parameters.grad.detach().clone()
+                return super().step(*args, **kwargs)
+
+        monkeypatch.setattr(torch.optim, "Adam", _GradCapture)
+
+        def _gradient_with_cores(allowed):
+            """只保留指定 core 的采样条目（前向照跑全部 core）并返回梯度。"""
+            real = problem.segments_for_core  # 原始 membership 绑定方法
+
+            def _filtered(self, core_index):
+                """非允许 core 的 membership 返回空视图（采样为空）。"""
+                members = np.asarray(real(core_index))
+                return members if core_index in allowed else members[:0]
+
+            captured.pop("grad", None)  # 重置捕获
+            patcher = pytest.MonkeyPatch()  # 独立还原域，不影响 Adam 补丁
+            # frozen slots 实例不可 setattr，补丁打在类上（本测试独占实例）。
+            patcher.setattr(MacroProblem, "segments_for_core", _filtered)
+            try:
+                _optimize(problem, _LinearModel(),
+                          _config(batch_size=4, iterations=1))
+            finally:
+                patcher.undo()  # 只还原本函数的类级补丁
+            return captured["grad"].numpy()
+
+        full = _gradient_with_cores({0, 1, 2, 3})  # 全部 membership 采样
+        upper = _gradient_with_cores({0, 1})  # 只上行两 core 的采样贡献
+        lower = _gradient_with_cores({2, 3})  # 只下行两 core 的采样贡献
+        # 跨 core 边界段（恰在 4 core 交界）在上下行都有条目：SUM 聚合。
+        np.testing.assert_allclose(full, upper + lower, rtol=1e-5, atol=1e-7)
+        # owner-only（==单侧）/覆盖/平均 三种错误形态都必须与 full 不同。
+        assert not np.allclose(full, upper)
+        assert not np.allclose(full, lower)
 
     def test_cross_macro_geometries_merge_independently(self):
         """跨 macro：两个 problem 各自独立求解、context 恒 0。"""
@@ -687,7 +753,10 @@ class TestRealModel:
             own = ownership_canvas(spec.ownership_box, spec.context_box,
                                    pixel_dbu, canvas)
             hard = torch.from_numpy(mask)[None]
-            members = problem.owner_segments_for_core(core_index)
+            # 与实现一致：采样集合 = 该 core 全部 membership 中的 owner 段
+            # （P1-1 修复后语义；owner_segments_for_core 只覆盖 owner core）。
+            members = np.asarray(problem.segments_for_core(core_index))
+            members = members[segment_to_parameter[members] >= 0]
             if len(members):
                 local = parameters[torch.from_numpy(
                     segment_to_parameter[members].astype(np.int64))]

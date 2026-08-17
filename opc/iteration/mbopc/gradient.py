@@ -192,7 +192,8 @@ def optimize_gradient_macro(
     segment_normals = np.ascontiguousarray(reference.normals)  # [S,2]
     reference_region = reconstruct_region(  # 零位移参考几何（target/EPE 基准）
         problem, np.zeros(segment_count, dtype=np.float64))
-    core_owner_members = []  # 每 core 的 owner 段号（membership 过滤）
+    core_owner_members = []  # 每 core 的 owner 段号（EPE 探针专用，语义不变）
+    core_sampling_members = []  # 每 core 全部可见段中的 owner 段（梯度采样）
     probe_inner_xy = []  # 每 core 的参考探针 canvas 坐标（None=无 owner 段）
     probe_outer_xy = []
     total_pixels = 0  # loss 归一分母 P：全部 core ownership 像素数
@@ -201,6 +202,12 @@ def optimize_gradient_macro(
         total_pixels += int(ownership_canvas(
             spec.ownership_box, spec.context_box, pixel_dbu,
             canvas_pixels).sum())
+        # 梯度采样按 membership（REQ-007）：该 core 可见的所有段中，凡 owner
+        # 段都在本 core 的 canvas 采样一次并累加到同一参数——跨 core 边界段
+        # 的邻 tile 贡献不丢弃；采样与 owner（发布归属）职责分离。
+        members = np.asarray(problem.segments_for_core(core_index))
+        core_sampling_members.append(
+            members[segment_to_parameter[members] >= 0])
         owner_members = problem.owner_segments_for_core(core_index)
         core_owner_members.append(owner_members)
         if len(owner_members):  # 探针围绕参考边定义，坐标与状态无关
@@ -253,9 +260,10 @@ def optimize_gradient_macro(
                              dtype=np.float32)  # 当前 mask 批
             ownership = np.empty((batch_count, canvas_pixels, canvas_pixels),
                                  dtype=np.bool_)  # 计分像素批
-            member_slots = []  # membership 条目的 batch 槽位（int64）
-            member_params = []  # membership 条目指向的参数索引（int64）
-            member_mids = []  # membership 条目的当前中点 canvas 坐标
+            member_slots = []  # 梯度采样条目的 batch 槽位（int64）
+            member_params = []  # 梯度采样条目指向的参数索引（int64）
+            member_mids = []  # 梯度采样条目的当前中点 canvas 坐标
+            probe_slots = []  # EPE 探针条目的 batch 槽位（与梯度条目独立）
             for slot, core_index in enumerate(core_indices):  # 逐 core 组批
                 spec = problem.macro.core(core_index)
                 cached = target_cache.get(macro_id, core_index)
@@ -272,21 +280,25 @@ def optimize_gradient_macro(
                 ownership[slot] = ownership_canvas(  # 唯一计分像素
                     spec.ownership_box, spec.context_box, pixel_dbu,
                     canvas_pixels)
-                owner_members = core_owner_members[core_index]
-                if len(owner_members):  # 无 owner 段的 core 仍计完成 tile
+                sampling_members = core_sampling_members[core_index]
+                if len(sampling_members):  # 梯度采样：全部 membership 中 owner 段
                     displacement = current_owner[  # 段当前位移 [n]
-                        segment_to_parameter[owner_members]]
+                        segment_to_parameter[sampling_members]]
                     midpoints_dbu = (  # 当前中点 = 参考中点 + 法向×位移
-                        reference_midpoints[owner_members]
-                        + segment_normals[owner_members]
+                        reference_midpoints[sampling_members]
+                        + segment_normals[sampling_members]
                         * displacement[:, None])
                     member_mids.append(points_to_canvas(  # DBU→canvas 唯一换算
                         midpoints_dbu, spec.context_box, pixel_dbu,
                         canvas_pixels))
                     member_slots.append(np.full(
-                        len(owner_members), slot, dtype=np.int64))
+                        len(sampling_members), slot, dtype=np.int64))
                     member_params.append(segment_to_parameter[
-                        owner_members].astype(np.int64))
+                        sampling_members].astype(np.int64))
+                owner_members = core_owner_members[core_index]  # 探针语义
+                if len(owner_members):  # 无 owner 段的 core 仍计完成 tile
+                    probe_slots.append(np.full(  # 探针槽位独立于梯度条目
+                        len(owner_members), slot, dtype=np.int64))
             trainable = bool(member_params)  # 本批是否有可训练 membership
             build_graph = trainable and can_update  # 末状态纯评价不建图
             target_tensor = torch.from_numpy(targets).to(  # uint8→float32/255
@@ -341,9 +353,9 @@ def optimize_gradient_macro(
                 diag["pvband"] += evaluate_pvband(
                     dose_max, defocus_min, threshold=threshold,
                     ownership_mask=ownership_tensor)
-                if member_slots:  # 本批 owner 探针一次批量评价
+                if probe_slots:  # 本批 owner 探针一次批量评价（owner-core 语义）
                     batch_index_tensor = torch.from_numpy(
-                        np.concatenate(member_slots))
+                        np.concatenate(probe_slots))
                     inner_xy = torch.from_numpy(np.concatenate(
                         [probe_inner_xy[c] for c in core_indices
                          if len(core_owner_members[c])]))

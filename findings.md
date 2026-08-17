@@ -247,3 +247,21 @@
   边界内：两个真实调用方才抽）。
 - **P=0 防御分支不可达**：core ownership box 恒含至少一个 canvas 像素，
   total_pixels==0 仅在数据损坏时出现；保留 ValueError 防御。
+
+## 全项目审查与 P1-1 修复事实（2026-08-17）
+
+- **P1-1 复现口径**：`segments_for_core(c)` 过滤 `segment_to_parameter>=0`
+  vs `owner_segments_for_core(c)`——2×2 跨界矩形 40 条 vs 24 条采样；丢失
+  的 16 条全部是跨 core 边界段在邻 core 的 membership 条目（前向含其几何、
+  反向不采）。
+- **聚合机制**：autograd 的 `parameters[owned]` advanced-indexing gather 梯度
+  回传天然 SUM（重复索引求和），无需手写 index_add_；修复只改"采哪些条目"。
+- **EPE slots 必须独立**：修复前 EPE batch_index 复用梯度条目的
+  member_slots（两者条目数恰同）；membership 采样后条目数不同，共用会错乱
+  探针批号映射。
+- **frozen slots 实例不可 monkeypatch.setattr**（pytest MonkeyPatch 内部走
+  super 失败）；测试需打类级补丁（测试独占实例时无交叉）。
+- **Adam 首步幅值 ≈ lr**（m̂/√v̂ 比率≈1，与梯度大小无关）；梯度幅值均匀
+  缩放被自适应 largely 掩盖——这是 owner-only 采样未被 smoke 发现的原因。
+- 其余 P1/P2（空 macro merge 崩溃、run_single_pass 校验漂移、simple loader
+  NaN、cuda:N 峰值、EPE 阈值解耦等）已记录待用户裁决处置。

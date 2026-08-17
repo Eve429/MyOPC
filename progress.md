@@ -158,3 +158,16 @@
 | 2026-08-16 | 全量（mbopc 迁移 + 审查修复轮后） | 341 passed |
 | 2026-08-17 | 全量（梯度 MB-OPC 后） | 410 passed |
 | 2026-08-17 | gcd_45nm 梯度 smoke（CUDA，iterations=1） | 41.61s，四 macro best_state=1，loss −10.1% |
+| 2026-08-17 | 全量（P1-1 修复后）+ 梯度 smoke 复跑 | 411 passed；state0 逐位不变、state1 loss −0.12% |
+
+### 2026-08-17（会话：全项目审查 + P1-1 修复）
+
+- 三视角独立审查（架构/既有方法/梯度批判复读）：依赖方向、内存契约、管线
+  验证、梯度核心数学全部独立验证通过；发现 4 P1（梯度 owner-only 采样、
+  空 macro merge 崩溃 LayerNotFoundError、run_single_pass 校验漂移、simple
+  loader NaN 击穿）+ 6 P2。审查报告已交付用户。
+- P1-1 修复（用户修复规格 + 用户批准计划）：梯度采样改 membership 制
+  （40 条 vs 24 条）、EPE slots 拆分、测试 helper 同步 + 计数断言 + SUM
+  累加断言（Spy Adam 捕获 grad、上下半 core 线性叠加）。
+- 验证：定向 45+54 绿；全量 411 passed；smoke state0 逐位不变（前向零
+  漂移）、state1 全指标一致小幅改善（loss −0.12%、EPE −60 段）。

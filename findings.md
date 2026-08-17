@@ -285,3 +285,23 @@
   main.run_macro_pipeline import exact_dbu`）。
 - 用户裁决：P1-2（空 macro merge 崩溃）与 P1-4（Decimal 击穿）暂不修，
   立案待办。
+
+## 审查问题 1/2/3/5 修复事实（2026-08-17）
+
+- **CUDA 峰值显式设备**：`cuda_stats_device = torch.device(device)` 传给
+  reset/max（不传时 PyTorch 统计 current device=cuda:0，多卡量错）；不调
+  set_device 改全局。测试用真 CUDA 小跑 + spy 透传断言收到 torch.device
+  对象（cuda:1 的映射是同一表达式，无需真卡）。
+- **macro 前置校验成真**：_run_mbopc 的 macro_grid 检查上移到 prepare 之前、
+  模型构造挪到全部校验后；plan 后兜底保留（macro_size_nm 模式只有 plan
+  知道数量）。两条 monkeypatch"被调用即 AssertionError"证明零执行。
+- **EPE 阈值统一**：evaluate_edge_probes 默认 0.499→0.5（standalone 三指标
+  一致）；simple/gradient 显式传 threshold=model PrintThresh。数值影响实测：
+  target 侧 uint8 量化在 [0.499,0.5) 无格点，但 nominal 侧是连续 sigmoid——
+  带内确有探针采样点，判定翻转改变 simple 的方向序列。gradient smoke best
+  loss 逐位不变（EPE 仅诊断、不驱动梯度）；simple multi best_epe 漂移
+  ±1~15 段（7263→7264/5904→5893/5625→5640/4884→4892，<0.3%，方向不恒定）
+  ——指标一致化的预期行为变化，非回归。计划原预期"simple 零漂移"只考虑
+  了 target 量化、漏了 nominal 连续带，如实记录。
+- **lr 超限 UserWarning**：load_gradient_config 在 lr>max_displacement 时
+  warnings.warn（stacklevel=2），合法集合不变、参数原样；不自动截断。

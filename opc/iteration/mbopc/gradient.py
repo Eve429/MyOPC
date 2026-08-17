@@ -362,9 +362,9 @@ def optimize_gradient_macro(
                     outer_xy = torch.from_numpy(np.concatenate(
                         [probe_outer_xy[c] for c in core_indices
                          if len(core_owner_members[c])]))
-                    epe_result = evaluate_edge_probes(
+                    epe_result = evaluate_edge_probes(  # 阈值跟随模型 PrintThresh
                         target_tensor, nominal, batch_index_tensor,
-                        inner_xy, outer_xy)
+                        inner_xy, outer_xy, threshold=threshold)
                     diag["epe"] += epe_result.violation_count
                     diag["valid"] += int(epe_result.valid.cpu().numpy().sum())
                     diag["ambiguous"] += int(

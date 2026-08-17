@@ -186,3 +186,17 @@
   拒绝、work_dir 未知键拒绝、跨 loader 一致拒绝。
 - 验证：定向 49 绿；全量 422 passed；gcd_45nm 单遍 smoke 0.78s 产物照常；
   load_macro_config 重构零行为漂移（macro_pipeline 30 例全绿）。
+
+### 2026-08-17（会话：审查问题 1/2/3/5 修复）
+
+- 批 1（cdd62ad）：CUDA 峰值显式统计设备（cuda_stats_device 传入 reset/
+  max，不 set_device）+ _run_mbopc macro_grid 检查真正前置（prepare/模型
+  构造之前；plan 后兜底保留）。spy 真跑测试 + 两条"被调用即 AssertionError"
+  前置证明。
+- 批 2：EPE 阈值统一（metrics 默认 0.5 + simple/gradient 显式传模型
+  PrintThresh + 三指标传播测试 ×2）+ lr 超限 UserWarning（合法集合不变、
+  参数原样；pytest.warns + 无警告对照）。
+- 双 smoke：gradient best loss 逐位不变；simple best_epe 漂移 ±1~15 段
+  （nominal 连续值在 [0.499,0.5) 带的探针判定翻转 → 方向序列微调）——
+  指标一致化的预期变化，机制与幅度已记 findings。
+- 全量 422 → **429 passed**；ruff/compileall 绿。

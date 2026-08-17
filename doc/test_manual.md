@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 422 用例）
+# 全量（当前 429 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py

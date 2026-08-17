@@ -205,8 +205,9 @@ def evaluate_and_propose(
                     for slot, idx in probes])
                 inner_xy = torch.from_numpy(np.concatenate(inner_parts))
                 outer_xy = torch.from_numpy(np.concatenate(outer_parts))
-                epe_result = evaluate_edge_probes(  # 阈值用旧默认 0.499
-                    target_tensor, nominal, batch_index_tensor, inner_xy, outer_xy)
+                epe_result = evaluate_edge_probes(  # 阈值跟随模型 PrintThresh
+                    target_tensor, nominal, batch_index_tensor, inner_xy,
+                    outer_xy, threshold=threshold)
                 totals["epe"] += epe_result.violation_count  # 违规段数
                 # 回切整 batch 化：每张小张量只做一次设备→主机搬运，随后全部
                 # 统计与写回在 numpy 侧切片完成，避免逐 core 的 GPU 同步。

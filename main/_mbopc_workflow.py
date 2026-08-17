@@ -6,6 +6,7 @@ import re  # device 字符串格式校验
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import tempfile  # 与目标同目录的临时 NPZ
 import time  # perf_counter 阶段计时
+import warnings  # 学习率超限的风险提示（不改合法配置集合）
 from dataclasses import asdict, dataclass  # 配置结构与记录序列化
 from decimal import Decimal  # nm→DBU 精确换算
 from pathlib import Path  # 全部路径统一使用 Path 对象
@@ -379,6 +380,16 @@ def load_gradient_config(path: str | Path) -> GradientMBOPCRunConfig:
     learning_rate_nm = Decimal(str(section["learning_rate_nm"]))  # 连续学习率
     if not learning_rate_nm.is_finite() or learning_rate_nm <= 0:
         raise ValueError("learning_rate_nm 必须是有限正数")
+    if learning_rate_nm > pipeline.max_displacement_nm:  # 超限仍合法，只提示
+        # Adam 首步更新尺度与 lr 同量级，超限会让大量段一步打到 ±上限 被
+        # clamp，抬高 invalid_geometry/优化停滞风险；规格本轮仍只要求有限
+        # 正数，故不改为硬错误、也不代为修改用户参数。
+        warnings.warn(
+            f"learning_rate_nm={learning_rate_nm} 超过 "
+            f"max_displacement_nm={pipeline.max_displacement_nm}；"
+            "Adam 更新可能在早期大量触发位移 clamp，"
+            "增加 invalid_geometry 或优化停滞风险",
+            UserWarning, stacklevel=2)
     weights = {name: _as_number(section[name], name) for name in
                ("weight_nominal_l2", "weight_process_l2",
                 "weight_pvband")}  # 三权重

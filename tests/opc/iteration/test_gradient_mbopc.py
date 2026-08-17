@@ -167,6 +167,33 @@ class TestConfigValidation:
             _config(**overrides)
 
 
+class TestThresholdPropagation:
+    """L2/PVBand/EPE 三类指标显式跟随模型 PrintThresh（审查问题 3）。"""
+
+    def test_all_metrics_receive_model_threshold(self, monkeypatch):
+        """模型阈值 0.45 时三个 evaluate_* 都收到 threshold=0.45。"""
+        model = _LinearModel()  # 线性可微假模型
+        model.config = _StubConfig(threshold=0.45)  # 非默认打印阈值
+        captured = {}  # 指标名 → 收到的 threshold 列表
+        for name in ("evaluate_binary_l2", "evaluate_pvband",
+                     "evaluate_edge_probes"):
+            real = getattr(gradient_module, name)  # 真实现（透传）
+
+            def spy(*args, _name=name, _real=real, **kwargs):
+                """记录 threshold 关键字并透传。"""
+                captured.setdefault(_name, []).append(kwargs.get("threshold"))
+                return _real(*args, **kwargs)
+
+            monkeypatch.setattr(gradient_module, name, spy)
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
+        optimize_gradient_macro(problem, model, _config(iterations=1),
+                                TargetCanvasCache(_CACHE_BUDGET))
+        for name, values in captured.items():  # 全部收到模型阈值
+            assert values, name  # 至少一次
+            assert all(value == 0.45 for value in values), name
+        assert len(captured) == 3  # L2/PVBand/EPE 齐全
+
+
 class TestEdgeGradientMask:
     """_EdgeGradientMask 的前向直通与 Algorithm 4 反向公式。"""
 

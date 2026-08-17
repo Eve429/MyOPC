@@ -74,8 +74,13 @@ def evaluate_pvband(maximum: torch.Tensor, minimum: torch.Tensor,
 def evaluate_edge_probes(target: torch.Tensor, nominal: torch.Tensor,
                          batch_indices: torch.Tensor, inner_xy: torch.Tensor,
                          outer_xy: torch.Tensor,
-                         threshold: float = 0.499) -> EPEEvaluation:
-    """批量评价 inner/outer 探针并生成 -1/0/+1 法向移动方向。"""
+                         threshold: float = 0.5) -> EPEEvaluation:
+    """批量评价 inner/outer 探针并生成 -1/0/+1 法向移动方向。
+
+    默认阈值与 L2/PVBand 统一为 0.5；求解器必须显式传入
+    model.config.print_threshold，保证同一状态的三类指标共用同一
+    "打印轮廓"定义。
+    """
     target, nominal = _aligned_images(target, nominal)
     device = target.device
     batches = batch_indices.to(device=device, dtype=torch.long)

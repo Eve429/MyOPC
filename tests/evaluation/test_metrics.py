@@ -216,20 +216,20 @@ class TestEdgeProbes:
         assert bool(result.valid[0])  # 取到了正确的像素
         assert result.violation_count == 0  # 无违规
 
-    def test_default_threshold_is_just_below_half(self):
-        """默认阈值 0.499：0.4995 视为已打印，显式 0.5 下视为未打印。"""
+    def test_default_threshold_is_half(self):
+        """默认阈值 0.5（与 L2/PVBand 统一）：0.4995 视为未打印，显式 0.499 下已打印。"""
         target, nominal = self._canvas_pair()
         target[0, 2, 2] = 1.0
-        nominal[0, 2, 2] = 0.4995  # 介于两个默认阈值之间
+        nominal[0, 2, 2] = 0.4995  # 介于两个阈值之间
         batches = torch.tensor([0])
         inner_xy = torch.tensor([[2.0, 2.0]])
         outer_xy = torch.tensor([[3.0, 2.0]])
         default = evaluate_edge_probes(
             target, nominal, batches, inner_xy, outer_xy)
-        assert default.directions.tolist() == [0]  # 0.499 下已打印 → 无违规
-        strict = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy, threshold=0.5)
-        assert strict.directions.tolist() == [1]  # 0.5 下未打印 → 外移
+        assert default.directions.tolist() == [1]  # 0.5 下未打印 → 外移
+        legacy = evaluate_edge_probes(
+            target, nominal, batches, inner_xy, outer_xy, threshold=0.499)
+        assert legacy.directions.tolist() == [0]  # 0.499 下已打印 → 无违规
 
     def test_batch_indices_select_images(self):
         """同一探针坐标按 batch_indices 取不同图的评价。"""

@@ -171,6 +171,27 @@ class TestGradientConfig:
         with pytest.raises(ValueError, match="epe_distance_nm"):
             workflow.run_gradient_mbopc(config)  # exact_dbu 层拦截
 
+    def test_oversized_learning_rate_warns_without_modifying(self, tmp_path):
+        """lr 超过位移上限：UserWarning 提示但配置原样构造（审查问题 5）。"""
+        gds = _write_gds(tmp_path)  # 生成版图（max_displacement_nm 默认 10）
+        with pytest.warns(UserWarning, match="max_displacement"):  # 风险提示
+            config = workflow.load_gradient_config(
+                _write_config(tmp_path, gds, learning_rate_nm=20))
+        assert str(config.learning_rate_nm) == "20"  # 参数原样保留
+
+    def test_normal_learning_rate_does_not_warn(self, tmp_path):
+        """lr 不超过位移上限时不产生该提示。"""
+        import warnings as warnings_module  # 局部捕获
+        gds = _write_gds(tmp_path)  # 生成版图
+        for learning_rate_nm in (10, 1):  # 恰等于限与常规值
+            with warnings_module.catch_warnings(record=True) as caught:
+                warnings_module.simplefilter("always")  # 全部捕获
+                workflow.load_gradient_config(
+                    _write_config(tmp_path, gds,
+                                  learning_rate_nm=learning_rate_nm))
+            assert not [w for w in caught
+                        if "max_displacement" in str(w.message)]  # 无提示
+
 
 class TestGradientRunner:
     """梯度入口的产物与 summary 契约（TEST-014）。"""

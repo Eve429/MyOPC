@@ -126,30 +126,32 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
         from tqdm import tqdm  # 进度显示库
         outer_bar = tqdm(total=macro_count, desc="macros",  # 外层 macro 单位
                          unit="macro", position=0)  # 占第 0 行
-    for entry in plan["macros"]:  # 稳定顺序逐 macro 独立求解
-        macro_id = entry["macro_id"]  # macro 编号
-        problem = MacroProblem.load(Path(entry["problem_file"]))  # 加载 problem
-        started = time.perf_counter()  # 单 macro 计时
-        result, best_gds = _solve_macro(  # 全部迭代 + best GDS（公共包装）
-            method, problem, model, solver_config, target_cache,
-            macros_dir / macro_id,  # 专属产物目录
-            dbu_um=float(plan["dbu_um"]),  # GDS 写出需要源 DBU（NPZ 不含）
-            show_progress=output.show_progress,
-            progress_position=1 if outer_bar is not None else 0,  # 外层占 0
-            leave_progress=outer_bar is None)  # 多 macro 内层条不留存
-        elapsed = time.perf_counter() - started  # 单 macro 耗时
-        peak_rss = max(peak_rss, process.memory_info().rss)  # 逐 macro 采峰
-        macro_dir = macros_dir / macro_id  # 产物目录
-        method.save_macro_result(  # 算法差异：NPZ + metrics.json
-            macro_dir, macro_id, result)
-        macro_summaries.append(method.macro_summary(  # 算法差异：摘要条目
-            macro_id, macro_dir, result, best_gds, elapsed))
-        macro_gds[macro_id] = best_gds  # 记录显式映射
-        if outer_bar is not None:  # 外层条按完成 macro 计数
-            outer_bar.update(1)
-        del problem, result  # 释放当前 macro 再处理下一个
-    if outer_bar is not None:  # 外层条收尾
-        outer_bar.close()
+    try:  # 异常路径也要收尾外层进度条（与内层条同款 finally 纪律）
+        for entry in plan["macros"]:  # 稳定顺序逐 macro 独立求解
+            macro_id = entry["macro_id"]  # macro 编号
+            problem = MacroProblem.load(Path(entry["problem_file"]))  # 加载
+            started = time.perf_counter()  # 单 macro 计时
+            result, best_gds = _solve_macro(  # 全部迭代 + best GDS（公共包装）
+                method, problem, model, solver_config, target_cache,
+                macros_dir / macro_id,  # 专属产物目录
+                dbu_um=float(plan["dbu_um"]),  # GDS 写出需要源 DBU（NPZ 不含）
+                show_progress=output.show_progress,
+                progress_position=1 if outer_bar is not None else 0,  # 外层占 0
+                leave_progress=outer_bar is None)  # 多 macro 内层条不留存
+            elapsed = time.perf_counter() - started  # 单 macro 耗时
+            peak_rss = max(peak_rss, process.memory_info().rss)  # 逐 macro 采峰
+            macro_dir = macros_dir / macro_id  # 产物目录
+            method.save_macro_result(  # 算法差异：NPZ + metrics.json
+                macro_dir, macro_id, result)
+            macro_summaries.append(method.macro_summary(  # 算法差异：摘要条目
+                macro_id, macro_dir, result, best_gds, elapsed))
+            macro_gds[macro_id] = best_gds  # 记录显式映射
+            if outer_bar is not None:  # 外层条按完成 macro 计数
+                outer_bar.update(1)
+            del problem, result  # 释放当前 macro 再处理下一个
+    finally:  # 第 2 个 macro 抛异常时外层条同样收尾，不留终端残留状态
+        if outer_bar is not None:
+            outer_bar.close()
     # 全部 macro 完成后只合并一次（独立 macro 策略，不做逐轮全局合并）。
     merge_started = time.perf_counter()  # 合并计时
     final_path = merge_macro_results(  # 统一 ownership 权威覆盖写出

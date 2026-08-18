@@ -433,6 +433,48 @@ class TestGradientProgress:
         assert closed["n"] >= 1  # finally 收尾了进度条
         assert not (tmp_path / "work" / "summary.json").exists()  # 无半份摘要
 
+    def test_outer_bar_closes_on_midway_error(self, tmp_path, monkeypatch):
+        """多 macro 求解中途抛异常时外层进度条也被 finally 收尾。"""
+        import tqdm as tqdm_module  # 进度库宿主
+        gds = _write_gds(tmp_path)  # 生成版图
+        counters = {"created": 0, "closed": 0}  # 进度条生命周期计数
+        real_tqdm = tqdm_module.tqdm  # 原类
+
+        class _LifeSpyBar:
+            """记录创建与关闭的进度条代理。"""
+
+            def __init__(self, *args, **kwargs):
+                self._bar = real_tqdm(*args, **kwargs)  # 真实条
+                counters["created"] += 1  # 计创建
+
+            def update(self, value):
+                """透传更新。"""
+                return self._bar.update(value)
+
+            def close(self):
+                """计数关闭并透传。"""
+                counters["closed"] += 1
+                return self._bar.close()
+
+        monkeypatch.setattr(tqdm_module, "tqdm", _LifeSpyBar)
+
+        def exploding(*args, **kwargs):
+            """首个 macro 求解即抛未知程序异常。"""
+            raise RuntimeError("中途崩溃")
+
+        from dataclasses import replace  # frozen 适配器实例的字段替换
+        exploding_method = replace(  # 注入替身 optimizer 的方法实例副本
+            workflow.GRADIENT_METHOD, optimize_macro=exploding)
+        monkeypatch.setattr(workflow, "GRADIENT_METHOD", exploding_method)
+        config = _write_config(tmp_path, gds, macro_grid="[2, 2]",
+                               show_progress="true")  # 多 macro 开进度
+        with pytest.raises(RuntimeError, match="中途崩溃"):  # 异常原样传播
+            workflow.run_gradient_mbopc(config)
+        # 外层 1 条 + 首个 macro 内层 1 条全部关闭；修复前外层条漏关（1 != 2）。
+        assert counters["created"] == 2
+        assert counters["closed"] == counters["created"]
+        assert not (tmp_path / "work" / "summary.json").exists()  # 无半份摘要
+
 
 class TestGradientDirectExecution:
     """梯度入口从仓库外直接运行（TEST-013）。"""

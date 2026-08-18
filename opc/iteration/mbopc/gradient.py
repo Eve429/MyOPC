@@ -114,7 +114,7 @@ class _EdgeGradientMask(torch.autograd.Function):
 
         2 倍来源：论文对两个 endpoint 各采样一次 g_mid；本项目标量位移
         同时驱动两端点，中点随位移移动同一单位法向，两端链式求和恰为
-        2·g_mid（DEC-002）。
+        2·g_mid。
         """
         batch_indices, midpoints_xy = ctx.saved_tensors
         # 布局契约：图像 [B,H,W]、像素索引 [y,x]、坐标 (x,y) 连续；行 0 是
@@ -122,7 +122,7 @@ class _EdgeGradientMask(torch.autograd.Function):
         size = grad_output.shape[-1]  # 正方形 canvas 边长
         x = midpoints_xy[:, 0]  # [M]
         y = midpoints_xy[:, 1]
-        # 越界中点整体置零（REQ-004 边界）：先夹回边界取值，再按 inside 清零。
+        # 越界中点整体置零：先夹回边界取值，再按 inside 清零。
         inside = (x >= 0.0) & (x <= size - 1.0) & (y >= 0.0) & (y <= size - 1.0)
         xc = x.clamp(0.0, float(size - 1))
         yc = y.clamp(0.0, float(size - 1))
@@ -159,7 +159,7 @@ def optimize_gradient_macro(
         on_tiles_completed: OnTilesCompleted | None = None,
 ) -> GradientMBOPCResult:
     """优化一个 macro 的 owner 边段法向位移并返回最佳已评价合法状态。"""
-    # 入口契约（ERR-002：进入 GPU 大分配前挡住不兼容）。
+    # 入口契约：进入 GPU 大分配前挡住不兼容。
     segment_count = problem.segments.segment_count  # 段数 S
     canvas_pixels = int(problem.macro.canvas_pixels)
     if int(model.config.canvas) != canvas_pixels:
@@ -182,17 +182,21 @@ def optimize_gradient_macro(
     pixel_dbu = int(problem.macro.pixel_dbu)
     core_count = problem.macro.core_count
     max_displacement = float(problem.fragmentation.max_displacement_dbu)
-    # 初始化（阶段 2）：owner 映射、参考中点/法向与探针坐标只建一次，
-    # 全部状态迭代复用（同轮内不得重建 mapping）。
-    # segment_to_parameter = [-1,-1,-1,-1,-1]
-    # segment_to_parameter[[1,2]]=[-1,0,1,-1,-1]
+    # 初始化：owner 映射、参考中点/法向与探针坐标只建一次，全部状态迭代
+    # 复用（同轮内不得重建 mapping）。
+    # segment_to_parameter 把 owner 段全局号压缩成 Adam 参数下标 [0, O)：
+    # 非 owner 段恒 -1，owner 段按 owner_ids 顺序编号——parameters 的每个
+    # 元素经它反向定位到唯一段（如 5 段中第 1、2 段是 owner，则
+    # [-1,0,1,-1,-1]，其中 0、1 即两个可训练参数的下标）。
     segment_to_parameter = np.full(segment_count, -1, dtype=np.int32)
     segment_to_parameter[owner_ids] = np.arange(len(owner_ids), dtype=np.int32)
     reference = problem.segments.materialize()  # 参考几何唯一物化
-    reference_midpoints = np.ascontiguousarray(  # 段中点 [S,2]（全局 DBU）
+    # 段中点 [S,2]（全局 DBU）
+    reference_midpoints = np.ascontiguousarray(
         (reference.starts + reference.ends) * 0.5)
     segment_normals = np.ascontiguousarray(reference.normals)  # [S,2]
-    reference_region = reconstruct_region(  # 零位移参考几何（target/EPE 基准）
+    # 零位移参考几何（target/EPE 基准）
+    reference_region = reconstruct_region(
         problem, np.zeros(segment_count, dtype=np.float64))
     core_owner_members = []  # 每 core 的 owner 段号（EPE 探针专用，语义不变）
     core_sampling_members = []  # 每 core 全部可见段中的 owner 段（梯度采样）
@@ -204,7 +208,7 @@ def optimize_gradient_macro(
         total_pixels += int(ownership_canvas(
             spec.ownership_box, spec.context_box, pixel_dbu,
             canvas_pixels).sum())
-        # 梯度采样按 membership（REQ-007）：该 core 可见的所有段中，凡 owner
+        # 梯度采样按 membership：该 core 可见的所有段中，凡 owner
         # 段都在本 core 的 canvas 采样一次并累加到同一参数——跨 core 边界段
         # 的邻 tile 贡献不丢弃；采样与 owner（发布归属）职责分离。
         members = np.asarray(problem.segments_for_core(core_index))
@@ -229,11 +233,14 @@ def optimize_gradient_macro(
         raise ValueError("存在 owner 段但 ownership 计分像素为 0（数据不一致）")
     device = model.device  # 参数与批张量的目标设备
     threshold = float(model.config.print_threshold)  # 离散诊断二值阈值
+    # 三工艺角一次前向
     conditions = (model.condition("nominal"), model.condition("dose_max"),
-                  model.condition("defocus_min"))  # 三工艺角一次前向
-    parameters = torch.zeros(  # 唯一可训练参数：owner 法向位移 [O]
+                  model.condition("defocus_min"))
+    # 唯一可训练参数：owner 法向位移 [O]
+    parameters = torch.zeros(
         len(owner_ids), dtype=torch.float32, device=device, requires_grad=True)
-    optimizer = torch.optim.Adam(  # 固定超参（规格钉死，不新增配置面）
+    # 固定超参（规格钉死，不新增配置面）
+    optimizer = torch.optim.Adam(
         [parameters], lr=config.learning_rate_dbu, betas=(0.9, 0.999),
         eps=1e-8, weight_decay=0.0, amsgrad=False)
     current_region = reference_region  # 当前已发布合法几何
@@ -253,15 +260,19 @@ def optimize_gradient_macro(
         sums = {"nominal": 0.0, "process": 0.0, "pvband": 0.0}  # 连续分量累计
         diag = {"l2": 0, "pvband": 0, "epe": 0, "valid": 0, "ambiguous": 0}
         for batch_start in range(0, core_count, config.batch_size):
-            core_indices = list(range(  # 本批 core（行优先稳定序）
+            # 本批 core（行优先稳定序）
+            core_indices = list(range(
                 batch_start, min(batch_start + config.batch_size, core_count)))
             batch_count = len(core_indices)
+            # target 批（uint8 缓存格式）
             targets = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                               dtype=np.uint8)  # target 批（uint8 缓存格式）
+                               dtype=np.uint8)
+            # 当前 mask 批
             masks = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                             dtype=np.float32)  # 当前 mask 批
+                             dtype=np.float32)
+            # 计分像素批
             ownership = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                                 dtype=np.bool_)  # 计分像素批
+                                 dtype=np.bool_)
             member_slots = []  # 梯度采样条目的 batch 槽位（int64）
             member_params = []  # 梯度采样条目指向的参数索引（int64）
             member_mids = []  # 梯度采样条目的当前中点 canvas 坐标
@@ -276,21 +287,26 @@ def optimize_gradient_macro(
                         * 255.0).astype(np.uint8)
                     target_cache.put(macro_id, core_index, cached)
                 targets[slot] = cached
-                masks[slot] = rasterize_mask_canvas(  # 当前候选直接栅格
+                # 当前候选直接栅格
+                masks[slot] = rasterize_mask_canvas(
                     current_region, spec.context_box, pixel_dbu,
                     canvas_pixels, polarity=problem.polarity)
-                ownership[slot] = ownership_canvas(  # 唯一计分像素
+                # 唯一计分像素
+                ownership[slot] = ownership_canvas(
                     spec.ownership_box, spec.context_box, pixel_dbu,
                     canvas_pixels)
                 sampling_members = core_sampling_members[core_index]
                 if len(sampling_members):  # 梯度采样：全部 membership 中 owner 段
-                    displacement = current_owner[  # 段当前位移 [n]
+                    # 段当前位移 [n]
+                    displacement = current_owner[
                         segment_to_parameter[sampling_members]]
-                    midpoints_dbu = (  # 当前中点 = 参考中点 + 法向×位移
+                    # 当前中点 = 参考中点 + 法向×位移
+                    midpoints_dbu = (
                         reference_midpoints[sampling_members]
                         + segment_normals[sampling_members]
                         * displacement[:, None])
-                    member_mids.append(points_to_canvas(  # DBU→canvas 唯一换算
+                    # DBU→canvas 唯一换算
+                    member_mids.append(points_to_canvas(
                         midpoints_dbu, spec.context_box, pixel_dbu,
                         canvas_pixels))
                     member_slots.append(np.full(
@@ -299,20 +315,24 @@ def optimize_gradient_macro(
                         sampling_members].astype(np.int64))
                 owner_members = core_owner_members[core_index]  # 探针语义
                 if len(owner_members):  # 无 owner 段的 core 仍计完成 tile
-                    probe_slots.append(np.full(  # 探针槽位独立于梯度条目
+                    # 探针槽位独立于梯度条目
+                    probe_slots.append(np.full(
                         len(owner_members), slot, dtype=np.int64))
             trainable = bool(member_params)  # 本批是否有可训练 membership
             build_graph = trainable and can_update  # 末状态纯评价不建图
-            target_tensor = torch.from_numpy(targets).to(  # uint8→float32/255
+            # uint8→float32/255
+            target_tensor = torch.from_numpy(targets).to(
                 device=device, dtype=torch.float32).div_(255.0)
             ownership_tensor = torch.from_numpy(ownership).to(device=device)
             hard = torch.from_numpy(masks).to(device=device)
             if build_graph:  # STE：forward 数值不变，autograd 边接到位移
-                slots = torch.from_numpy(  # 批号与参数索引一次上设备
+                # 批号与参数索引一次上设备
+                slots = torch.from_numpy(
                     np.concatenate(member_slots)).to(device)
                 owned = torch.from_numpy(
                     np.concatenate(member_params)).to(device)
-                mids = torch.from_numpy(  # 中点坐标转 float32 上设备
+                # 中点坐标转 float32 上设备
+                mids = torch.from_numpy(
                     np.concatenate(member_mids)).to(device=device,
                                                      dtype=torch.float32)
                 local = parameters[owned]  # gather 出 [M]，autograd 边
@@ -364,7 +384,8 @@ def optimize_gradient_macro(
                     outer_xy = torch.from_numpy(np.concatenate(
                         [probe_outer_xy[c] for c in core_indices
                          if len(core_owner_members[c])]))
-                    epe_result = evaluate_edge_probes(  # 阈值跟随模型 PrintThresh
+                    # 阈值跟随模型 PrintThresh
+                    epe_result = evaluate_edge_probes(
                         target_tensor, nominal, batch_index_tensor,
                         inner_xy, outer_xy, threshold=threshold)
                     diag["epe"] += epe_result.violation_count
@@ -409,7 +430,7 @@ def optimize_gradient_macro(
             raise FloatingPointError(
                 f"{macro_id} state {state_index} 梯度缺失或非有限")
         before = parameters.detach().clone()  # 更新前快照（no_update 判据）
-        optimizer.step()  # 每 state 至多一次（INV-003）
+        optimizer.step()  # 每 state 至多一次
         with torch.no_grad():
             parameters.clamp_(-max_displacement, max_displacement)  # 先裁上限
         if not bool(torch.isfinite(parameters).all()):
@@ -420,12 +441,12 @@ def optimize_gradient_macro(
             break
         candidate_full[owner_ids] = parameters.detach().cpu().numpy().astype(
             np.float64)
-        try:  # 候选必须先通过方向/hole/有效性守卫才可发布（REQ-010）
+        try:  # 候选必须先通过方向/hole/有效性守卫才可发布
             candidate_region = reconstruct_region(problem, candidate_full)
         except (ValueError, ReconstructionError) as exc:
             # 宽捕获有实测依据：几何退化（如位移共线使 ring 顶点不足）会以
             # ValueError 从 KLayout 冒出而非 ReconstructionError（simple.py
-            # 同款证据）；收窄需改 reconstruction.py 包装，超出本 change 清单。
+            # 同款证据）；收窄需改 reconstruction.py 包装。
             stop_reason = "invalid_geometry"
             stop_detail = f"state {state_index + 1} 候选重建失败：{exc}"
             break

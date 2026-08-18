@@ -230,3 +230,16 @@
 - 批 4：全量 444 passed；四 smoke 全绿（simple 47.6s EPE 至 497、
   gradient 用户参数 205s loss −50%、管线 XOR=0、单遍 0.12s）；两报告
   + 手册同步。
+
+### 2026-08-18（会话：common 包集中）
+
+- 用户裁决：lithography 完全不动 → casting.py 取消（as_integer/
+  as_finite_float 留 iccad13 嵌套闭包）；用户补充验证要求（四组旧符号
+  残留 grep 零命中 + 切断 _mbopc_workflow→_macro_pipeline 的
+  atomic_write_json/exact_dbu 旧依赖）并入计划。
+- 交付：common/{arrays,io,units,runtime}（五文件含 __init__）；六项
+  迁移（_arrays 整体三函数、双原子写、内联 NPZ 归一、exact_dbu、
+  resolve_device）；grid.py 相对导入漏检补修（as_points 复活）；
+  _macro_pipeline 锚点反转重做。
+- 验证：全量 444 passed；smoke bench_30um 基线逐位复现
+  （1011/820/497）；四组残留检查零命中；定义仅存 common/。

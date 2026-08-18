@@ -13,9 +13,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
+from common.units import exact_dbu  # 精确 nm→DBU 换算
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
 from layout import LayerSpec, LayoutDB  # 版图打开与层规格
-from main._macro_pipeline import exact_dbu  # 精确 nm→DBU 换算
 from main.configuration import (  # 统一配置体系
     EdgeConfig,
     LayoutConfig,

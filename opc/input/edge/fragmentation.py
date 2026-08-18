@@ -8,8 +8,8 @@ from numbers import Real
 import numpy as np
 from numpy.typing import NDArray
 
+from common.arrays import as_matrix, as_vector
 from geometry import ContourBatch
-from opc.input._arrays import as_matrix, as_vector
 from opc.input._fragmentation import count_edge_fragments
 from opc.input.mask import MaskPolarity
 

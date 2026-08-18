@@ -8,9 +8,8 @@ from numbers import Integral
 import numpy as np
 from numpy.typing import NDArray
 
+from common.arrays import as_points, as_vector
 from layout import DbuBox
-
-from ._arrays import as_points, as_vector
 
 IntArray = NDArray[np.int64]
 Int32Array = NDArray[np.int32]

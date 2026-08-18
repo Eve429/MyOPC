@@ -348,3 +348,21 @@
 - smoke：simple（bench_30um 8 轮）47.6s best_epe 至 497；gradient
   （用户实验 config gcd_30um [1,1] 10 轮）205s loss −50%；管线 XOR=0。
   gcd_45nm 已删，旧基线数字不可比（报告如实记录口径）。
+
+## common 包集中事实（2026-08-18）
+
+- **相对导入漏检陷阱**：grep `from opc.input._arrays import` 漏掉
+  `from ._arrays import`（grid.py）——as_points 实际有真实调用方
+  （grid.locate_owned_points），"零调用可删"结论错误，删文件后
+  ModuleNotFoundError 才暴露。教训：删模块前必须同时搜绝对与相对导入。
+- **用户清单三处与现状不符**：_as_int 已被配置重构删除（casting 因此
+  取消——唯一调用方 iccad13 按用户裁决不动）；ensure_2d_float32 不存在
+  （实为 as_vector/as_matrix/as_points）；iccad13 的 as_integer/
+  as_finite_float 是 from_file 嵌套闭包非模块级。
+- **切片删除的锚点顺序**：t[:start]+t[end:] 在 end<start 时变复制——
+  _macro_pipeline 的 _PLAN_FORMAT_VERSION 在函数定义前，删除区间反转
+  导致定义重复，git checkout 恢复重做。
+- **_center_padding 双实现维持**（共用需 lithography import common，
+  随"litho 不动"裁决一并搁置）。
+- main 内三份 NPZ 原子写归一（workflow 2 + run_macro_pipeline 内联 1）；
+  四组旧符号残留 grep 零命中；全量 444 passed；smoke 基线逐位复现。

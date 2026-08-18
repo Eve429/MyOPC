@@ -10,10 +10,10 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
+from common.arrays import as_vector
 from geometry import ContourBatch, extract_contour
 from layout import DbuBox, LayerSpec, RegionBatch
 from opc.input import MacroSpec, MaskPolarity
-from opc.input._arrays import as_vector
 from opc.input.mask import normalize_mask
 
 from .fragmentation import FragmentationConfig, SegmentBatch, fragment_edges

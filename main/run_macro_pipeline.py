@@ -1,8 +1,6 @@
 """Macro–Core 两级网格双轮迭代管线的直接运行入口（阶段 0–3）。"""
 
-import os  # 原子替换 result NPZ 的临时文件
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
-import tempfile  # 创建与目标同目录的临时文件
 import time  # perf_counter 阶段计时
 from decimal import Decimal  # nm→DBU 的精确十进制换算
 from pathlib import Path  # 全部路径统一使用 Path 对象
@@ -15,10 +13,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
+from common.io import atomic_write_json, atomic_write_npz  # 原子写出
+from common.units import exact_dbu  # nm→DBU 精确换算
 from layout import LayerSpec, LayoutDB  # 回零验证的版图查询
 from main._macro_pipeline import (  # 两个真实流程共用的 macro 生命周期
-    atomic_write_json,
-    exact_dbu,
     merge_macro_results,
     prepare_problems,
     write_macro_gds,
@@ -89,24 +87,15 @@ def run_round(plan: dict, round_index: int, delta_dbu: int) -> dict:
             if not np.isfinite(transmission_sums[core_index]):  # 每核必须产出有限值
                 raise RuntimeError(f"{macro_id} core{core_index} transmission 非有限")
         result_path = round_dir / "results" / f"{macro_id}.npz"  # result 路径
-        handle, temporary_name = tempfile.mkstemp(  # 同目录临时文件
-            prefix=f".{macro_id}-", suffix=".npz", dir=result_path.parent)  # 命名
-        os.close(handle)  # 关闭句柄
-        temporary = Path(temporary_name)  # Path 化
-        try:  # 写出 result NPZ
-            with temporary.open("wb") as stream:  # 二进制写
-                np.savez(stream,  # 不压缩 NPZ
-                         format_version=np.array([_RESULT_FORMAT_VERSION], np.int32),  # 版本
-                         macro_id=np.array([macro_id]),  # macro 编号
-                         round_index=np.array([round_index], np.int32),  # 轮次
-                         round_delta_dbu=np.array([float(delta_dbu)], np.float64),  # 本轮位移
-                         segment_displacements=following,  # 累计位移状态
-                         written_owner_count=np.array([int(written.sum())], np.int64),  # 写入计数
-                         core_transmission_sums=transmission_sums)  # 每 core 总和
-            os.replace(temporary, result_path)  # 原子替换
-        finally:  # 清理
-            if temporary.exists():  # 尚存
-                temporary.unlink()  # 删除
+        atomic_write_npz(  # result NPZ（common 原子写出，消 main 内第三副本）
+            result_path,
+            format_version=np.array([_RESULT_FORMAT_VERSION], np.int32),  # 版本
+            macro_id=np.array([macro_id]),  # macro 编号
+            round_index=np.array([round_index], np.int32),  # 轮次
+            round_delta_dbu=np.array([float(delta_dbu)], np.float64),  # 本轮位移
+            segment_displacements=following,  # 累计位移状态
+            written_owner_count=np.array([int(written.sum())], np.int64),  # 写入计数
+            core_transmission_sums=transmission_sums)  # 每 core 总和
         write_macro_gds(  # 完整候选 GDS（RESULT Cell，不裁 ownership）
             problem, region, round_dir / "gds" / f"{macro_id}.gds", dbu_um)  # 写盘
         peak_rss = max(peak_rss, process.memory_info().rss)  # 采样峰值

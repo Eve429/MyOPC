@@ -1,6 +1,5 @@
 """多个真实流程共用的 macro 生命周期：problem 准备、候选写出与最终合并。"""
 
-import json  # 序列化 plan.json
 import os  # 原子替换与文件系统操作
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import tempfile  # 创建与目标同目录的临时文件
@@ -18,6 +17,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
+from common.io import atomic_write_json  # JSON 原子写出
+from common.units import exact_dbu  # nm→DBU 精确换算
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
 from layout import DbuBox, LayerSpec, LayoutDB  # 版图打开、层规格与坐标框
 from main.configuration import (  # 统一配置体系（按业务划分的输入）
@@ -32,31 +33,6 @@ from opc.input.edge import MacroProblem, prepare_macro_problem  # problem 构造
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
 _PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
-
-
-def exact_dbu(value_nm: Decimal, dbu_nm: Decimal, name: str) -> int:
-    """把必须落在版图格点上的 nm 参数精确转换为整数 DBU。"""
-    quotient = value_nm / dbu_nm  # 十进制除法，无二进制浮点误差
-    if quotient != quotient.to_integral_value():  # 非整数倍即无法精确落格点
-        raise ValueError(  # 报错必须写明参数名、nm 值与当前 dbu_nm
-            f"{name}={value_nm} nm 无法精确换算为 {dbu_nm} nm/DBU 的整数倍")
-    return int(quotient)  # 精确整数 DBU
-
-
-def atomic_write_json(path: Path, payload: dict) -> Path:
-    """把 JSON 载荷经同目录临时文件原子写出，避免留下半截 plan。"""
-    handle, temporary_name = tempfile.mkstemp(  # 与目标同目录同卷
-        prefix=f".{path.stem}-", suffix=".json", dir=path.parent)  # 临时文件名
-    os.close(handle)  # 只借用文件名，内容用文本模式重写
-    temporary = Path(temporary_name)  # Path 化
-    try:  # 写入并原子替换
-        with temporary.open("w", encoding="utf-8") as stream:  # 文本写
-            json.dump(payload, stream, ensure_ascii=False, indent=2)  # 中文可读输出
-        os.replace(temporary, path)  # 原子替换目标
-    finally:  # 无论成败清理临时文件
-        if temporary.exists():  # 尚存即删除
-            temporary.unlink()  # 删除
-    return path  # 返回最终路径
 
 
 def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,

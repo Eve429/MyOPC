@@ -1,4 +1,4 @@
-"""集中处理 OPC 输入契约使用的 NumPy 数组形状与内存布局。"""
+"""NumPy 数组形状与内存布局的通用规范化。"""
 
 from __future__ import annotations
 

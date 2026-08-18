@@ -1,8 +1,6 @@
 """两个 MB-OPC 入口共享的逐 macro 求解、最终合并与光刻输出。"""
 
-import os  # 原子替换 result NPZ 的临时文件
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
-import tempfile  # 与目标同目录的临时 NPZ
 import time  # perf_counter 阶段计时
 import warnings  # 学习率超限的风险提示（不改合法配置集合）
 from dataclasses import asdict  # 记录序列化
@@ -19,11 +17,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/lithography 可导入
 
+from common.io import atomic_write_json, atomic_write_npz  # 原子写出
+from common.runtime import resolve_device  # 设备解析
+from common.units import exact_dbu  # nm→DBU 精确换算
 from layout import LayerSpec, LayoutDB  # 最终光刻输出的版图回读
 from lithography import ICCAD13Lithography  # 固定 ICCAD13 光刻模型
 from main._macro_pipeline import (  # 共用 macro 生命周期
-    atomic_write_json,
-    exact_dbu,
     merge_macro_results,
     prepare_problems,
     write_macro_gds,
@@ -56,29 +55,6 @@ from opc.iteration.mbopc import (  # 求解器结构与入口
 
 _RESULT_FORMAT_VERSION = 1  # 每 macro result NPZ 结构版本
 _GRADIENT_RESULT_VERSION = 1  # 每 macro 梯度结果 NPZ 结构版本
-
-
-def _resolve_device(device: str) -> str:
-    """把配置设备字符串解析为实际设备（auto 时有 CUDA 用 CUDA）。"""
-    if device == "auto":  # 自动选择
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    return device  # 显式设备原样透传
-
-
-def _atomic_write_npz(path: Path, **arrays: np.ndarray) -> Path:
-    """把 NPZ 载荷经同目录临时文件原子写出。"""
-    handle, temporary_name = tempfile.mkstemp(  # 同目录临时文件
-        prefix=f".{path.stem}-", suffix=".npz", dir=path.parent)  # 命名
-    os.close(handle)  # 关闭句柄
-    temporary = Path(temporary_name)  # Path 化
-    try:  # 写出并原子替换
-        with temporary.open("wb") as stream:  # 二进制写
-            np.savez(stream, **arrays)  # 不压缩 NPZ
-        os.replace(temporary, path)  # 原子替换
-    finally:  # 清理
-        if temporary.exists():  # 尚存
-            temporary.unlink()  # 删除
-    return path  # 返回路径
 
 
 def solve_macro(
@@ -143,7 +119,7 @@ def run_mbopc(config_path: str | Path) -> dict:
             mbopc.epe_distance_nm, dbu_nm, "epe_distance_nm")),
         batch_size=mbopc.batch_size,
         target_cache_bytes=mbopc.target_cache_mb * 1024 * 1024)
-    device = _resolve_device(litho.device)  # 设备解析（auto→实际）
+    device = resolve_device(litho.device)  # 设备解析（auto→实际）
     model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
     target_cache = TargetCanvasCache(solver_config.target_cache_bytes)  # 跨 macro 共享
     work_dir = output.work_dir  # 非 None 已由 prepare_problems 保证
@@ -168,7 +144,7 @@ def run_mbopc(config_path: str | Path) -> dict:
             leave_progress=outer_bar is None)  # 多 macro 内层条不留存
         elapsed = time.perf_counter() - started  # 单 macro 耗时
         macro_dir = macros_dir / macro_id  # 产物目录
-        _atomic_write_npz(  # result NPZ（位移与停止信息）
+        atomic_write_npz(  # result NPZ（位移与停止信息）
             macro_dir / "result.npz",
             format_version=np.array([_RESULT_FORMAT_VERSION], np.int32),
             macro_id=np.array([macro_id]),
@@ -297,7 +273,7 @@ def run_gradient_mbopc(config_path: str | Path) -> dict:
             gradient.epe_distance_nm, dbu_nm, "epe_distance_nm")),
         batch_size=gradient.batch_size,
         target_cache_bytes=gradient.target_cache_mb * 1024 * 1024)
-    device = _resolve_device(litho.device)  # 设备解析（auto→实际）
+    device = resolve_device(litho.device)  # 设备解析（auto→实际）
     # CUDA 峰值统计设备必须显式指定：不传 device 时 PyTorch 统计当前设备
     # （默认 cuda:0），多卡下会量错卡；这里不改进程全局设备（不 set_device）。
     cuda_stats_device = (torch.device(device)
@@ -330,7 +306,7 @@ def run_gradient_mbopc(config_path: str | Path) -> dict:
         elapsed = time.perf_counter() - started  # 单 macro 耗时
         peak_rss = max(peak_rss, process.memory_info().rss)  # 逐 macro 采峰
         macro_dir = macros_dir / macro_id  # 产物目录
-        _atomic_write_npz(  # 梯度结果 NPZ（独立于 simple 的 result.npz）
+        atomic_write_npz(  # 梯度结果 NPZ（独立于 simple 的 result.npz）
             macro_dir / "gradient_result.npz",
             format_version=np.array([_GRADIENT_RESULT_VERSION], np.int32),
             macro_id=np.array([macro_id]),

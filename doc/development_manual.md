@@ -19,12 +19,21 @@ python -m compileall -q layout geometry opc lithography main tests
 ## 2. 依赖方向
 
 ```text
-layout -> geometry -> opc.input -> opc.input.edge -> main
-lithography -> torch + 标准库（不导入 layout/geometry/opc/evaluation/main）
-evaluation -> torch + 标准库（不导入 layout/geometry/opc/lithography/main）
+common -> stdlib + numpy（runtime.py 例外需 torch；不依赖任何业务包）
+layout -> geometry
+geometry -> layout
+opc.input -> geometry/layout + common（arrays）
+opc.input.edge -> opc.input + common（arrays）
+lithography -> torch + 标准库（不导入 common/layout/geometry/opc/evaluation/main）
+evaluation -> torch + 标准库（不导入 common/layout/geometry/opc/lithography/main）
 opc.iteration.mbopc -> opc.input(.edge) + lithography + evaluation + torch/numpy/kdb
-main -> 上述全部（应用编排）
+main -> 上述全部 + common（io/units/runtime）
 ```
+
+`common/`（2026-08-18 新建）集中跨模块辅助：`arrays`（as_vector/as_matrix/
+as_points）、`io`（atomic_write_json/atomic_write_npz）、`units`（exact_dbu）、
+`runtime`（resolve_device）。layout/geometry/lithography 不引入 common
+（lithography 按用户裁决完全不动）。
 
 基础层不得反向依赖；`opc.iteration.<method>` 可依赖输入层、`lithography` 与
 `evaluation`（消费 `LithographyModel` 契约而非 ICCAD13 具体类型）；
@@ -67,6 +76,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 | DBU 点→画布坐标 | `opc.input.points_to_canvas`（含 padding 项，禁手写公式） |
 | 最终双模式写出 | `geometry.PatchWriter.write_macro_results` |
 | 统一配置体系 | `main.configuration`：9 个业务 Config + `load_config(path, *types)`（单次读、声明式映射、未知段/字段严格）；段：layout/partition/lithography/edge/mbopc/gradient/single_pass/iteration/output |
+| 通用辅助函数 | `common.io`（atomic_write_json/npz）、`common.units`（exact_dbu）、`common.runtime`（resolve_device）、`common.arrays`（as_vector/as_matrix/as_points） |
 | 跨段契约与派生值 | 各 workflow 装配处（步长/探针≤上限、lr 超限 warning；nm→DBU 内联换算） |
 
 ## 5. 光刻模型 lithography（ICCAD13，2026-08-16 迁移）

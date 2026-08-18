@@ -2,7 +2,6 @@
 
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import time  # perf_counter 阶段计时
-import warnings  # 学习率超限的风险提示（不改合法配置集合）
 from dataclasses import asdict  # 记录序列化
 from decimal import Decimal  # nm→DBU 精确换算
 from pathlib import Path  # 全部路径统一使用 Path 对象
@@ -18,7 +17,6 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from common.io import atomic_write_json, atomic_write_npz  # 原子写出
 from common.runtime import resolve_device  # 设备解析
-from common.units import exact_dbu  # nm→DBU 精确换算
 from lithography import ICCAD13Lithography  # 固定 ICCAD13 光刻模型
 from main._macro_pipeline import (  # 共用 macro 生命周期
     merge_macro_results,
@@ -34,10 +32,11 @@ from main.configuration import (  # 统一配置体系（gradient 路径所需�
     OutputConfig,
     PartitionConfig,
     load_config,
+    resolve_gradient_config,
 )
 from opc.input.edge import MacroProblem, reconstruct_region  # problem 与重建
 from opc.iteration.mbopc import (  # gradient 求解器
-    GradientMBOPCConfig,
+    GradientMBOPCConfig,  # solve_gradient_macro 的 DBU 配置类型注解
     GradientMBOPCResult,
     TargetCanvasCache,
     optimize_gradient_macro,
@@ -89,34 +88,14 @@ def run_gradient_mbopc(config_path: str | Path) -> dict:
     layout, partition, litho, edge, gradient, output = load_config(  # 统一加载
         config_path, LayoutConfig, PartitionConfig, LithographyConfig,
         EdgeConfig, GradientConfig, OutputConfig)
-    if gradient.learning_rate_nm > edge.max_displacement_nm:  # 超限仍合法只提示
-        # Adam 首步更新尺度与 lr 同量级，超限会让大量段一步打到 ±上限 被
-        # clamp，抬高 invalid_geometry/优化停滞风险；不改参数、不硬拒绝。
-        warnings.warn(
-            f"learning_rate_nm={gradient.learning_rate_nm} 超过 "
-            f"max_displacement_nm={edge.max_displacement_nm}；"
-            "Adam 更新可能在早期大量触发位移 clamp，"
-            "增加 invalid_geometry 或优化停滞风险",
-            UserWarning, stacklevel=2)
-    if gradient.epe_distance_nm > partition.context_nm:  # 探针越上下文
-        raise ValueError("epe_distance_nm 不得超过 context_nm")
     plan = prepare_problems(  # 阶段 0/1（共用生命周期）
         layout, partition, litho, edge, output)
     rss_after_prepare = process.memory_info().rss  # 准备后 RSS
     peak_rss = max(rss_start, rss_after_prepare)  # 峰值初值
     dbu_nm = Decimal(str(plan["dbu_um"])) * 1000  # DBU 的 nm 值
-    # 学习率是连续 optimizer 步长：Decimal 相除后转 float，不走 exact_dbu
     # 整数契约（其余网格/pixel/segment/探针参数仍走整数 DBU 契约）。
-    solver_config = GradientMBOPCConfig(  # nm→DBU 运行时派生（solver 输入包）
-        iterations=gradient.iterations,
-        learning_rate_dbu=float(gradient.learning_rate_nm / dbu_nm),
-        weight_nominal_l2=gradient.weight_nominal_l2,
-        weight_process_l2=gradient.weight_process_l2,
-        weight_pvband=gradient.weight_pvband,
-        epe_distance_dbu=float(exact_dbu(  # 探针距离仍走精确整数换算
-            gradient.epe_distance_nm, dbu_nm, "epe_distance_nm")),
-        batch_size=gradient.batch_size,
-        target_cache_bytes=gradient.target_cache_mb * 1024 * 1024)
+    # lr 超限提示 + 跨段校验 + nm→DBU + solver 配置集中在 resolve_gradient_config。
+    solver_config = resolve_gradient_config(gradient, partition, edge, dbu_nm)
     device = resolve_device(litho.device)  # 设备解析（auto→实际）
     # CUDA 峰值统计设备必须显式指定：不传 device 时 PyTorch 统计当前设备
     # （默认 cuda:0），多卡下会量错卡；这里不改进程全局设备（不 set_device）。

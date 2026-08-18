@@ -24,13 +24,13 @@ from main.configuration import (  # 统一配置体系
     PartitionConfig,
     SinglePassConfig,
     load_config,
+    resolve_prepare_config,
 )
 from opc.input import plan_macros  # 两级网格规划
 from opc.input.edge import (  # problem 构造与位移重建
     prepare_macro_problem,
     reconstruct_region,
 )
-from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
 
 def run_single_pass(layout: LayoutConfig, partition: PartitionConfig,
@@ -50,32 +50,20 @@ def run_single_pass(layout: LayoutConfig, partition: PartitionConfig,
         if bounds is None:  # 目标层在顶层子树内无图形
             raise ValueError(  # 空层无法规划网格
                 f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")  # 报层号
-        core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")  # core
-        context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")  # context
-        pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
-        corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")  # 拐角段
-        segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")  # 中段
-        max_displacement_dbu = exact_dbu(  # 位移上限
-            edge.max_displacement_nm, dbu_nm, "max_displacement_nm")  # 换算
+        # nm→DBU 换算、context 契约与边段配置构造集中在 resolve_prepare_config。
+        runtime = resolve_prepare_config(partition, litho, edge, dbu_nm)
         displacement_dbu = exact_dbu(  # 单遍位移（允许负值=沿法向反向）
             single_pass.displacement_nm, dbu_nm, "displacement_nm")  # 换算
-        # 位移契约：|d| ≤ max_displacement ≤ context；后者保证 context 能覆盖
-        # 位移后的几何，邻居 macro 的副本仍落在可见范围内。
-        if abs(displacement_dbu) > max_displacement_dbu:  # 超出配置上限
+        # 位移契约：|d| ≤ max_displacement（单遍专属；context 契约已在 resolve 内）。
+        if abs(displacement_dbu) > runtime.fragmentation.max_displacement_dbu:  # 超上限
             raise ValueError("displacement_nm 的绝对值不得超过 max_displacement_nm")  # 报契约
-        if max_displacement_dbu > context_dbu:  # context 不足以覆盖位移
-            raise ValueError("context_nm 必须不小于 max_displacement_nm")  # 报契约
-        fragmentation = FragmentationConfig(  # DBU 级边段配置（数值约束由构造校验）
-            corner_length_dbu=float(corner_dbu),  # 拐角段
-            max_segment_length_dbu=float(segment_dbu),  # 中段上限
-            max_displacement_dbu=float(max_displacement_dbu),  # 位移上限
-            miter_limit=edge.miter_limit)  # miter
         macros = plan_macros(  # 两级网格规划（像素整除/画布容量在此校验）
-            bounds, macro_grid=partition.macro_grid, macro_size_dbu=(
-                exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm")  # 尺寸模式换算
-                if partition.macro_size_nm is not None else None),  # 数量模式为空
-            core_size_dbu=core_dbu, context_dbu=context_dbu,  # core/context
-            pixel_dbu=pixel_dbu, canvas_pixels=litho.canvas_pixels)  # 画布契约
+            bounds, macro_grid=partition.macro_grid,  # 数量模式
+            macro_size_dbu=runtime.macro_size_dbu,  # 尺寸模式（None=数量）
+            core_size_dbu=runtime.core_dbu,  # core
+            context_dbu=runtime.context_dbu,  # context
+            pixel_dbu=runtime.pixel_dbu,  # 像素
+            canvas_pixels=litho.canvas_pixels)  # 画布契约
         # 规划复核：ownership 面积和恰等于父框即无正面积重叠（O(macro 数)）。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积失守
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")  # 报规划错误
@@ -86,7 +74,7 @@ def run_single_pass(layout: LayoutConfig, partition: PartitionConfig,
             batch = database.query(  # 完整相交物化（不裁剪 occurrence，不引入假边）
                 [layer], macro.query_box).materialize_intersecting()  # 惰性查询执行
             problem = prepare_macro_problem(  # 全内存 problem：提边/分段/切线分裂/ownership
-                batch, layer, layout.polarity, fragmentation, macro)  # 不落盘
+                batch, layer, layout.polarity, runtime.fragmentation, macro)  # 不落盘
             # 单遍位移：owner 段沿外法向统一移动 displacement，context 段保持零。
             # 法向约定为「材料指向空区」，因此带孔图形的孔壁法向指向孔内——
             # 统一正值位移自动实现「外环外扩、孔壁内收」的双向扩张。

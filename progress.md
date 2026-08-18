@@ -256,3 +256,8 @@
 - doc_ 正式切换为 doc：8 增量迁移 + 12 副本删除 + 目录改名；
   INDEX 撤试行说明、migration_map 记切换；CLAUDE/task_plan 路径更新。
   全量 445 passed 复跑确认零代码影响。
+
+- resolve_*_config 三函数集中（用户方案 + 第 4 消费方单遍）：四文件
+  换算/校验/构造全收口 configuration.py；跨段校验时机统一后移到
+  prepare 后（行为变化记 findings）。全量 445 passed；三 smoke 基线
+  逐位复现。commit 后 push。

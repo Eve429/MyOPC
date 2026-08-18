@@ -21,15 +21,15 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
 from common.io import atomic_write_json  # JSON 原子写出
-from common.units import exact_dbu  # nm→DBU 精确换算
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
 from layout import DbuBox, LayerSpec, LayoutDB  # 版图打开、层规格与坐标框
-from main.configuration import (  # 统一配置体系（按业务划分的输入）
+from main.configuration import (  # 统一配置体系（含 nm→DBU 解析集中）
     EdgeConfig,
     LayoutConfig,
     LithographyConfig,
     OutputConfig,
     PartitionConfig,
+    resolve_prepare_config,
 )
 from opc.input import (  # 两级网格规划与留档栅格
     MaskPolarity,
@@ -37,7 +37,6 @@ from opc.input import (  # 两级网格规划与留档栅格
     rasterize_mask_canvas,
 )
 from opc.input.edge import MacroProblem, prepare_macro_problem  # problem 构造
-from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
 _PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
 
@@ -59,29 +58,15 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         if bounds is None:  # 目标层在顶层子树内无图形
             raise ValueError(  # 空层无法规划网格
                 f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")  # 报层号
-        # 全部 nm 参数精确换算：不能整除直接失败，不四舍五入吸收误差。
-        core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")  # core
-        context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")  # context
-        pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
-        corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")  # 拐角段
-        segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")  # 中段
-        max_displacement_dbu = exact_dbu(  # 位移上限
-            edge.max_displacement_nm, dbu_nm, "max_displacement_nm")
-        if max_displacement_dbu > context_dbu:  # context 必须覆盖最大位移
-            raise ValueError("context_nm 必须不小于 max_displacement_nm")
-        # 边段数值约束（正长度、segment≥2×corner、非负位移）由 FragmentationConfig
-        # 构造统一校验，这里不重复检查。
-        fragmentation = FragmentationConfig(  # DBU 级边段配置
-            corner_length_dbu=float(corner_dbu),  # 拐角段
-            max_segment_length_dbu=float(segment_dbu),  # 中段上限
-            max_displacement_dbu=float(max_displacement_dbu),  # 位移上限
-            miter_limit=edge.miter_limit)  # miter
+        # nm→DBU 换算、context 契约与边段配置构造集中在 resolve_prepare_config。
+        runtime = resolve_prepare_config(partition, litho, edge, dbu_nm)
         macros = plan_macros(  # 两级网格规划（内部完成像素/画布校验）
-            bounds, macro_grid=partition.macro_grid, macro_size_dbu=(
-                exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm")  # 尺寸模式换算
-                if partition.macro_size_nm is not None else None),  # 数量模式为空
-            core_size_dbu=core_dbu, context_dbu=context_dbu,  # core/context
-            pixel_dbu=pixel_dbu, canvas_pixels=litho.canvas_pixels)  # 画布契约
+            bounds, macro_grid=partition.macro_grid,  # 数量模式
+            macro_size_dbu=runtime.macro_size_dbu,  # 尺寸模式（None=数量）
+            core_size_dbu=runtime.core_dbu,  # core
+            context_dbu=runtime.context_dbu,  # context
+            pixel_dbu=runtime.pixel_dbu,  # 像素
+            canvas_pixels=litho.canvas_pixels)  # 画布契约
         # 阶段 0 步骤 7：ownership 复核——面积和恰等于父框即无正面积重叠。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积守恒
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
@@ -96,7 +81,7 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
             batch = database.query(  # 完整相交物化（不裁剪 occurrence）
                 [layer], macro.query_box).materialize_intersecting()  # 惰性查询执行
             problem = prepare_macro_problem(  # 一次完成提边/分段/切线分裂/ownership
-                batch, layer, layout.polarity, fragmentation, macro)  # 阶段 1 核心
+                batch, layer, layout.polarity, runtime.fragmentation, macro)  # 阶段 1 核心
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
             problem_bytes = problem_path.stat().st_size  # 文件字节数即持久字节数
             segment_count_sum += problem.segments.segment_count  # 累计段数
@@ -124,17 +109,17 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         "dbu_um": float(dbu_nm / 1000),  # DBU 微米值（写出最终 GDS 用）
         "layer": [layer.layer, layer.datatype],  # 目标层
         "polarity": layout.polarity.value,  # 极性
-        "core_size_dbu": core_dbu,  # core
-        "context_dbu": context_dbu,  # context
-        "pixel_dbu": pixel_dbu,  # pixel
+        "core_size_dbu": runtime.core_dbu,  # core
+        "context_dbu": runtime.context_dbu,  # context
+        "pixel_dbu": runtime.pixel_dbu,  # pixel
         "canvas_pixels": litho.canvas_pixels,  # canvas
         "macro_count": len(macros),  # macro 总数
         "core_count": sum(macro.core_count for macro in macros),  # core 总数
-        "fragmentation": {  # 边段配置
-            "corner_length_dbu": float(corner_dbu),  # 拐角段
-            "max_segment_length_dbu": float(segment_dbu),  # 中段上限
-            "max_displacement_dbu": float(max_displacement_dbu),  # 位移上限
-            "miter_limit": edge.miter_limit},  # miter
+        "fragmentation": {  # 边段配置（runtime 已构造，按 plan 契约展开）
+            "corner_length_dbu": runtime.fragmentation.corner_length_dbu,
+            "max_segment_length_dbu": runtime.fragmentation.max_segment_length_dbu,
+            "max_displacement_dbu": runtime.fragmentation.max_displacement_dbu,
+            "miter_limit": runtime.fragmentation.miter_limit},  # miter
         "work_dir": str(output.work_dir),  # 工作目录
         "final_layout": str(output.final_layout),  # 最终版图
         "final_cell_mode": output.final_cell_mode,  # Cell 模式

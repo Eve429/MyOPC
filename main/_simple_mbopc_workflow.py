@@ -15,7 +15,6 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from common.io import atomic_write_json, atomic_write_npz  # 原子写出
 from common.runtime import resolve_device  # 设备解析
-from common.units import exact_dbu  # nm→DBU 精确换算
 from lithography import ICCAD13Lithography  # 固定 ICCAD13 光刻模型
 from main._macro_pipeline import (  # 共用 macro 生命周期
     merge_macro_results,
@@ -31,10 +30,11 @@ from main.configuration import (  # 统一配置体系（simple 路径所需）
     OutputConfig,
     PartitionConfig,
     load_config,
+    resolve_mbopc_config,
 )
 from opc.input.edge import MacroProblem, reconstruct_region  # problem 与重建
 from opc.iteration.mbopc import (  # simple 求解器
-    SimpleMBOPCConfig,
+    SimpleMBOPCConfig,  # solve_macro 的 DBU 配置类型注解
     SimpleMBOPCResult,
     TargetCanvasCache,
     optimize_macro,
@@ -87,24 +87,12 @@ def run_mbopc(config_path: str | Path) -> dict:
     layout, partition, litho, edge, mbopc, output = load_config(  # 统一加载
         config_path, LayoutConfig, PartitionConfig, LithographyConfig,
         EdgeConfig, MBOPCConfig, OutputConfig)
-    # 跨 Config 契约（单一 Config 内业务校验已在各自 __post_init__）。
-    if mbopc.initial_step_nm > edge.max_displacement_nm:  # 步长超位移上限
-        raise ValueError("initial_step_nm 不得超过 max_displacement_nm")
-    if mbopc.epe_distance_nm > partition.context_nm:  # 探针越上下文
-        raise ValueError("epe_distance_nm 不得超过 context_nm")
     plan = prepare_problems(  # 阶段 0/1（work_dir 在此查 None）
         layout, partition, litho, edge, output)
     macro_count = plan["macro_count"]  # macro 总数
     dbu_nm = Decimal(str(plan["dbu_um"])) * 1000  # DBU 的 nm 值
-    solver_config = SimpleMBOPCConfig(  # nm→DBU 运行时派生（solver 输入包）
-        iterations=mbopc.iterations,
-        initial_step_dbu=float(exact_dbu(
-            mbopc.initial_step_nm, dbu_nm, "initial_step_nm")),
-        decay_every=mbopc.decay_every,
-        epe_distance_dbu=float(exact_dbu(
-            mbopc.epe_distance_nm, dbu_nm, "epe_distance_nm")),
-        batch_size=mbopc.batch_size,
-        target_cache_bytes=mbopc.target_cache_mb * 1024 * 1024)
+    # 跨段校验 + nm→DBU + solver 配置构造集中在 resolve_mbopc_config。
+    solver_config = resolve_mbopc_config(mbopc, partition, edge, dbu_nm)
     device = resolve_device(litho.device)  # 设备解析（auto→实际）
     model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
     target_cache = TargetCanvasCache(solver_config.target_cache_bytes)  # 跨 macro 共享

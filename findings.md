@@ -398,3 +398,21 @@
   add -A，让 rename 由相似度推断（18 R 记录）。
 - CLAUDE.md 仅做路径字符串级更新（用户领地纪律）；瘦身/重写仍留待
   用户另行指派。changes/active 清空（下一个 CHG 自建）。
+
+## resolve_*_config 集中事实（2026-08-18）
+
+- 职责三分：load_config=TOML→Config；resolve_prepare/mbopc/gradient_config
+  =组合校验+nm→DBU+运行时配置构造（PrepareRuntime 打包返回，4 个真实
+  调用方）；prepare_problems/run_*=流程调度。
+- **跨段校验时机后移**（行为变化）：step≤max/epe≤context/lr warning 从
+  prepare 前移到 prepare 后（resolve 需要 dbu_nm）——非法配置先跑一次
+  prepare（bench_30um 0.07s/gcd ~1s）再失败；"非整除 dbu"类本就在
+  prepare 后，两级时序归一。
+- **用户清单外补第 4 消费方**：run_single_pass 与 prepare 有完全相同的
+  6 项换算+FragmentationConfig 构造——只改 3 个 workflow 会留第四份
+  副本；displacement 换算与 |d|≤max 留在入口（单遍专属）。
+- 类型注解的 Config import 不能随构造职责一起删（solve_macro/
+  solve_gradient_macro 签名仍用）——"构造走 resolve"≠"类型不引用"。
+- 残留检查口径：main/ 内 Simple/Gradient MBOPCConfig( 与
+  FragmentationConfig( 的构造点应仅存 configuration.py；exact_dbu
+  仅存 run_single_pass 的 displacement 一处。

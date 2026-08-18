@@ -3,19 +3,26 @@
 import re  # device 字符串格式校验
 import sys  # 仓库根加入模块路径，保证免安装直接运行
 import types  # X | None 联合类型的运行时判定
+import warnings  # 学习率超限的风险提示（resolve_gradient_config）
 from dataclasses import MISSING, dataclass, fields  # 字段元数据驱动解析
 from decimal import Decimal, InvalidOperation  # nm 参数的十进制精确载体
 from pathlib import Path  # 全部路径统一使用 Path 对象
 from typing import Literal, get_args, get_origin  # Literal 与联合类型解包
 
-from opc.input import MaskPolarity  # 极性枚举（合法值集的唯一事实源）
+from tomllib import loads as toml_loads  # Python 3.12 标准库 TOML 解析
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 opc 可导入
 
-from tomllib import loads as toml_loads  # Python 3.12 标准库 TOML 解析
+from common.units import exact_dbu  # nm→DBU 精确换算
+from opc.input import MaskPolarity  # 极性枚举（合法值集的唯一事实源）
+from opc.input.edge.fragmentation import FragmentationConfig  # 阶段 0/1 边段配置
+from opc.iteration.mbopc import (  # 求解器 DBU 输入包（resolve 构造目标）
+    GradientMBOPCConfig,
+    SimpleMBOPCConfig,
+)
 
 # device 只接受 auto / cpu / cuda / cuda:N（N 为非负整数）。
 _DEVICE_PATTERN = re.compile(r"^(auto|cpu|cuda(:[0-9]+)?)$")
@@ -283,3 +290,91 @@ def load_config(config_path: str | Path, *config_types: type) -> tuple:
             raise ValueError(f"[{section_name}] 含未知键：{sorted(unknown)}")  # 报
     return tuple(_parse_config(raw, path, config_type)  # 按请求顺序解析
                  for config_type in config_types)  # 组元组
+
+
+@dataclass(frozen=True, slots=True)
+class PrepareRuntime:
+    """阶段 0/1 消费的 nm→DBU 解析结果（resolve_prepare_config 的打包）。"""
+
+    fragmentation: FragmentationConfig  # DBU 级边段配置
+    core_dbu: int                      # core 边长
+    context_dbu: int                   # 只读上下文宽度
+    pixel_dbu: int                     # 采样像素
+    macro_size_dbu: int | None         # 尺寸模式（数量模式为 None）
+
+
+def resolve_prepare_config(partition: PartitionConfig,
+                           litho: LithographyConfig, edge: EdgeConfig,
+                           dbu_nm: Decimal) -> PrepareRuntime:
+    """把划分/光刻/边段配置换算为 DBU 级准备参数并构造边段配置。"""
+    # 全部 nm 参数精确换算：不能整除直接失败，不四舍五入吸收误差。
+    core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")  # core
+    context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")  # context
+    pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
+    corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")  # 拐角段
+    segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")  # 中段
+    max_displacement_dbu = exact_dbu(  # 位移上限
+        edge.max_displacement_nm, dbu_nm, "max_displacement_nm")
+    if max_displacement_dbu > context_dbu:  # context 必须覆盖最大位移
+        raise ValueError("context_nm 必须不小于 max_displacement_nm")
+    macro_size_dbu = (  # 尺寸模式才换算；数量模式保持 None
+        exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm")
+        if partition.macro_size_nm is not None else None)
+    # 边段数值约束（正长度、segment≥2×corner、非负位移）由 FragmentationConfig
+    # 构造统一校验，这里不重复检查。
+    fragmentation = FragmentationConfig(  # DBU 级边段配置
+        corner_length_dbu=float(corner_dbu),  # 拐角段
+        max_segment_length_dbu=float(segment_dbu),  # 中段上限
+        max_displacement_dbu=float(max_displacement_dbu),  # 位移上限
+        miter_limit=edge.miter_limit)  # miter
+    return PrepareRuntime(  # 打包阶段 0/1 消费的解析结果
+        fragmentation=fragmentation, core_dbu=core_dbu,  # 边段与 core
+        context_dbu=context_dbu, pixel_dbu=pixel_dbu,  # context 与像素
+        macro_size_dbu=macro_size_dbu)  # 尺寸模式
+
+
+def resolve_mbopc_config(mbopc: MBOPCConfig, partition: PartitionConfig,
+                         edge: EdgeConfig, dbu_nm: Decimal) -> SimpleMBOPCConfig:
+    """校验 simple 跨段契约并构造 DBU 级求解器配置。"""
+    if mbopc.initial_step_nm > edge.max_displacement_nm:  # 步长超位移上限
+        raise ValueError("initial_step_nm 不得超过 max_displacement_nm")
+    if mbopc.epe_distance_nm > partition.context_nm:  # 探针越上下文
+        raise ValueError("epe_distance_nm 不得超过 context_nm")
+    return SimpleMBOPCConfig(  # nm→DBU 运行时派生（solver 输入包）
+        iterations=mbopc.iterations,
+        initial_step_dbu=float(exact_dbu(
+            mbopc.initial_step_nm, dbu_nm, "initial_step_nm")),
+        decay_every=mbopc.decay_every,
+        epe_distance_dbu=float(exact_dbu(
+            mbopc.epe_distance_nm, dbu_nm, "epe_distance_nm")),
+        batch_size=mbopc.batch_size,
+        target_cache_bytes=mbopc.target_cache_mb * 1024 * 1024)
+
+
+def resolve_gradient_config(gradient: GradientConfig, partition: PartitionConfig,
+                             edge: EdgeConfig,
+                             dbu_nm: Decimal) -> GradientMBOPCConfig:
+    """校验 gradient 跨段契约（含 lr 超限提示）并构造 DBU 级求解器配置。"""
+    if gradient.learning_rate_nm > edge.max_displacement_nm:  # 超限仍合法只提示
+        # Adam 首步更新尺度与 lr 同量级，超限会让大量段一步打到 ±上限 被
+        # clamp，抬高 invalid_geometry/优化停滞风险；不改参数、不硬拒绝。
+        warnings.warn(
+            f"learning_rate_nm={gradient.learning_rate_nm} 超过 "
+            f"max_displacement_nm={edge.max_displacement_nm}；"
+            "Adam 更新可能在早期大量触发位移 clamp，"
+            "增加 invalid_geometry 或优化停滞风险",
+            UserWarning, stacklevel=2)
+    if gradient.epe_distance_nm > partition.context_nm:  # 探针越上下文
+        raise ValueError("epe_distance_nm 不得超过 context_nm")
+    return GradientMBOPCConfig(  # nm→DBU 运行时派生（solver 输入包）
+        iterations=gradient.iterations,
+        # 学习率是连续 optimizer 步长：Decimal 相除后转 float，不走
+        # exact_dbu 整数契约（其余参数仍走精确整数换算）。
+        learning_rate_dbu=float(gradient.learning_rate_nm / dbu_nm),
+        weight_nominal_l2=gradient.weight_nominal_l2,
+        weight_process_l2=gradient.weight_process_l2,
+        weight_pvband=gradient.weight_pvband,
+        epe_distance_dbu=float(exact_dbu(
+            gradient.epe_distance_nm, dbu_nm, "epe_distance_nm")),
+        batch_size=gradient.batch_size,
+        target_cache_bytes=gradient.target_cache_mb * 1024 * 1024)

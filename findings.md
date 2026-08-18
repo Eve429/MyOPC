@@ -463,3 +463,29 @@
   closed(1) != created(2) 失败、有修复通过。全量 445 → 446 passed。
 - 数值零变化复验：gradient loss 0.069138/CUDA 501MiB、simple 多 macro
   1596/1011/820/497 逐位。
+
+## 注释整改事实（2026-08-19，用户三规则 + AGENTS.md 授权改写）
+
+- **三条新规**：去变更管理 ID/设计文档章节引用（REQ/ERR/INV/DEC/§N/
+  阶段 N/"本 change 清单"类）；难懂变量必须注释（segment_to_parameter
+  正式说明替换 scratch 示例）；跨行语句注释前置、不逐行加行尾注释，
+  单行语句行尾注释保留。用户裁决：tests 不纳入；lithography/geometry
+  纳入；AGENTS.md 授权改写。
+- **AST 口径陷阱**：ast.Try/With 的 end_lineno 覆盖整个块，行尾注释
+  计数虚增约一倍；正确口径是 tokenize 逻辑行（独立注释仅在括号延续内
+  并入跨度）。首版脚本把语句前独立注释折进跨度，导致单行语句被误处理
+  且注释插到既有块注释上方（三明治）——修正为独立注释仅在 cur 活跃
+  （括号内）时并入，git checkout 回滚重做。
+- **脚本机械 + 人工合并**：单片段自动上移；≥2 片段（main 69 处）逐处
+  复核——per-key 纯标签（macro 总数等键名自释）直接丢弃，携带独立信息
+  的并入首行注释（三工艺角条件、Round N 记录、两处 mkstemp）。
+- **I001 空行修复安全**：import 注释上移触发 ruff I001，--diff 确认
+  期望仅为注释前补空行（无重排）后 --fix；此前"ruff --fix 拉乱 import"
+  前科的场景是重排，本次不适用。
+- **设计文档引用清理清单**：§16/§5.3/§7.1/§7.3/§5.1/§11.7、阶段 0/1/
+  3、阶段 0 步骤 7、"消 main 内第三副本"、"本轮不修改清单"；demo 自身
+  流程节标（main_test_lithography 阶段 1–6）为自含结构保留。
+- AST 等价校验全绿（22 文件 vs HEAD）；残留复查归零（范围内跨行行尾
+  注释 0、ID 引用 0）；446 passed ×4 批；双 smoke 逐位复现。
+- 一次性脚本存 D:/temp_hoist/（hoist_comments.py + ast_check.py，
+  collect 可复用作残留复查），不入库。

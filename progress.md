@@ -275,3 +275,8 @@
   optimize_macro，测试注入改 dataclasses.replace+METHOD 重绑定）与
   外层进度条 try/finally 收尾（053886e，回归测试双向验证）。两 adapter
   ~85 行纯差异钩子；446 passed；双 smoke 逐位复现。
+
+- 注释整改四批（2a1fa87/f156377/3ead527/批 4）：gradient 样板 →
+  opc+common+litho 清理 → main 全目录 → AGENTS.md 规则改写 + iccad13
+  §引用清理。tokenize 逻辑行口径 + AST 等价校验 + 残留归零；446
+  passed；双 smoke 逐位（1596/1011/820/497、0.069138/501MiB）。

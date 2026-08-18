@@ -13,7 +13,7 @@ from typing import Literal
 # Windows 直接执行环境内 python.exe 时不会像 conda run 那样把 <env>/bin 加入
 # DLL 搜索目录，而 PyTorch 的 NVRTC JIT 运行时（nvrtc-builtins64_*.dll）位于
 # 该目录；缺目录时 torch.cuda.is_available() 仍为 True，直到首次 CUDA FFT 才
-# 抛 nvrtc 错误（迁移实测复现，设计文档 §11.7 授权的最小修复）。句柄必须在
+# 抛 nvrtc 错误（迁移实测复现后授权的最小修复）。句柄必须在
 # 进程生命周期内保留，否则目录会立即从搜索路径移除；非 Windows 不执行。
 _DLL_DIRECTORY = None
 if os.name == "nt":
@@ -34,7 +34,7 @@ from torch.nn import functional
 _MAX_ASSET_KERNELS = 24
 
 # 画布与仿真分辨率按 ICCAD13 契约冻结为 256：其他尺寸需要新的 kernel 采样契约，
-# 本模型不做插值伪装支持（设计文档 §7.1）。
+# 本模型不做插值伪装支持。
 _FIXED_CANVAS_PIXELS = 256
 
 # 配置文件的九个必需字段；缺失、重复或未知字段都在解析期失败。
@@ -112,7 +112,7 @@ class ICCAD13Config:
             canvas=as_integer("Canvas"),
             resolution=as_integer("Resolution"),
         )
-        # 数值契约（设计文档 §7.1）：核数量区间、画布冻结、阈值/陡峭度为正、
+        # 数值契约：核数量区间、画布冻结、阈值/陡峭度为正、
         # 剂量单调递增顺序；任何一条不满足都说明配置不可信。
         if not 1 <= config.kernel_count <= _MAX_ASSET_KERNELS:
             raise ValueError(
@@ -223,7 +223,6 @@ class ICCAD13Lithography(nn.Module):
         scales = torch.load(scale_path, map_location=device, weights_only=True)
         # 只接受已声明的 OpenILT 资产布局：方阵 [H,W,K] 且 kernel 维在最后；
         # 已是 [K,H,W] 计算布局或其他第三方布局一律拒绝，不做 shape 猜测
-        # （设计文档 §7.3）。
         if kernels.ndim != 3 or kernels.shape[0] != kernels.shape[1]:
             raise ValueError(f"光刻 kernel 必须是 [H,W,K] 方阵张量：{kernel_path}")
         if scales.ndim != 1:
@@ -241,7 +240,7 @@ class ICCAD13Lithography(nn.Module):
     ) -> tuple[torch.Tensor, tuple[int, int, int, int], bool]:
         """规范化单张/批量 mask，并居中补零到固定 canvas。"""
         # 输入只接受单张 [H,W] 或批量 [B,H,W]；其他维度在频域大数组分配
-        # 之前拒绝（设计文档 §5.1），错误不会留下等待回收的大张量。
+        # 之前拒绝，错误不会留下等待回收的大张量。
         was_single = mask.ndim == 2
         if was_single:
             mask = mask.unsqueeze(0)  # 统一为 [B,H,W] 处理

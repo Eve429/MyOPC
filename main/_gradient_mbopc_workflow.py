@@ -12,57 +12,18 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/lithography 可导入
 
 from common.io import atomic_write_json, atomic_write_npz  # 原子写出
-from lithography import ICCAD13Lithography  # 模型类型注解
-from main._macro_pipeline import write_macro_gds  # 单 macro 候选 GDS 写出
 from main._mbopc_workflow import MBOPCMethod, run_mbopc_workflow  # 公共生命周期
 from main.configuration import (  # 梯度配置解析
     GradientConfig,
     resolve_gradient_config,
 )
-from opc.input.edge import MacroProblem, reconstruct_region  # problem 与重建
 from opc.iteration.mbopc import (  # gradient 求解器
-    GradientMBOPCConfig,  # solve_gradient_macro 的 DBU 配置类型注解
+    GradientMBOPCConfig,  # summary_extras 的 DBU 配置类型注解
     GradientMBOPCResult,
-    TargetCanvasCache,
     optimize_gradient_macro,
 )
 
 _GRADIENT_RESULT_VERSION = 1  # 每 macro 梯度结果 NPZ 结构版本
-
-
-def solve_gradient_macro(
-        problem: MacroProblem,
-        model: ICCAD13Lithography,
-        config: GradientMBOPCConfig,
-        target_cache: TargetCanvasCache,
-        output_dir: Path,
-        *,
-        dbu_um: float,
-        show_progress: bool,
-        progress_position: int,
-        leave_progress: bool,
-) -> tuple[GradientMBOPCResult, Path]:
-    """显示 tile 进度，让一个 macro 完成全部梯度状态并写出 best GDS。"""
-    bar = None  # 进度条（show_progress=False 时保持 None）
-    if show_progress:  # 局部导入：关闭进度或未安装 tqdm 时不受影响
-        from tqdm import tqdm  # 进度显示库
-        bar = tqdm(  # baseline 与每个更新后状态都要评价全部 tile
-            total=(config.iterations + 1) * problem.macro.core_count,
-            desc=f"macro {problem.macro.macro_id}", unit="tile",  # tile 单位
-            position=progress_position, leave=leave_progress)  # 多层条位置
-    on_tiles = None if bar is None else bar.update  # backward 且释放后回调
-    try:  # 异常路径也要收尾进度条（finally 关闭，不留未结束的终端状态）
-        result = optimize_gradient_macro(  # 独立完成 baseline 与全部梯度状态
-            problem, model, config, target_cache, on_tiles_completed=on_tiles)
-    finally:  # 提前停止按实际完成量收尾，不伪造 100%
-        if bar is not None:
-            bar.close()
-    output_dir.mkdir(parents=True, exist_ok=True)  # macro 专属目录
-    best_region = reconstruct_region(  # best 位移的最终候选几何
-        problem, result.best_displacements)
-    best_gds = write_macro_gds(  # 完整候选 GDS（RESULT Cell）
-        problem, best_region, output_dir / "best.gds", dbu_um)
-    return result, best_gds  # 结果与 GDS 路径
 
 
 def save_macro_result(macro_dir: Path, macro_id: str,
@@ -114,7 +75,7 @@ GRADIENT_METHOD = MBOPCMethod(  # 梯度方法适配器实例（公共生命周�
     method_name="gradient_mbopc",
     algo_config_type=GradientConfig,
     build_solver_config=resolve_gradient_config,
-    solve_macro=solve_gradient_macro,
+    optimize_macro=optimize_gradient_macro,
     save_macro_result=save_macro_result,
     macro_summary=macro_summary,
     summary_extras=summary_extras)

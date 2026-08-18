@@ -423,7 +423,10 @@ class TestGradientProgress:
             """模拟求解期未知程序异常。"""
             raise RuntimeError("求解崩溃")
 
-        monkeypatch.setattr(workflow, "optimize_gradient_macro", exploding)
+        from dataclasses import replace  # frozen 适配器实例的字段替换
+        exploding_method = replace(  # 注入替身 optimizer 的方法实例副本
+            workflow.GRADIENT_METHOD, optimize_macro=exploding)
+        monkeypatch.setattr(workflow, "GRADIENT_METHOD", exploding_method)
         config = _write_config(tmp_path, gds, show_progress="true")  # 开进度
         with pytest.raises(RuntimeError, match="求解崩溃"):  # 异常传播
             workflow.run_gradient_mbopc(config)

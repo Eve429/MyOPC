@@ -22,6 +22,7 @@ from main._macro_pipeline import (  # 共用 macro 生命周期
     merge_macro_results,
     prepare_problems,
     save_final_lithography,
+    write_macro_gds,
 )
 from main.configuration import (  # 统一配置体系（方法无关五段）
     EdgeConfig,
@@ -31,7 +32,10 @@ from main.configuration import (  # 统一配置体系（方法无关五段）
     PartitionConfig,
     load_config,
 )
-from opc.input.edge import MacroProblem  # problem 加载
+from opc.input.edge import (  # problem 加载与 best 几何重建
+    MacroProblem,
+    reconstruct_region,
+)
 from opc.iteration.mbopc import TargetCanvasCache  # target uint8 LRU 缓存
 
 
@@ -39,18 +43,50 @@ from opc.iteration.mbopc import TargetCanvasCache  # target uint8 LRU 缓存
 class MBOPCMethod:
     """保存一个 MB-OPC 方法注入公共生命周期的全部差异点。
 
-    solver_config 对本层不透明，但其 DBU 配置（Simple/Gradient 均然）必须
-    暴露 target_cache_bytes/batch_size/iterations 三属性——缓存容量、留档
-    批大小与摘要迭代上限消费的鸭子契约，新增方法须满足。
+    solver_config 与 optimizer 返回的 result 对本层不透明，但 DBU 配置
+    （Simple/Gradient 均然）必须暴露 target_cache_bytes/batch_size/
+    iterations 三属性，result 必须暴露 best_displacements——缓存容量、
+    留档批大小、摘要迭代上限与 best GDS 重建消费的鸭子契约。
+    字段在 import 期捕获函数本体（frozen 实例不可 monkeypatch）；测试
+    注入替身用 dataclasses.replace 造新实例后重绑定 adapter 模块的
+    METHOD 全局（run_* 代理按模块全局名晚绑定读取）。
     """
 
     method_name: str               # summary["method"] 方法标识
     algo_config_type: type         # load_config 请求的算法段 Config
     build_solver_config: Callable  # (algo, partition, edge, dbu_nm) -> 配置
-    solve_macro: Callable          # 单 macro 求解（tqdm+optimize+best GDS）
+    optimize_macro: Callable       # (problem, model, cfg, cache, *, on_tiles_completed) -> result
     save_macro_result: Callable    # (macro_dir, macro_id, result)：NPZ+JSON
     macro_summary: Callable        # (macro_id, macro_dir, result, best_gds, elapsed) -> 条目
     summary_extras: Callable       # (solver_config) -> 顶层附加摘要键
+
+
+def _solve_macro(method: MBOPCMethod, problem: MacroProblem, model,
+                 solver_config, target_cache, output_dir: Path, *,
+                 dbu_um: float, show_progress: bool, progress_position: int,
+                 leave_progress: bool) -> tuple[object, Path]:
+    """显示 tile 进度，让一个 macro 完成全部求解并写出 best GDS。"""
+    bar = None  # 进度条（show_progress=False 时保持 None）
+    if show_progress:  # 局部导入：关闭进度或未安装 tqdm 时不受影响
+        from tqdm import tqdm  # 进度显示库
+        bar = tqdm(  # baseline 与每个更新后状态都要评价全部 tile
+            total=(solver_config.iterations + 1) * problem.macro.core_count,
+            desc=f"macro {problem.macro.macro_id}", unit="tile",  # tile 单位
+            position=progress_position, leave=leave_progress)  # 多层条位置
+    on_tiles = None if bar is None else bar.update  # 批完成且张量已释放后回调
+    try:  # 异常路径也要收尾进度条（finally 关闭，不留未结束的终端状态）
+        result = method.optimize_macro(  # 算法本体（独立完成全部状态）
+            problem, model, solver_config, target_cache,
+            on_tiles_completed=on_tiles)
+    finally:  # 提前停止按实际完成量收尾，不伪造 100%
+        if bar is not None:
+            bar.close()
+    output_dir.mkdir(parents=True, exist_ok=True)  # macro 专属目录
+    best_region = reconstruct_region(  # best 位移的最终候选几何
+        problem, result.best_displacements)
+    best_gds = write_macro_gds(  # 完整候选 GDS（RESULT Cell）
+        problem, best_region, output_dir / "best.gds", dbu_um)
+    return result, best_gds  # 结果与 GDS 路径
 
 
 def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
@@ -94,8 +130,8 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
         macro_id = entry["macro_id"]  # macro 编号
         problem = MacroProblem.load(Path(entry["problem_file"]))  # 加载 problem
         started = time.perf_counter()  # 单 macro 计时
-        result, best_gds = method.solve_macro(  # 全部迭代 + best GDS
-            problem, model, solver_config, target_cache,
+        result, best_gds = _solve_macro(  # 全部迭代 + best GDS（公共包装）
+            method, problem, model, solver_config, target_cache,
             macros_dir / macro_id,  # 专属产物目录
             dbu_um=float(plan["dbu_um"]),  # GDS 写出需要源 DBU（NPZ 不含）
             show_progress=output.show_progress,

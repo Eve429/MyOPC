@@ -27,10 +27,10 @@ load_config（算法段经适配器 algo_config_type 请求：[mbopc]/[gradient]
   -> prepare_problems
   -> 适配器 build_solver_config（跨段校验 + nm→DBU）
   -> ICCAD13Lithography(device)（auto=有 CUDA 用 CUDA；资源统计起量）
-  -> 逐 macro（稳定顺序，macro 间不交换状态）：
+  -> 逐 macro（稳定顺序，macro 间不交换状态；外层条 try/finally 收尾）：
        MacroProblem.load(NPZ)
-       -> 适配器 solve_macro：tqdm(total=(iterations+1)×core_count, unit=tile)
-          -> optimize_macro（simple）/ optimize_gradient_macro（gradient）
+       -> _solve_macro 公共包装：tqdm(total=(iterations+1)×core_count, unit=tile)
+          -> method.optimize_macro（simple/gradient 算法本体）
              baseline(零位移) 评价 -> 逐状态：提案/更新 -> reconstruct 守卫 -> 评价
           -> reconstruct_region(best_displacements) -> write_macro_gds(best.gds)
        -> 适配器 save_macro_result（result.npz|gradient_result.npz + metrics）

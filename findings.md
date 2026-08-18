@@ -444,3 +444,22 @@
   待用户裁决（改回 400 或缩 core）。
 - 行数：simple 123/gradient 125（原 178/203），公共层 150；run_* 入口
   零改动；文档 5 处同步（development_manual/architecture×3/contracts）。
+
+## solve 上提与外层条收尾事实（2026-08-18 P2 两项）
+
+- **solve 包装去重（用户 P2-1）**：MBOPCMethod 字段 solve_macro 改
+  optimize_macro（裸 optimizer 本体），tqdm/(iterations+1)×core_count/
+  finally/reconstruct best/write best.gds 迁为 _mbopc_workflow._solve_macro；
+  两 adapter 降至 optimizer + 序列化/摘要钩子 + METHOD + 薄代理（各 ~85 行）。
+- **可测性模式改写（supersede 本日上午的晚绑定纪律）**：frozen 字段在
+  import 期捕获函数本体后，模块属性 monkeypatch 失效；测试注入改
+  dataclasses.replace(METHOD, optimize_macro=替身) + 重绑定 adapter 模块
+  全局 METHOD（run_* 代理按模块全局名晚绑定读取）。生产代码不留
+  仅为测试服务的转发壳。
+- **鸭子契约扩一项**：result 必须暴露 best_displacements（best GDS 重建
+  消费），与 solver_config 三属性同记 MBOPCMethod docstring。
+- **外层条 finally（用户 P2-2，bug 修复）**：macro 循环包 try/finally；
+  回归 test_outer_bar_closes_on_midway_error 双向验证——无修复
+  closed(1) != created(2) 失败、有修复通过。全量 445 → 446 passed。
+- 数值零变化复验：gradient loss 0.069138/CUDA 501MiB、simple 多 macro
+  1596/1011/820/497 逐位。

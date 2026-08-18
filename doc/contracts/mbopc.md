@@ -56,14 +56,15 @@ run_mbopc_workflow(method, config_path)            # 公共生命周期：加载
                                                    # →model/cache→macro 循环→merge
                                                    # →留档→summary（资源统计公共）
 MBOPCMethod(method_name, algo_config_type,         # 方法适配器（simple 宿主
-  build_solver_config, solve_macro,                #   _simple_mbopc_workflow.py）：
-  save_macro_result, macro_summary,                #   配置解析/求解/序列化/摘要
-  summary_extras)                                  #   五类钩子注入公共层
+  build_solver_config, optimize_macro,             #   _simple_mbopc_workflow.py）：
+  save_macro_result, macro_summary,                #   配置解析/optimizer/序列化/
+  summary_extras)                                  #   摘要钩子注入公共层
 resolve_mbopc_config(algo, partition, edge, dbu_nm)  # [mbopc] 跨段校验 + nm→DBU
                                                      # （configuration.py）
-solve_macro(problem, model, config, cache, out_dir, *, dbu_um,
+_solve_macro(method, problem, model, cfg, cache, out_dir, *, dbu_um,
             show_progress, progress_position, leave_progress)
-    # tqdm total=(iterations+1)×core_count，unit=tile，try/finally 收尾
+    # 公共包装：tqdm total=(iterations+1)×core_count，unit=tile，
+    # try/finally 收尾（内层条与外层 macro 条均有 finally 纪律）
 save_final_lithography(plan, final_layout, model, batch_size, output_dir)
     # 独立规整 tile 网格；with 内逐 tile 窗口物化；PNG+manifest
 ```

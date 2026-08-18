@@ -270,3 +270,8 @@
   （gradient 0.069138/501MiB；simple 1596/1011/820/497）。
   发现既存损坏：mbopc_single_macro.toml context_nm=1024 超画布上限
   （用户 7b3ca1e 改动，未动待裁决）。
+
+- 用户 P2 两项：solve 包装上提公共层（6dcd08f，MBOPCMethod 字段改
+  optimize_macro，测试注入改 dataclasses.replace+METHOD 重绑定）与
+  外层进度条 try/finally 收尾（053886e，回归测试双向验证）。两 adapter
+  ~85 行纯差异钩子；446 passed；双 smoke 逐位复现。

@@ -78,15 +78,15 @@ cd 00_PAST && python main/run_layout_geometry.py TestReticle/simple.gds --layer 
 - `TestReticle/*.gds`（simple / gcd_45nm / JustPoly / test1）是用户可编辑回归数据：测试不得硬编码其坐标/计数，新测试用生成式 GDS；gcd_45nm 供 smoke（layer 11/0、TOP）。
 - 旧测试套件（`00_PAST/tests/`）是迁移的规格书：实现迁移时对照移植测试，测试先行或同行。
 - 新几何逻辑必须成组断言：零位移 XOR == 0、segment key 唯一、法向单位向量、owner 唯一；阶段边界行为用 monkeypatch 调用计数证明，不用注释或口头约定。
-- 套件职责表与 smoke 验收标准见 `doc/test_manual.md`（当前全量 330）。
+- 套件职责表与 smoke 验收标准见 `doc/test_manual.md`（当前全量 445）。
 
 ## Where to look
 
 | 需求 | 位置 |
 |---|---|
 | 绑定规则 | `AGENTS.md` |
-| 新系统开发/测试手册 | `doc/development_manual.md`、`doc/test_manual.md` |
-| 新系统各批设计与报告 | `doc/macro_core/`、`doc/lithography/`、`doc/opc/`（design → 用户批准 → development/test report） |
+| 新系统开发/测试手册 | `doc/development_manual.md`、`doc/test_manual.md`（doc 根，2026-08-18 起为 doc_ 体系正式实例） |
+| 新系统各批设计与报告 | `doc/changes/completed/CHG-*/`（spec + 两报告三件套）；文档体系总入口 `doc/INDEX.md` |
 | 新树规划三文件 | 根目录 `task_plan.md`（阶段与状态）、`findings.md`（批次事实）、`progress.md`（会话日志） |
 | 旧系统调用图 / 数据流 / 求解器骨架 | `00_PAST/doc/function_call_architecture.md`（第 2–4、10 节） |
 | 历史错误 / 经验 / 需求 | `00_PAST/.learnings/`（ERR- / LRN- / FEAT- 编号） |

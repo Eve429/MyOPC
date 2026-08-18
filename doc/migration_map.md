@@ -44,3 +44,12 @@
 - `AGENTS.md` 按重构计划 §3 重写（长期规则，剥离项目状态）；
 - 原 `doc/` 按本表删除已迁移文件；`doc_` 更名/合并为 `docs/`；
 - 根目录规划三文件的日常更新职责移交 changes 体系。
+
+## 切换执行记录（2026-08-18）
+
+doc_/ 试行版正式切换为 doc/：12 个 doc/ 旧文件（archive 已有同源副本）
+删除；8 个增量迁移——两手册至根（活跃位）、gradient design Revision
+0.2 归位 completed CHG（active 清空）、gradient 两报告原件入
+archive/reports、mbopc design 用户新版覆盖 archive 副本、config_refactor
+两报告入新 CHG-20260818-config-system-refactor（附摘要版 spec）。
+INDEX 撤试行说明；CLAUDE/AGENTS/task_plan 路径引用同步。

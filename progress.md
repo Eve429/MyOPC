@@ -252,3 +252,7 @@
   仅改 import 行（monkeypatch 随别名跟随）；test_macro_pipeline 新增
   save_final stub 直测。全量 445 passed；双 smoke 基线复现。**新纪律
   生效：commit 后直接 push 远端**（用户 2026-08-18 明示）。
+
+- doc_ 正式切换为 doc：8 增量迁移 + 12 副本删除 + 目录改名；
+  INDEX 撤试行说明、migration_map 记切换；CLAUDE/task_plan 路径更新。
+  全量 445 passed 复跑确认零代码影响。

@@ -76,7 +76,7 @@
   best_epe 逐位一致。
 
 ### Phase 6A-G: 梯度 MB-OPC（CHG-20260816-gradient-mbopc）— Status: complete
-- 依据 `doc/opc/gradient_mbopc_migration_design.md`（用户 2026-08-16 批准计划，
+- 依据 `doc/changes/completed/CHG-20260816-gradient-mbopc/implementation_spec.md`（用户 2026-08-16 批准计划，
   含四项裁决：几何退化宽捕获 ReconstructionError+ValueError、P=0 空问题直接
   no_owned_segments、段法向常驻 [S,2]、doc_ 副本不动；规格 Revision 0.2 同步）。
 - 实施四批提交：`42bf6f3`（共享 TargetCanvasCache 抽出）→ `17ff75c`

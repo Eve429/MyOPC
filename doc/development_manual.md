@@ -123,7 +123,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 ## 7. 最简 MB-OPC（opc/iteration/mbopc，2026-08-16 迁移）
 
 固定步长、EPE 驱动的离散边移动求解器（设计文档
-`doc/opc/mbopc_migration_design.md`，报告 `doc/opc/mbopc_{development,test}_report.md`；
+`archive/reports/mbopc_migration_design.md`，报告 `archive/reports/mbopc_{development,test}_report.md`；
 2026-08-17 起单/多入口合并为 `run_mbopc.py`，不再强制 macro 数量约束）。
 
 ```bash
@@ -159,8 +159,8 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
 
 ## 8. 梯度 MB-OPC（opc/iteration/mbopc/gradient.py，2026-08-17 迁移）
 
-基于梯度的边段优化（设计 `doc/opc/gradient_mbopc_migration_design.md`，报告
-`doc/opc/gradient_mbopc_{development,test}_report.md`）。
+基于梯度的边段优化（设计 `changes/completed/CHG-20260816-gradient-mbopc/implementation_spec.md`，报告
+`changes/completed/CHG-20260816-gradient-mbopc 两报告`）。
 
 ```bash
 # 单入口、任意 macro 数（config 即 gcd_45nm 2×2 smoke）

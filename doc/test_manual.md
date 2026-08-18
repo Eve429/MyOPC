@@ -76,7 +76,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
 {result.npz,best.gds,metrics.json}、summary.json、final.gds；
 `save_final_lithography=true` 时 final_lithography/ 有逐 tile PNG 与
 manifest。gcd_45nm 默认参数 CUDA 实测约 126s（multi 870 tile，EPE 逐轮下降，
-报告见 `doc/opc/mbopc_test_report.md`）。产物目录不提交。
+报告见 `archive/reports/mbopc_test_report.md`）。产物目录不提交。
 
 ### 梯度入口 smoke（2026-08-17）
 
@@ -92,7 +92,7 @@ format_version/macro_id/best_state_index/best_displacements/stop_reason）、
 summary.json 顶层含 `method="gradient_mbopc"`、`loss_weights`、
 `rss_start_bytes/rss_after_prepare_bytes/peak_rss_bytes`、`cuda_peak_bytes`
 （CPU 运行为 null）。产物目录不提交；实测数字见
-`doc/opc/gradient_mbopc_test_report.md`。
+`changes/completed/CHG-20260816-gradient-mbopc/test_report.md`。
 
 ## 6. 管线 smoke 验收
 

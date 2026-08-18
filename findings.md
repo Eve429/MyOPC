@@ -386,3 +386,15 @@
   device/config/condition/forward_many 即满足留档消费面，无需真模型。
 - 手术陷阱延续：_macro_pipeline 追加函数后补依赖要连带 numpy（np.rint/
   where 在 PNG 变换里）；第三方 import 排序 klayout<numpy<psutil。
+
+## doc_ 切换为 doc（2026-08-18）
+
+- 12 个 doc/ 旧文件在 doc_/archive 有同源副本直接删；8 个增量迁移
+  （两手册至根活跃位、gradient design Rev0.2 归位 completed CHG、两报告
+  原件入 archive/reports、mbopc design 用户新版覆盖副本、config_refactor
+  新 CHG 含摘要版 spec——1638 行规格原件在用户本地不入库）。
+- **git mv 与文件系统移动混用陷阱**：shutil.move（active→completed）绕过
+  git 索引后 git mv doc_ doc 报 bad source——统一走文件系统 mv + git
+  add -A，让 rename 由相似度推断（18 R 记录）。
+- CLAUDE.md 仅做路径字符串级更新（用户领地纪律）；瘦身/重写仍留待
+  用户另行指派。changes/active 清空（下一个 CHG 自建）。

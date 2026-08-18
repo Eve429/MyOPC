@@ -243,3 +243,6 @@
   _macro_pipeline 锚点反转重做。
 - 验证：全量 444 passed；smoke bench_30um 基线逐位复现
   （1011/820/497）；四组残留检查零命中；定义仅存 common/。
+
+- common 收口补遗（f8723c1 后续）：MacroProblem.save 的内联 NPZ 原子写
+  改 common.io.atomic_write_npz；全量 444 passed；单遍 smoke 0.12s 照常。

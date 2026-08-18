@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from common.arrays import as_vector
+from common.io import atomic_write_npz
 from geometry import ContourBatch, extract_contour
 from layout import DbuBox, LayerSpec, RegionBatch
 from opc.input import MacroSpec, MaskPolarity
@@ -160,19 +159,9 @@ class MacroProblem:
         output = Path(path).expanduser().resolve()
         if not output.parent.is_dir():
             raise FileNotFoundError(f"output directory does not exist: {output.parent}")
-        # 临时文件与目标同目录同卷；np.savez 写入文件对象避免它按文件名再
-        # 追加 .npz 后缀。成功关闭后原子替换，失败时旧完整文件保持可用。
-        handle, temporary_name = tempfile.mkstemp(
-            prefix=f".{output.stem}-", suffix=".npz", dir=output.parent)
-        os.close(handle)
-        temporary = Path(temporary_name)
-        try:
-            with temporary.open("wb") as stream:
-                np.savez(stream, **self._arrays())
-            os.replace(temporary, output)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
+        # 原子写经 common.io（npz 载荷跨模块唯一实现；np.savez 写入文件对象
+        # 避免按文件名追加 .npz 后缀，失败时旧完整文件保持可用）。
+        atomic_write_npz(output, **self._arrays())
         return output
 
     @classmethod

@@ -366,3 +366,8 @@
   随"litho 不动"裁决一并搁置）。
 - main 内三份 NPZ 原子写归一（workflow 2 + run_macro_pipeline 内联 1）；
   四组旧符号残留 grep 零命中；全量 444 passed；smoke 基线逐位复现。
+- **NPZ 原子写收口补遗**（用户指出）：MacroProblem.save() 内联的第 4 份
+  npz 原子写改用 common.io.atomic_write_npz（problem.py 的 os/tempfile
+  import 随之清零）；收口后 mkstemp 模式全仓仅存 common/io.py 两处唯一
+  实现 + _macro_pipeline.write_macro_gds 的 GDS 载荷版（不同载荷、单
+  调用点，不收）。

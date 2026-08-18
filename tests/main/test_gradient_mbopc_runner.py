@@ -315,15 +315,16 @@ class TestGradientMultiMacro:
         """2×2 macro 各自独立产物、merge 恰一次、最终 GDS 落盘。"""
         gds = _write_gds(tmp_path)  # 生成版图
         config = _write_config(tmp_path, gds, macro_grid="[2, 2]")  # 配置
+        import main._mbopc_workflow as workflow_host  # merge 调用宿主（公共循环）
         calls = []  # 合并计数
-        real = workflow.merge_macro_results  # 原函数
+        real = workflow_host.merge_macro_results  # 原函数
 
         def _counting(*args, **kwargs):
             """计数合并调用并透传。"""
             calls.append(1)
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(workflow, "merge_macro_results", _counting)
+        monkeypatch.setattr(workflow_host, "merge_macro_results", _counting)
         summary = workflow.run_gradient_mbopc(config)  # 完整流程
         assert calls == [1]  # 恰一次合并
         assert summary["macro_count"] == 4  # 2×2

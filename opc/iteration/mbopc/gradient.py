@@ -184,6 +184,8 @@ def optimize_gradient_macro(
     max_displacement = float(problem.fragmentation.max_displacement_dbu)
     # 初始化（阶段 2）：owner 映射、参考中点/法向与探针坐标只建一次，
     # 全部状态迭代复用（同轮内不得重建 mapping）。
+    # segment_to_parameter = [-1,-1,-1,-1,-1]
+    # segment_to_parameter[[1,2]]=[-1,0,1,-1,-1]
     segment_to_parameter = np.full(segment_count, -1, dtype=np.int32)
     segment_to_parameter[owner_ids] = np.arange(len(owner_ids), dtype=np.int32)
     reference = problem.segments.materialize()  # 参考几何唯一物化

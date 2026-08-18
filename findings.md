@@ -489,3 +489,21 @@
   注释 0、ID 引用 0）；446 passed ×4 批；双 smoke 逐位复现。
 - 一次性脚本存 D:/temp_hoist/（hoist_comments.py + ast_check.py，
   collect 可复用作残留复查），不入库。
+
+## TestReticle 负板重制事实（2026-08-19）
+
+- **旧正负板规则作废**：原"两份内容完全相同、文件名即极性"使用户无法
+  区分正负——改为真互补板：_opaque.gds = 图形包围盒补区，配 polarity=
+  "opaque" 与 _clear 表达同一透光目标。
+- **Region(RecursiveShapeIterator) 惰性挂接陷阱**：Region 借迭代器构造
+  后不立即物化，layout 被 GC 即变空Region——验证脚本两轮全 0 就是它
+  （bbox/并集全 0 的"OK"是空洞真）。回读 Region 必须保 layout 存活或
+  在其作用域内消费（管线 LayoutDB.open with 块内物化的既有纪律同源）。
+- **GDS 头时间戳**：同参数重跑字节必变（BGNLIB 时间戳），plan 文档
+  "再生成幂等逐字节一致"表述过强——幂等的是几何，不是字节；clear 十份
+  按几何等价从 git 恢复避免无谓 churn。
+- **贴边图形收缩负板 bbox**：图形贴住包围盒边的方向补区够不到框边
+  （lines_dense/dense_iso），两份 layer bbox 不同→网格划分不同，对照
+  实验须知情（文档已记）。
+- **巨型负板多边形**：bench_100um 补区单多边形含 6860 孔，GDS 记录超
+  0x8000（klayout 可写读、读时告警，标准严格读端不兼容）。

@@ -1,8 +1,10 @@
 """TestReticle 测试版图集参数化生成器（规格见同目录 reticle_build_plan.md）。
 
-每个场景构建一次相对坐标 Region，写出内容完全相同的 `_clear.gds` 与
-`_opaque.gds` 两份——GDS 不携带极性，文件名即该份版图预期使用的
-config 极性值。仅依赖 klayout.db，任何工作目录可直跑：
+每个场景构建一次相对坐标 Region，成对写出正负两份掩膜：`_clear.gds`
+为原图形（配 config polarity="clear"，图形即透光区）；`_opaque.gds` 为
+图形包围盒内的补区（配 polarity="opaque"，图形=不透光材料，原图形处
+被挖空即透光）。两份在各自极性下表达同一透光目标。仅依赖 klayout.db，
+任何工作目录可直跑：
 
     python TestReticle/build_reticles.py            # 生成全部 10 场景 ×2
     python TestReticle/build_reticles.py --list     # 只列清单
@@ -244,19 +246,28 @@ BUILDERS: dict[str, tuple] = {
 
 
 def _write_pair(name: str, region: kdb.Region) -> None:
-    """把一个场景的 Region 写出 _clear/_opaque 两份并打印统计。"""
-    for polarity in POLARITIES:
+    """把一个场景的 Region 写出正负两份掩膜并打印统计。
+
+    正板 = 原图形（clear 极性下图形即透光区）；负板 = 包围盒补区
+    （frame − 原图形，opaque 极性下图形为不透光材料、挖空处透光）。
+    图形贴住包围盒边的方向上补区够不到框边，负板 bbox 相应收缩
+    （如密排线阵两端）；对照实验时两份的网格划分可能因此不同。
+    """
+    frame = kdb.Region(region.bbox())  # 负板框架 = 正板图形包围盒
+    variants = (("clear", region), ("opaque", frame - region))  # 负板补区
+    for polarity, shapes in variants:
         layout = kdb.Layout()
         layout.dbu = DBU_UM
         top = layout.create_cell("TOP")
-        region.insert_into(layout, top.cell_index(),
-                           layout.layer(*LAYER))  # Region 值语义，可重复插入
+        # 插入本极性图形（Region 值语义，同一 Region 可重复消费）
+        shapes.insert_into(layout, top.cell_index(), layout.layer(*LAYER))
         path = _OUTPUT_DIR / f"{name}_{polarity}.gds"
         layout.write(str(path))
-        box = region.bbox()
+        box = shapes.bbox()
+        # 逐份打印统计（bbox/尺寸/图形数）
         print(f"{path.name:32s} bbox=({box.left},{box.bottom})-"
               f"({box.right},{box.top}) size={box.width() / 1000:.1f}x"
-              f"{box.height() / 1000:.1f}um shapes={region.count()}")
+              f"{box.height() / 1000:.1f}um shapes={shapes.count()}")
 
 
 def main() -> int:

@@ -280,3 +280,8 @@
   opc+common+litho 清理 → main 全目录 → AGENTS.md 规则改写 + iccad13
   §引用清理。tokenize 逻辑行口径 + AST 等价校验 + 残留归零；446
   passed；双 smoke 逐位（1596/1011/820/497、0.069138/501MiB）。
+
+- TestReticle 负板重制（用户发现正负同文件）：_opaque 改为包围盒补区，
+  脚本/计划文档同步，20 份重生成（clear 几何等价恢复原字节），逐对
+  XOR==0 验证 + 负板单遍管线消费性 smoke 通过；Region 惰性挂接陷阱
+  记 findings。注释整改四批同日完成（见上）。

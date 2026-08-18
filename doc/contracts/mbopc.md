@@ -1,7 +1,8 @@
 # Contract — opc.iteration.mbopc（最简 MB-OPC）
 
 固定步长、EPE 驱动的离散边段移动求解器。
-锚点：`opc/iteration/mbopc/simple.py`；编排 `main/_mbopc_workflow.py`。
+锚点：`opc/iteration/mbopc/simple.py`；编排 `main/_mbopc_workflow.py`
+（simple 方法适配器宿主 `main/_simple_mbopc_workflow.py`）。
 
 ## 数据结构（frozen/slots）
 
@@ -51,14 +52,18 @@ def optimize_macro(problem, model, config, target_cache, *,
 ## 编排契约（main/_mbopc_workflow.py）
 
 ```python
-MBOPCRunConfig / load_config(path)                # [mbopc] 段：严格整数校验、
-                                                  # step≤max_disp、epe≤context、
-                                                  # device auto|cpu|cuda[:N]、
-                                                  # save_final_lithography/show_progress
+run_mbopc_workflow(method, config_path)            # 公共生命周期：加载→prepare
+                                                   # →model/cache→macro 循环→merge
+                                                   # →留档→summary（资源统计公共）
+MBOPCMethod(method_name, algo_config_type,         # 方法适配器（simple 宿主
+  build_solver_config, solve_macro,                #   _simple_mbopc_workflow.py）：
+  save_macro_result, macro_summary,                #   配置解析/求解/序列化/摘要
+  summary_extras)                                  #   五类钩子注入公共层
+resolve_mbopc_config(algo, partition, edge, dbu_nm)  # [mbopc] 跨段校验 + nm→DBU
+                                                     # （configuration.py）
 solve_macro(problem, model, config, cache, out_dir, *, dbu_um,
             show_progress, progress_position, leave_progress)
     # tqdm total=(iterations+1)×core_count，unit=tile，try/finally 收尾
-run_single_macro / run_multi_macro -> summary dict
 save_final_lithography(plan, final_layout, model, batch_size, output_dir)
     # 独立规整 tile 网格；with 内逐 tile 窗口物化；PNG+manifest
 ```
@@ -67,8 +72,8 @@ save_final_lithography(plan, final_layout, model, batch_size, output_dir)
   `merge_macro_results`（显式 macro_id→GDS 映射）；这不是全局同步最优，
   差异须量化（gcd_45nm：single 总 EPE 比 multi 之和小 236 段、覆盖 XOR
   34650860 DBU²）。
-- **入口约束**：single 要求恰 1 macro 且每 macro ≥2 tile；multi 要求 >1；
-  macro_grid 数量模式配置层前置判定（size 模式 plan 后兜底）。
+- **macro 数量**：不加人为约束——macro_grid/macro_size_nm 是几就按几求解
+  （单/多共用一个入口，数量模式配置层校验、size 模式 plan 后兜底）。
 - **产物**：macros/<id>/{result.npz(format v1), best.gds, metrics.json} +
   final.gds + 可选 final_lithography/ + summary.json。
 - **内存**：target uint8 LRU；GPU 批后释放；最终 PNG/merge 验证逐窗口物化

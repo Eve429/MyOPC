@@ -261,3 +261,12 @@
   换算/校验/构造全收口 configuration.py；跨段校验时机统一后移到
   prepare 后（行为变化记 findings）。全量 445 passed；三 smoke 基线
   逐位复现。commit 后 push。
+
+- MB-OPC 公共 workflow 上提（用户 P1 方案，两点修正获计划批准：不建
+  MacroSolveOutput、资源统计上提公共层）：批 1 gradient 先行（f4b472a）
+  + 批 2 simple 切换（1f1ef96）+ 批 3 文档与记录。MBOPCMethod 七字段
+  注入、两 adapter 各 ~125 行、入口零改动；测试仅迁 merge patch 宿主
+  （×2）+ simple 新键断言。全量 445 passed ×2；双 smoke 逐位复现
+  （gradient 0.069138/501MiB；simple 1596/1011/820/497）。
+  发现既存损坏：mbopc_single_macro.toml context_nm=1024 超画布上限
+  （用户 7b3ca1e 改动，未动待裁决）。

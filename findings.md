@@ -416,3 +416,31 @@
 - 残留检查口径：main/ 内 Simple/Gradient MBOPCConfig( 与
   FragmentationConfig( 的构造点应仅存 configuration.py；exact_dbu
   仅存 run_single_pass 的 displacement 一处。
+
+## MB-OPC 公共 workflow 上提事实（2026-08-18）
+
+- **显式 supersede**：拆分轮记录的"不建 shared 中间层"由本轮推翻——
+  用户主动提出 adapter 方案（callback 注入 + 生命周期唯一化；防的是机械
+  合并与巨型 if 分支，两者都不发生）。新增方法自此只写一个 adapter 文件。
+- MBOPCMethod 七字段（method_name/algo_config_type/build_solver_config/
+  solve_macro/save_macro_result/macro_summary/summary_extras）；**不建
+  MacroSolveOutput**——序列化与摘要全在 adapter 侧后公共层对 result 零
+  字段消费（仅透传 best_gds），无真实调用方（用户方案评估后的裁剪）。
+- **晚绑定纪律**：adapter 的 solve 必须以模块全局名调用 optimize_*，
+  测试 monkeypatch(workflow, "optimize_gradient_macro") 才能拦截——禁止
+  把 optimizer 作为 MBOPCMethod 字段在 import 期捕获（捕获即冻结原函数）。
+- **幽灵调用重现**：merge 计数测试的 patch 宿主必须随循环迁到
+  _mbopc_workflow（两处已改）；patch 打在不再被消费的名字上会以
+  calls==[] 失败暴露，不会静默通过。
+- **资源统计上提**（行为变化，加法式）：simple summary 新增 method/
+  rss_*/cuda_peak 五键（test_summary_and_artifacts 补断言）；逐 macro
+  RSS 采样物理上住在循环体内，不可能留在 adapter 侧。
+- 行为零变化验证：gradient loss 0.069138/CUDA 峰 501MiB 逐位；simple
+  bench_30um 多 macro best_epe 1596/1011/820/497（45.5s）逐位；445 passed。
+- **既存损坏（非本轮引入，未修）**：config/mbopc_single_macro.toml 的
+  context_nm 在用户 7b3ca1e tmp 提交改为 1024，core 1024+2×1024=3072
+  超 2048（256×8nm）画布上限，prepare 即失败——"单 macro 497"口径有误，
+  1596/1011/820/497 是 multi 配置四 macro 的 best_epe；单 macro 配置
+  待用户裁决（改回 400 或缩 core）。
+- 行数：simple 123/gradient 125（原 178/203），公共层 150；run_* 入口
+  零改动；文档 5 处同步（development_manual/architecture×3/contracts）。

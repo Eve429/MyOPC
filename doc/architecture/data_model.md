@@ -40,8 +40,8 @@
 | 产物 | 生产者 | 内容要点 |
 |---|---|---|
 | `problems/<macro_id>.npz` | `MacroProblem.save` | 全参考数组，format v1，无 dbu_um |
-| `macros/<id>/result.npz` | `_mbopc_workflow` | best_round/best_displacements/stop_reason |
-| `macros/<id>/metrics.json` | 同上 | 逐轮标量 + stop_detail |
+| `macros/<id>/result.npz`、`gradient_result.npz` | `_simple/_gradient_mbopc_workflow` 适配器 | best_round/best_state_index、best_displacements、stop_reason |
+| `macros/<id>/metrics.json`、`gradient_metrics.json` | 同上 | 逐轮/逐状态标量 + stop_detail |
 | `round_*/results/*.npz` | `run_round` | 累计位移 + 每核 transmission（验证管线） |
 | `final.gds` | `merge_macro_results` | ownership 权威覆盖，single_cell/macro_cells |
 | `final_lithography/` | `save_final_lithography` | 逐 tile nominal/binary PNG + manifest |

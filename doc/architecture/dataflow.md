@@ -20,24 +20,23 @@ GDS/OASIS/GLP
   -> summary.json（atomic_write_json）
 ```
 
-## MB-OPC 求解流（main/_mbopc_workflow.py::_run_mbopc）
+## MB-OPC 求解流（main/_mbopc_workflow.py::run_mbopc_workflow + 方法适配器）
 
 ```text
-load_config（[mbopc] 段校验；macro_grid 前置数量校验）
+load_config（算法段经适配器 algo_config_type 请求：[mbopc]/[gradient]）
   -> prepare_problems
-  -> nm→DBU 换算 -> SimpleMBOPCConfig
-  -> ICCAD13Lithography(device)（auto=有 CUDA 用 CUDA）
+  -> 适配器 build_solver_config（跨段校验 + nm→DBU）
+  -> ICCAD13Lithography(device)（auto=有 CUDA 用 CUDA；资源统计起量）
   -> 逐 macro（稳定顺序，macro 间不交换状态）：
        MacroProblem.load(NPZ)
-       -> solve_macro：tqdm(total=(iterations+1)×core_count, unit=tile)
-          -> opc/iteration/mbopc/simple.py::optimize_macro
-             baseline(零位移) 评价 -> 每轮：提案 -> reconstruct 守卫 -> 评价
-             （每轮一次光刻，评价同时产生下轮提案；五种停止条件）
+       -> 适配器 solve_macro：tqdm(total=(iterations+1)×core_count, unit=tile)
+          -> optimize_macro（simple）/ optimize_gradient_macro（gradient）
+             baseline(零位移) 评价 -> 逐状态：提案/更新 -> reconstruct 守卫 -> 评价
           -> reconstruct_region(best_displacements) -> write_macro_gds(best.gds)
-          -> result.npz + metrics.json（逐轮标量）
+       -> 适配器 save_macro_result（result.npz|gradient_result.npz + metrics）
   -> merge_macro_results（全部完成后恰一次，显式映射）
   -> save_final_lithography（可选；独立规整 tile 网格流式 PNG + manifest）
-  -> summary.json
+  -> summary.json（method/资源统计公共键 + 适配器附加键）
 ```
 
 ## 单次状态评价（simple.py::evaluate_and_propose 批循环）

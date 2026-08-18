@@ -18,8 +18,10 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from common.units import exact_dbu  # nm→DBU 精确换算
 from opc.input import MaskPolarity  # 极性枚举（合法值集的唯一事实源）
-from opc.input.edge.fragmentation import FragmentationConfig  # 阶段 0/1 边段配置
-from opc.iteration.mbopc import (  # 求解器 DBU 输入包（resolve 构造目标）
+from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
+
+# 求解器 DBU 输入包（resolve 构造目标）
+from opc.iteration.mbopc import (
     GradientMBOPCConfig,
     SimpleMBOPCConfig,
 )
@@ -54,8 +56,9 @@ class PartitionConfig:
             raise ValueError("macro_grid 与 macro_size_nm 必须恰好填写一个")  # 报互斥
         if self.core_size_nm <= 0 or self.context_nm < 0:  # 尺寸非法
             raise ValueError("core_size_nm 必须为正，context_nm 必须非负")  # 报范围
-        if self.macro_grid is not None and (  # 数量模式元素必须为正
-                self.macro_grid[0] <= 0 or self.macro_grid[1] <= 0):  # 列/行
+        # 数量模式元素必须为正
+        if self.macro_grid is not None and (
+                self.macro_grid[0] <= 0 or self.macro_grid[1] <= 0):
             raise ValueError("macro_grid 必须是两项正整数 [列, 行]")  # 报格式
 
 
@@ -74,7 +77,8 @@ class LithographyConfig:
         if self.pixel_nm <= 0:  # 像素非法
             raise ValueError("pixel_nm 必须为正")  # 报范围
         if not _DEVICE_PATTERN.match(self.device):  # 设备枚举
-            raise ValueError(  # 报设备
+            # 报设备
+            raise ValueError(
                 f"未知 device：{self.device}（只接受 auto/cpu/cuda[:N]）")
 
 
@@ -89,8 +93,9 @@ class EdgeConfig:
 
     def __post_init__(self) -> None:
         """边段几何契约：正长度与位移上限、miter 正数。"""
-        if (self.corner_nm <= 0 or self.segment_nm <= 0  # 段长
-                or self.max_displacement_nm <= 0):  # 位移
+        # 段长
+        if (self.corner_nm <= 0 or self.segment_nm <= 0
+                or self.max_displacement_nm <= 0):
             raise ValueError("corner_nm/segment_nm/max_displacement_nm 必须为正")  # 报
         if self.miter_limit <= 0.0:  # miter
             raise ValueError("miter_limit 必须为正数")  # 报
@@ -109,9 +114,10 @@ class MBOPCConfig:
 
     def __post_init__(self) -> None:
         """迭代与批处理正数契约。"""
-        if (self.iterations < 1 or self.decay_every < 1  # 迭代类
-                or self.batch_size < 1  # 批
-                or self.target_cache_mb < 0):  # 缓存
+        # 迭代类
+        if (self.iterations < 1 or self.decay_every < 1
+                or self.batch_size < 1
+                or self.target_cache_mb < 0):
             raise ValueError("iterations/decay_every/batch_size 必须为正，cache 为非负")  # 报
         if self.initial_step_nm <= 0 or self.epe_distance_nm <= 0:  # 物理量
             raise ValueError("initial_step_nm 与 epe_distance_nm 必须为正")  # 报
@@ -138,8 +144,9 @@ class GradientConfig:
             raise ValueError("target_cache_mb 必须为非负")  # 报
         if self.learning_rate_nm <= 0:  # 学习率
             raise ValueError("learning_rate_nm 必须为正")  # 报
-        weights = (self.weight_nominal_l2, self.weight_process_l2,  # 三权重
-                   self.weight_pvband)  # 收集
+        # 三权重
+        weights = (self.weight_nominal_l2, self.weight_process_l2,
+                   self.weight_pvband)
         if any(weight < 0.0 for weight in weights):  # 负权重
             raise ValueError("loss 权重必须非负")  # 报
         if not any(weight > 0.0 for weight in weights):  # 全零
@@ -164,9 +171,10 @@ class ValidationConfig:
     def __post_init__(self) -> None:
         """双轮位移冻结为 [+2,-2]：只查和为零会放行 [3,-3]，回零失去约束力。"""
         if self.round_deltas_nm != (Decimal(2), Decimal(-2)):  # 值不符
-            raise ValueError(  # 报冻结要求与实际值
+            # 报冻结要求与实际值
+            raise ValueError(
                 f"round_deltas_nm 当前冻结为 [+2nm, -2nm]，"
-                f"实际为 {list(self.round_deltas_nm)}")  # 报值
+                f"实际为 {list(self.round_deltas_nm)}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,15 +190,15 @@ class OutputConfig:
 
 # Config 与 TOML section 的声明式映射；load_config 不含任何算法分支。
 CONFIG_SECTIONS: dict[type, str] = {
-    LayoutConfig: "layout",                       # 输入版图段
-    PartitionConfig: "partition",                  # 空间划分段
-    LithographyConfig: "lithography",             # 光刻与环境段
-    EdgeConfig: "edge",                           # 边段化共享段
-    MBOPCConfig: "mbopc",                         # simple 算法段
-    GradientConfig: "gradient",                   # gradient 算法段
-    SinglePassConfig: "single_pass",              # 单遍专属段
-    ValidationConfig: "iteration",                # 验证管线专属段
-    OutputConfig: "output",                       # 输出段
+    LayoutConfig: "layout",
+    PartitionConfig: "partition",
+    LithographyConfig: "lithography",
+    EdgeConfig: "edge",
+    MBOPCConfig: "mbopc",
+    GradientConfig: "gradient",
+    SinglePassConfig: "single_pass",
+    ValidationConfig: "iteration",
+    OutputConfig: "output",
 }
 _SECTION_TO_TYPE = {name: cls for cls, name in CONFIG_SECTIONS.items()}  # 反查表
 
@@ -239,13 +247,15 @@ def _parse_scalar(annotation: object, value: object, name: str,
         inner = get_args(annotation)[0]  # 元素注解
         if (not isinstance(value, list) or len(value) != len(get_args(annotation))):  # 形状
             raise ValueError(f"{name} 必须是列表 [列, 行]")  # 报形状
-        return tuple(_parse_scalar(inner, item, name, base_dir)  # 逐元素
-                     for item in value)  # 组元组
+        # 逐元素
+        return tuple(_parse_scalar(inner, item, name, base_dir)
+                     for item in value)
     if origin is Literal:  # 字面量枚举（final_cell_mode 等）
         choices = get_args(annotation)  # 合法值集
         if value not in choices:  # 越界
+            # 报枚举
             raise ValueError(f"{name} 必须是 {list(choices)} 之一，"
-                             f"不接受 {value!r}")  # 报枚举
+                             f"不接受 {value!r}")
         return value  # 原样
     raise ValueError(f"{name} 的类型注解 {annotation!r} 不受通用解析器支持")  # 兜底
 
@@ -262,11 +272,13 @@ def _parse_config(raw: dict, config_path: Path, config_type: type) -> object:
     kwargs = {}  # 构造参数
     for field in fields(config_type):  # 逐字段
         if field.name in section:  # TOML 显式给出
-            kwargs[field.name] = _parse_scalar(  # 类型解析
-                field.type, section[field.name],  # 注解与原值
-                f"[{section_name}].{field.name}", base_dir)  # 报错定位名
-        elif (field.default is MISSING  # 无默认值
-                and field.default_factory is MISSING):  # 也无工厂
+            # 类型解析
+            kwargs[field.name] = _parse_scalar(
+                field.type, section[field.name],
+                f"[{section_name}].{field.name}", base_dir)
+        # 无默认值
+        elif (field.default is MISSING
+                and field.default_factory is MISSING):
             raise ValueError(f"[{section_name}] 缺少必填键：['{field.name}']")  # 报必填
     return config_type(**kwargs)  # dataclass 默认值兜底 + __post_init__ 业务校验
 
@@ -288,8 +300,9 @@ def load_config(config_path: str | Path, *config_types: type) -> tuple:
         unknown = set(raw[section_name]) - known  # 段内未知键
         if unknown:  # 未请求段的拼写错误同样致命
             raise ValueError(f"[{section_name}] 含未知键：{sorted(unknown)}")  # 报
-    return tuple(_parse_config(raw, path, config_type)  # 按请求顺序解析
-                 for config_type in config_types)  # 组元组
+    # 按请求顺序解析
+    return tuple(_parse_config(raw, path, config_type)
+                 for config_type in config_types)
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,24 +326,27 @@ def resolve_prepare_config(partition: PartitionConfig,
     pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
     corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")  # 拐角段
     segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")  # 中段
-    max_displacement_dbu = exact_dbu(  # 位移上限
+    # 位移上限
+    max_displacement_dbu = exact_dbu(
         edge.max_displacement_nm, dbu_nm, "max_displacement_nm")
     if max_displacement_dbu > context_dbu:  # context 必须覆盖最大位移
         raise ValueError("context_nm 必须不小于 max_displacement_nm")
-    macro_size_dbu = (  # 尺寸模式才换算；数量模式保持 None
+    # 尺寸模式才换算；数量模式保持 None
+    macro_size_dbu = (
         exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm")
         if partition.macro_size_nm is not None else None)
     # 边段数值约束（正长度、segment≥2×corner、非负位移）由 FragmentationConfig
     # 构造统一校验，这里不重复检查。
-    fragmentation = FragmentationConfig(  # DBU 级边段配置
-        corner_length_dbu=float(corner_dbu),  # 拐角段
-        max_segment_length_dbu=float(segment_dbu),  # 中段上限
-        max_displacement_dbu=float(max_displacement_dbu),  # 位移上限
-        miter_limit=edge.miter_limit)  # miter
-    return PrepareRuntime(  # 打包阶段 0/1 消费的解析结果
-        fragmentation=fragmentation, core_dbu=core_dbu,  # 边段与 core
-        context_dbu=context_dbu, pixel_dbu=pixel_dbu,  # context 与像素
-        macro_size_dbu=macro_size_dbu)  # 尺寸模式
+    fragmentation = FragmentationConfig(
+        corner_length_dbu=float(corner_dbu),
+        max_segment_length_dbu=float(segment_dbu),
+        max_displacement_dbu=float(max_displacement_dbu),
+        miter_limit=edge.miter_limit)
+    # 打包 problem 准备消费的解析结果
+    return PrepareRuntime(
+        fragmentation=fragmentation, core_dbu=core_dbu,
+        context_dbu=context_dbu, pixel_dbu=pixel_dbu,
+        macro_size_dbu=macro_size_dbu)
 
 
 def resolve_mbopc_config(mbopc: MBOPCConfig, partition: PartitionConfig,
@@ -340,7 +356,8 @@ def resolve_mbopc_config(mbopc: MBOPCConfig, partition: PartitionConfig,
         raise ValueError("initial_step_nm 不得超过 max_displacement_nm")
     if mbopc.epe_distance_nm > partition.context_nm:  # 探针越上下文
         raise ValueError("epe_distance_nm 不得超过 context_nm")
-    return SimpleMBOPCConfig(  # nm→DBU 运行时派生（solver 输入包）
+    # nm→DBU 运行时派生（solver 输入包）
+    return SimpleMBOPCConfig(
         iterations=mbopc.iterations,
         initial_step_dbu=float(exact_dbu(
             mbopc.initial_step_nm, dbu_nm, "initial_step_nm")),
@@ -366,7 +383,8 @@ def resolve_gradient_config(gradient: GradientConfig, partition: PartitionConfig
             UserWarning, stacklevel=2)
     if gradient.epe_distance_nm > partition.context_nm:  # 探针越上下文
         raise ValueError("epe_distance_nm 不得超过 context_nm")
-    return GradientMBOPCConfig(  # nm→DBU 运行时派生（solver 输入包）
+    # nm→DBU 运行时派生（solver 输入包）
+    return GradientMBOPCConfig(
         iterations=gradient.iterations,
         # 学习率是连续 optimizer 步长：Decimal 相除后转 float，不走
         # exact_dbu 整数契约（其余参数仍走精确整数换算）。

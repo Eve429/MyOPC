@@ -23,7 +23,9 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 from common.io import atomic_write_json  # JSON 原子写出
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
 from layout import DbuBox, LayerSpec, LayoutDB  # 版图打开、层规格与坐标框
-from main.configuration import (  # 统一配置体系（含 nm→DBU 解析集中）
+
+# 统一配置体系（含 nm→DBU 解析集中）
+from main.configuration import (
     EdgeConfig,
     LayoutConfig,
     LithographyConfig,
@@ -31,7 +33,9 @@ from main.configuration import (  # 统一配置体系（含 nm→DBU 解析集�
     PartitionConfig,
     resolve_prepare_config,
 )
-from opc.input import (  # 两级网格规划与留档栅格
+
+# 两级网格规划与留档栅格
+from opc.input import (
     MaskPolarity,
     plan_macros,
     rasterize_mask_canvas,
@@ -56,18 +60,20 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
         bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生逐层，不物化）
         if bounds is None:  # 目标层在顶层子树内无图形
-            raise ValueError(  # 空层无法规划网格
-                f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")  # 报层号
+            # 空层无法规划网格
+            raise ValueError(
+                f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
         # nm→DBU 换算、context 契约与边段配置构造集中在 resolve_prepare_config。
         runtime = resolve_prepare_config(partition, litho, edge, dbu_nm)
-        macros = plan_macros(  # 两级网格规划（内部完成像素/画布校验）
-            bounds, macro_grid=partition.macro_grid,  # 数量模式
-            macro_size_dbu=runtime.macro_size_dbu,  # 尺寸模式（None=数量）
-            core_size_dbu=runtime.core_dbu,  # core
-            context_dbu=runtime.context_dbu,  # context
-            pixel_dbu=runtime.pixel_dbu,  # 像素
-            canvas_pixels=litho.canvas_pixels)  # 画布契约
-        # 阶段 0 步骤 7：ownership 复核——面积和恰等于父框即无正面积重叠。
+        # 两级网格规划（内部完成像素/画布校验）
+        macros = plan_macros(
+            bounds, macro_grid=partition.macro_grid,
+            macro_size_dbu=runtime.macro_size_dbu,
+            core_size_dbu=runtime.core_dbu,
+            context_dbu=runtime.context_dbu,
+            pixel_dbu=runtime.pixel_dbu,
+            canvas_pixels=litho.canvas_pixels)
+        # ownership 复核——面积和恰等于父框即无正面积重叠。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积守恒
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
         problems_dir = output.work_dir / "problems"  # problem 存放目录
@@ -78,10 +84,12 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         maximum_problem_bytes = 0  # 最大 problem 字节数
         maximum_problem_macro_id = ""  # 最大 problem 所属 macro
         for macro in macros:  # 按行优先顺序逐 macro 准备
-            batch = database.query(  # 完整相交物化（不裁剪 occurrence）
-                [layer], macro.query_box).materialize_intersecting()  # 惰性查询执行
-            problem = prepare_macro_problem(  # 一次完成提边/分段/切线分裂/ownership
-                batch, layer, layout.polarity, runtime.fragmentation, macro)  # 阶段 1 核心
+            # 完整相交物化（不裁剪 occurrence）
+            batch = database.query(
+                [layer], macro.query_box).materialize_intersecting()
+            # 一次完成提边/分段/切线分裂/ownership
+            problem = prepare_macro_problem(
+                batch, layer, layout.polarity, runtime.fragmentation, macro)
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
             problem_bytes = problem_path.stat().st_size  # 文件字节数即持久字节数
             segment_count_sum += problem.segments.segment_count  # 累计段数
@@ -89,47 +97,49 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
             if problem_bytes > maximum_problem_bytes:  # 更新最大 problem
                 maximum_problem_bytes = problem_bytes  # 记录字节
                 maximum_problem_macro_id = macro.macro_id  # 记录 macro
-            entries.append({  # 单 macro 计划条目
-                "macro_id": macro.macro_id,  # 行优先编号
-                "ownership_box": [macro.ownership_box.left, macro.ownership_box.bottom,  # 左下
-                                  macro.ownership_box.right, macro.ownership_box.top],  # 右上
-                "core_count": macro.core_count,  # core 总数
-                "segment_count": problem.segments.segment_count,  # 段数
-                "membership_count": len(problem.member_segment_indices),  # membership 数
-                "problem_file": str(problem_path),  # NPZ 路径
-                "problem_bytes": problem_bytes})  # NPZ 字节
+            # 单 macro 计划条目
+            entries.append({
+                "macro_id": macro.macro_id,
+                "ownership_box": [macro.ownership_box.left, macro.ownership_box.bottom,
+                                  macro.ownership_box.right, macro.ownership_box.top],
+                "core_count": macro.core_count,
+                "segment_count": problem.segments.segment_count,
+                "membership_count": len(problem.member_segment_indices),
+                "problem_file": str(problem_path),
+                "problem_bytes": problem_bytes})
             peak_rss = max(peak_rss, process.memory_info().rss)  # 采样峰值
             del batch, problem  # 立即释放当前 macro 大对象再进入下一个
     # 全部 problem 成功且 LayoutDB 已关闭，才允许写出表示「准备完成」的 plan。
     prepare_seconds = time.perf_counter() - started  # 阶段耗时
-    plan = {  # 完整计划（后续阶段唯一允许消费的产物）
-        "format_version": _PLAN_FORMAT_VERSION,  # 计划版本
-        "layout": str(layout.layout),  # 输入版图
-        "top_cell": top_cell_name,  # 实际选定的顶层 Cell 名
-        "dbu_um": float(dbu_nm / 1000),  # DBU 微米值（写出最终 GDS 用）
-        "layer": [layer.layer, layer.datatype],  # 目标层
-        "polarity": layout.polarity.value,  # 极性
-        "core_size_dbu": runtime.core_dbu,  # core
-        "context_dbu": runtime.context_dbu,  # context
-        "pixel_dbu": runtime.pixel_dbu,  # pixel
-        "canvas_pixels": litho.canvas_pixels,  # canvas
-        "macro_count": len(macros),  # macro 总数
-        "core_count": sum(macro.core_count for macro in macros),  # core 总数
-        "fragmentation": {  # 边段配置（runtime 已构造，按 plan 契约展开）
+    # 完整计划（后续阶段唯一允许消费的产物）
+    plan = {
+        "format_version": _PLAN_FORMAT_VERSION,
+        "layout": str(layout.layout),
+        "top_cell": top_cell_name,
+        "dbu_um": float(dbu_nm / 1000),
+        "layer": [layer.layer, layer.datatype],
+        "polarity": layout.polarity.value,
+        "core_size_dbu": runtime.core_dbu,
+        "context_dbu": runtime.context_dbu,
+        "pixel_dbu": runtime.pixel_dbu,
+        "canvas_pixels": litho.canvas_pixels,
+        "macro_count": len(macros),
+        "core_count": sum(macro.core_count for macro in macros),
+        "fragmentation": {
             "corner_length_dbu": runtime.fragmentation.corner_length_dbu,
             "max_segment_length_dbu": runtime.fragmentation.max_segment_length_dbu,
             "max_displacement_dbu": runtime.fragmentation.max_displacement_dbu,
-            "miter_limit": runtime.fragmentation.miter_limit},  # miter
-        "work_dir": str(output.work_dir),  # 工作目录
-        "final_layout": str(output.final_layout),  # 最终版图
-        "final_cell_mode": output.final_cell_mode,  # Cell 模式
-        "macros": entries,  # 逐 macro 条目
-        "segment_count_sum": segment_count_sum,  # 段数总计
-        "membership_count_sum": membership_count_sum,  # membership 总计
-        "maximum_problem_bytes": maximum_problem_bytes,  # 最大 problem 字节
-        "maximum_problem_macro_id": maximum_problem_macro_id,  # 最大 problem macro
-        "prepare_seconds": prepare_seconds,  # 准备耗时
-        "prepare_peak_rss_bytes": peak_rss}  # 准备 RSS 峰值
+            "miter_limit": runtime.fragmentation.miter_limit},
+        "work_dir": str(output.work_dir),
+        "final_layout": str(output.final_layout),
+        "final_cell_mode": output.final_cell_mode,
+        "macros": entries,
+        "segment_count_sum": segment_count_sum,
+        "membership_count_sum": membership_count_sum,
+        "maximum_problem_bytes": maximum_problem_bytes,
+        "maximum_problem_macro_id": maximum_problem_macro_id,
+        "prepare_seconds": prepare_seconds,
+        "prepare_peak_rss_bytes": peak_rss}
     atomic_write_json(output.work_dir / "plan.json", plan)  # 原子写出计划
     return plan  # 返回内存计划供调用方直接消费
 
@@ -140,12 +150,14 @@ def write_macro_gds(problem: MacroProblem, region: kdb.Region, path: Path,
     layout = kdb.Layout()  # 独立原生版图对象
     layout.dbu = dbu_um  # 与源版图一致的 DBU，整数坐标物理尺寸不变
     cell = layout.create_cell("RESULT")  # 固定结果 Cell 名
-    index = layout.layer(kdb.LayerInfo(  # 目标层
-        problem.layer.layer, problem.layer.datatype))  # 层号/ datatype
+    # 目标层
+    index = layout.layer(kdb.LayerInfo(
+        problem.layer.layer, problem.layer.datatype))
     region.insert_into(layout, cell.cell_index(), index)  # 插入完整候选 Region
     path.parent.mkdir(parents=True, exist_ok=True)  # 确保目录存在
-    handle, temporary_name = tempfile.mkstemp(  # 同目录临时文件
-        prefix=f".{path.stem}-", suffix=path.suffix, dir=path.parent)  # 命名
+    # 同目录临时文件
+    handle, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.stem}-", suffix=path.suffix, dir=path.parent)
     os.close(handle)  # 关闭句柄
     temporary = Path(temporary_name)  # Path 化
     try:  # 写出并原子替换
@@ -189,8 +201,9 @@ def merge_macro_results(
             layer_bounds = database.layer_bbox(layer)  # 候选层真实包络
             if layer_bounds is None:  # 候选 GDS 目标层为空
                 raise RuntimeError(f"{macro_id} 候选 GDS 目标层为空")
-            batch = database.query(  # 层包络内查询物化（不用魔法框：
-                [layer], layer_bounds).materialize()  #   ±2^30 只盖 int32 域一半)
+            # 层包络内查询物化（不用魔法框：
+            batch = database.query(
+                [layer], layer_bounds).materialize()
         region = batch.region(layer)  # 候选 Region
         if not region.has_valid_polygons():  # 无效 polygon
             raise RuntimeError(f"{macro_id} 候选 Region 含无效 polygon")  # 明确失败
@@ -200,9 +213,10 @@ def merge_macro_results(
         clipped = region & kdb.Region(ownership.to_native())  # 精确相交
         area_before += int(clipped.area())  # 统计覆盖面积
         patches.append(GeometryPatch(macro_id, layer, clipped, ownership))  # 收集
-    written = PatchWriter.write_macro_results(  # 按配置模式写出最终版图
-        patches, output_path, dbu_um,  # patch 集合与 DBU
-        cell_mode=cell_mode)  # single_cell 或 macro_cells
+    # 按配置模式写出最终版图
+    written = PatchWriter.write_macro_results(
+        patches, output_path, dbu_um,
+        cell_mode=cell_mode)
     # 回读验证：merge/normalize 只能改变表示方式，不得改变物理覆盖面积。
     # 逐 macro 在自身 ownership 窗口统计面积后累加——ownership 半开不重叠、
     # 最终图形不越出 bbox，分块求和与全量面积数学等价，且避免第二个全量
@@ -211,19 +225,22 @@ def merge_macro_results(
     with LayoutDB.open(written) as database:  # 回读最终版图
         for entry in plan["macros"]:  # 逐 macro 窗口
             ownership = DbuBox(*entry["ownership_box"])  # 该 macro 计分框
-            window = (database.query([layer], ownership)  # 窗口查询
-                      .materialize_intersecting())  # 完整相交物化（不裁剪）
+            # 窗口查询
+            window = (database.query([layer], ownership)
+                      .materialize_intersecting())
             # 完整相交会带入跨界 polygon 伸出窗口的部分，必须显式裁回
             # ownership（与主路径 clipped 同款），否则相邻窗口重复计数。
-            region = (window.region(layer)  # 窗口内覆盖
-                      & kdb.Region(ownership.to_native()))  # 精确裁剪
+            region = (window.region(layer)
+                      & kdb.Region(ownership.to_native()))
             if not region.has_valid_polygons():  # 无效 polygon
-                raise RuntimeError(  # 明确失败并定位 macro
+                # 明确失败并定位 macro
+                raise RuntimeError(
                     f"{entry['macro_id']} 窗口含无效 polygon")
             area_after += int(region.area())  # 累计窗口面积
     if area_after != area_before:  # 覆盖面积被 normalize 改变
-        raise RuntimeError(  # 明确失败
-            f"merge 前后覆盖面积改变：{area_before} -> {area_after}")  # 报数值
+        # 明确失败
+        raise RuntimeError(
+            f"merge 前后覆盖面积改变：{area_before} -> {area_after}")
     return written  # 返回最终版图路径
 
 
@@ -254,33 +271,40 @@ def save_final_lithography(
 
         def _window_region(spec):
             """只物化该 tile context 窗口相交的局部几何，用完即弃。"""
-            return (database.query([layer], spec.context_box)  # 窗口查询
-                    .materialize_intersecting()  # 完整相交物化（局部 Region）
-                    .region(layer))  # 局部几何
+            # 窗口查询
+            return (database.query([layer], spec.context_box)
+                    .materialize_intersecting()
+                    .region(layer))
 
         with torch.no_grad():  # 纯推理
             for batch_start in range(0, core_count, batch_size):  # 流式分批
-                specs = [macro.core(index) for index in range(  # 本批 tile
+                # 本批 tile
+                specs = [macro.core(index) for index in range(
                     batch_start, min(batch_start + batch_size, core_count))]
-                masks = np.stack([rasterize_mask_canvas(  # 每 tile 窗口就地栅格
+                # 每 tile 窗口就地栅格
+                masks = np.stack([rasterize_mask_canvas(
                     _window_region(spec), spec.context_box, pixel_dbu,
                     canvas_pixels, polarity=polarity) for spec in specs])
                 mask_tensor = torch.from_numpy(masks).to(model.device)  # 送设备
-                printed = model.forward_many(  # 一次标称前向
+                # 一次标称前向
+                printed = model.forward_many(
                     mask_tensor, (model.condition("nominal"),))["nominal"]
                 images = printed.cpu().numpy()  # 取回 CPU
                 del printed, mask_tensor  # 每 batch 写完立即释放
                 for spec, image in zip(specs, images):  # 逐 tile 写 PNG
                     tile_id = spec.core_id  # 稳定 tile 编号
                     nominal_png = output_dir / f"{tile_id}_nominal.png"  # 连续灰度
-                    Image.fromarray(  # 连续值 0~255
+                    # 连续值 0~255
+                    Image.fromarray(
                         np.rint(image * 255.0).astype(np.uint8), mode="L").save(
                         nominal_png)
                     binary_png = output_dir / f"{tile_id}_binary.png"  # 阈值二值
-                    Image.fromarray(  # 阈值以上 255、其余 0
+                    # 阈值以上 255、其余 0
+                    Image.fromarray(
                         np.where(image >= threshold, 255, 0).astype(np.uint8),
                         mode="L").save(binary_png)
-                    tiles.append({  # manifest 条目
+                    # manifest 条目
+                    tiles.append({
                         "tile_id": tile_id,
                         "ownership_box": [spec.ownership_box.left,
                                           spec.ownership_box.bottom,
@@ -292,7 +316,8 @@ def save_final_lithography(
                                         spec.context_box.top],
                         "nominal_png": nominal_png.name,
                         "binary_png": binary_png.name})
-    manifest = {  # 完整清单
+    # 完整清单
+    manifest = {
         "format_version": 1,
         "pixel_dbu": pixel_dbu, "canvas_pixels": canvas_pixels,
         "threshold": threshold,

@@ -18,13 +18,17 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 from common.io import atomic_write_json  # JSON 原子写出
 from common.runtime import resolve_device  # 设备解析
 from lithography import ICCAD13Lithography  # 固定 ICCAD13 光刻模型
-from main._macro_pipeline import (  # 共用 macro 生命周期
+
+# 共用 macro 生命周期
+from main._macro_pipeline import (
     merge_macro_results,
     prepare_problems,
     save_final_lithography,
     write_macro_gds,
 )
-from main.configuration import (  # 统一配置体系（方法无关五段）
+
+# 统一配置体系（方法无关五段）
+from main.configuration import (
     EdgeConfig,
     LayoutConfig,
     LithographyConfig,
@@ -32,7 +36,9 @@ from main.configuration import (  # 统一配置体系（方法无关五段）
     PartitionConfig,
     load_config,
 )
-from opc.input.edge import (  # problem 加载与 best 几何重建
+
+# problem 加载与 best 几何重建
+from opc.input.edge import (
     MacroProblem,
     reconstruct_region,
 )
@@ -69,22 +75,26 @@ def _solve_macro(method: MBOPCMethod, problem: MacroProblem, model,
     bar = None  # 进度条（show_progress=False 时保持 None）
     if show_progress:  # 局部导入：关闭进度或未安装 tqdm 时不受影响
         from tqdm import tqdm  # 进度显示库
-        bar = tqdm(  # baseline 与每个更新后状态都要评价全部 tile
+        # baseline 与每个更新后状态都要评价全部 tile
+        bar = tqdm(
             total=(solver_config.iterations + 1) * problem.macro.core_count,
-            desc=f"macro {problem.macro.macro_id}", unit="tile",  # tile 单位
-            position=progress_position, leave=leave_progress)  # 多层条位置
+            desc=f"macro {problem.macro.macro_id}", unit="tile",
+            position=progress_position, leave=leave_progress)
     on_tiles = None if bar is None else bar.update  # 批完成且张量已释放后回调
     try:  # 异常路径也要收尾进度条（finally 关闭，不留未结束的终端状态）
-        result = method.optimize_macro(  # 算法本体（独立完成全部状态）
+        # 算法本体（独立完成全部状态）
+        result = method.optimize_macro(
             problem, model, solver_config, target_cache,
             on_tiles_completed=on_tiles)
     finally:  # 提前停止按实际完成量收尾，不伪造 100%
         if bar is not None:
             bar.close()
     output_dir.mkdir(parents=True, exist_ok=True)  # macro 专属目录
-    best_region = reconstruct_region(  # best 位移的最终候选几何
+    # best 位移的最终候选几何
+    best_region = reconstruct_region(
         problem, result.best_displacements)
-    best_gds = write_macro_gds(  # 完整候选 GDS（RESULT Cell）
+    # 完整候选 GDS（RESULT Cell）
+    best_gds = write_macro_gds(
         problem, best_region, output_dir / "best.gds", dbu_um)
     return result, best_gds  # 结果与 GDS 路径
 
@@ -97,21 +107,24 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
     total_started = time.perf_counter()  # 全流程计时
     process = psutil.Process()  # RSS 采样进程句柄
     rss_start = process.memory_info().rss  # 起点 RSS
-    layout, partition, litho, edge, algo, output = load_config(  # 统一加载
+    # 统一加载
+    layout, partition, litho, edge, algo, output = load_config(
         config_path, LayoutConfig, PartitionConfig, LithographyConfig,
         EdgeConfig, method.algo_config_type, OutputConfig)
-    plan = prepare_problems(  # 阶段 0/1（共用生命周期）
+    # 准备 problem（共用生命周期）
+    plan = prepare_problems(
         layout, partition, litho, edge, output)
     rss_after_prepare = process.memory_info().rss  # 准备后 RSS
     peak_rss = max(rss_start, rss_after_prepare)  # 峰值初值
     dbu_nm = Decimal(str(plan["dbu_um"])) * 1000  # DBU 的 nm 值
-    solver_config = method.build_solver_config(  # 算法差异：跨段校验+nm→DBU
+    # 算法差异：跨段校验+nm→DBU
+    solver_config = method.build_solver_config(
         algo, partition, edge, dbu_nm)
     device = resolve_device(litho.device)  # 设备解析（auto→实际）
     # CUDA 峰值统计设备必须显式指定：不传 device 时 PyTorch 统计当前设备
     # （默认 cuda:0），多卡下会量错卡；这里不改进程全局设备（不 set_device）。
     cuda_stats_device = (torch.device(device)
-                         if device.startswith("cuda") else None)  # 统计目标
+                         if device.startswith("cuda") else None)
     model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
     if cuda_stats_device is not None:  # CUDA 峰值从模型加载后开始计量
         torch.cuda.reset_peak_memory_stats(cuda_stats_device)  # 显式统计设备
@@ -124,26 +137,30 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
     outer_bar = None  # 多 macro 外层进度条
     if macro_count > 1 and output.show_progress:
         from tqdm import tqdm  # 进度显示库
-        outer_bar = tqdm(total=macro_count, desc="macros",  # 外层 macro 单位
-                         unit="macro", position=0)  # 占第 0 行
+        # 外层 macro 单位
+        outer_bar = tqdm(total=macro_count, desc="macros",
+                         unit="macro", position=0)
     try:  # 异常路径也要收尾外层进度条（与内层条同款 finally 纪律）
         for entry in plan["macros"]:  # 稳定顺序逐 macro 独立求解
             macro_id = entry["macro_id"]  # macro 编号
             problem = MacroProblem.load(Path(entry["problem_file"]))  # 加载
             started = time.perf_counter()  # 单 macro 计时
-            result, best_gds = _solve_macro(  # 全部迭代 + best GDS（公共包装）
+            # 全部迭代 + best GDS（公共包装）
+            result, best_gds = _solve_macro(
                 method, problem, model, solver_config, target_cache,
-                macros_dir / macro_id,  # 专属产物目录
-                dbu_um=float(plan["dbu_um"]),  # GDS 写出需要源 DBU（NPZ 不含）
+                macros_dir / macro_id,
+                dbu_um=float(plan["dbu_um"]),
                 show_progress=output.show_progress,
-                progress_position=1 if outer_bar is not None else 0,  # 外层占 0
-                leave_progress=outer_bar is None)  # 多 macro 内层条不留存
+                progress_position=1 if outer_bar is not None else 0,
+                leave_progress=outer_bar is None)
             elapsed = time.perf_counter() - started  # 单 macro 耗时
             peak_rss = max(peak_rss, process.memory_info().rss)  # 逐 macro 采峰
             macro_dir = macros_dir / macro_id  # 产物目录
-            method.save_macro_result(  # 算法差异：NPZ + metrics.json
+            # 算法差异：NPZ + metrics.json
+            method.save_macro_result(
                 macro_dir, macro_id, result)
-            macro_summaries.append(method.macro_summary(  # 算法差异：摘要条目
+            # 算法差异：摘要条目
+            macro_summaries.append(method.macro_summary(
                 macro_id, macro_dir, result, best_gds, elapsed))
             macro_gds[macro_id] = best_gds  # 记录显式映射
             if outer_bar is not None:  # 外层条按完成 macro 计数
@@ -154,26 +171,30 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
             outer_bar.close()
     # 全部 macro 完成后只合并一次（独立 macro 策略，不做逐轮全局合并）。
     merge_started = time.perf_counter()  # 合并计时
-    final_path = merge_macro_results(  # 统一 ownership 权威覆盖写出
+    # 统一 ownership 权威覆盖写出
+    final_path = merge_macro_results(
         plan, macro_gds, output.final_layout,
         cell_mode=output.final_cell_mode)
     merge_seconds = time.perf_counter() - merge_started  # 合并耗时
     manifest = None  # 最终光刻留档
     if output.save_final_lithography:  # 只对最终合并 GDS 运行一次
-        manifest = save_final_lithography(  # 逐 tile 流式 PNG
+        # 逐 tile 流式 PNG
+        manifest = save_final_lithography(
             plan, final_path, model, solver_config.batch_size,
             work_dir / "final_lithography")
     peak_rss = max(peak_rss, process.memory_info().rss)  # 收尾前采峰
-    cuda_peak = (int(torch.cuda.max_memory_allocated(cuda_stats_device))  # 同卡峰值
-                 if cuda_stats_device is not None else None)  # CPU 时为 None
-    summary = {  # 完整摘要
+    # 同卡峰值
+    cuda_peak = (int(torch.cuda.max_memory_allocated(cuda_stats_device))
+                 if cuda_stats_device is not None else None)
+    # 完整摘要
+    summary = {
         "method": method.method_name,
         "macro_count": macro_count,
         "core_count": plan["core_count"],
         "segment_count_sum": plan["segment_count_sum"],
         "device": str(model.device),
         "iterations": solver_config.iterations,
-        **method.summary_extras(solver_config),  # 算法差异：附加顶层键
+        **method.summary_extras(solver_config),
         "macros": macro_summaries,
         "final_layout": str(final_path),
         "final_cell_mode": output.final_cell_mode,

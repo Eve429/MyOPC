@@ -13,12 +13,16 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from common.io import atomic_write_json, atomic_write_npz  # 原子写出
 from main._mbopc_workflow import MBOPCMethod, run_mbopc_workflow  # 公共生命周期
-from main.configuration import (  # 梯度配置解析
+
+# 梯度配置解析
+from main.configuration import (
     GradientConfig,
     resolve_gradient_config,
 )
-from opc.iteration.mbopc import (  # gradient 求解器
-    GradientMBOPCConfig,  # summary_extras 的 DBU 配置类型注解
+
+# gradient 求解器
+from opc.iteration.mbopc import (
+    GradientMBOPCConfig,
     GradientMBOPCResult,
     optimize_gradient_macro,
 )
@@ -29,7 +33,8 @@ _GRADIENT_RESULT_VERSION = 1  # 每 macro 梯度结果 NPZ 结构版本
 def save_macro_result(macro_dir: Path, macro_id: str,
                       result: GradientMBOPCResult) -> None:
     """写出梯度结果 NPZ 与逐状态 metrics（文件名独立于 simple 产物）。"""
-    atomic_write_npz(  # 梯度结果 NPZ（独立于 simple 的 result.npz）
+    # 梯度结果 NPZ（独立于 simple 的 result.npz）
+    atomic_write_npz(
         macro_dir / "gradient_result.npz",
         format_version=np.array([_GRADIENT_RESULT_VERSION], np.int32),
         macro_id=np.array([macro_id]),
@@ -37,7 +42,8 @@ def save_macro_result(macro_dir: Path, macro_id: str,
         best_displacements=np.ascontiguousarray(
             result.best_displacements, dtype=np.float64),
         stop_reason=np.array([result.stop_reason]))
-    atomic_write_json(macro_dir / "gradient_metrics.json", {  # 逐状态标量
+    # 逐状态标量
+    atomic_write_json(macro_dir / "gradient_metrics.json", {
         "macro_id": macro_id,
         "best_state_index": result.best_state_index,
         "stop_reason": result.stop_reason,
@@ -49,7 +55,8 @@ def macro_summary(macro_id: str, macro_dir: Path, result: GradientMBOPCResult,
                   best_gds: Path, elapsed: float) -> dict:
     """构造公共循环消费的逐 macro 摘要条目。"""
     best_record = result.records[result.best_state_index]  # 最佳状态指标
-    return {  # 摘要（全量记录在 gradient_metrics.json）
+    # 摘要（全量记录在 gradient_metrics.json）
+    return {
         "macro_id": macro_id,
         "best_state_index": result.best_state_index,
         "stop_reason": result.stop_reason,
@@ -71,7 +78,8 @@ def summary_extras(solver_config: GradientMBOPCConfig) -> dict:
                              "pvband": solver_config.weight_pvband}}
 
 
-GRADIENT_METHOD = MBOPCMethod(  # 梯度方法适配器实例（公共生命周期消费）
+# 梯度方法适配器实例（公共生命周期消费）
+GRADIENT_METHOD = MBOPCMethod(
     method_name="gradient_mbopc",
     algo_config_type=GradientConfig,
     build_solver_config=resolve_gradient_config,

@@ -21,13 +21,14 @@ from opc.input.raster import rasterize_mask_canvas  # 居中透光率画布
 
 def _build_demo_canvas() -> np.ndarray:
     """用当前 raster 公共接口生成非对称矩形加孔洞的 256*256 透光率画布。"""
-    region = (kdb.Region(kdb.Box(200, 200, 1400, 1300)) -  # 非对称实心矩形
-              kdb.Region(kdb.Box(500, 500, 900, 700)) +  # 减去中心孔洞(带孔图形)
-              kdb.Region(kdb.Box(200, 1350, 1400, 1450)))  # 并入上方独立细条(与主图形分离,共两个图形)
+    # 非对称实心矩形
+    region = (kdb.Region(kdb.Box(200, 200, 1400, 1300)) -
+              kdb.Region(kdb.Box(500, 500, 900, 700)) +
+              kdb.Region(kdb.Box(200, 1350, 1400, 1450)))
     # context 1824 DBU / pixel 8 DBU = 228*228 局部窗口，居中后四边各留
     # 14 像素零 padding 恰满 256 画布——与 macro-core 管线同一画布契约。
-    canvas = rasterize_mask_canvas(  # 栅格化为透光率
-        region, DbuBox(0, 0, 1824, 1824), 8, 256, polarity="clear")  # clear=源图形透光
+    canvas = rasterize_mask_canvas(
+        region, DbuBox(0, 0, 1824, 1824), 8, 256, polarity="clear")
     return canvas  # float32[256,256]，1=透光，行 0=最低 Y
 
 
@@ -37,8 +38,9 @@ def run_demo(device: str = "auto") -> None:
     # 阶段 1：生成真实模型输入(几何 → raster → 透光率画布)。
     canvas = _build_demo_canvas()  # 真实几何的 256 画布
     print("阶段 1 · raster 画布")  # 阶段标题
-    print(f"  shape={canvas.shape} dtype={canvas.dtype} "  # 形状与精度
-          f"min={canvas.min():.1f} max={canvas.max():.1f} sum={canvas.sum():.1f}")  # 数值摘要
+    # 形状与精度
+    print(f"  shape={canvas.shape} dtype={canvas.dtype} "
+          f"min={canvas.min():.1f} max={canvas.max():.1f} sum={canvas.sum():.1f}")
     print("  行 0 = 最低 Y(左下原点)，全程未做图片翻转")  # 方向声明
     mask = torch.from_numpy(canvas)  # 转 torch 张量(CPU 侧，模型内部再搬运)
     # 阶段 2：加载模型与四个资产 buffer(只打印元数据，不打印张量内容)。
@@ -46,14 +48,16 @@ def run_demo(device: str = "auto") -> None:
     model = ICCAD13Lithography(device=device)  # auto=有 CUDA 用 CUDA 否则 CPU
     config = model.config  # 冻结数值配置
     print(f"  device={model.device}")  # 实际设备
-    print(f"  kernel_count={config.kernel_count} canvas={config.canvas} "  # 网格契约
-          f"resolution={config.resolution} print_threshold={config.print_threshold}")  # 二值阈值
+    # 网格契约
+    print(f"  kernel_count={config.kernel_count} canvas={config.canvas} "
+          f"resolution={config.resolution} print_threshold={config.print_threshold}")
     for name, buffer in model.named_buffers():  # 恰四个资产 buffer
         print(f"  buffer {name}: {tuple(buffer.shape)} {buffer.dtype}")  # 只看元数据
     # 阶段 3：三工艺条件一次前向(no_grad 纯推理)。
     print("阶段 3 · 三工艺条件推理(torch.no_grad)")  # 阶段标题
-    conditions = [model.condition(name) for name in  # 三个默认条件
-                  ("nominal", "dose_max", "defocus_min")]  # 标称/大剂量/离焦
+    # 三个默认条件
+    conditions = [model.condition(name) for name in
+                  ("nominal", "dose_max", "defocus_min")]
     on_cuda = model.device.type == "cuda"  # GPU 才有显存峰值可报
     if on_cuda:  # GPU 计时前准备
         torch.cuda.synchronize()  # 排空此前异步操作
@@ -68,10 +72,11 @@ def run_demo(device: str = "auto") -> None:
     for condition in conditions:  # 逐条件打印摘要
         image = images[condition.name]  # 该条件输出
         exposed = int((image >= threshold).sum().item())  # 二值曝光像素数
-        print(f"  {condition.name:12s} kernel={condition.kernel:7s} "  # 条件与 bank
-              f"dose={condition.dose:.2f} shape={tuple(image.shape)} "  # 剂量与形状
-              f"range=[{image.min():.4f}, {image.max():.4f}] "  # 连续范围
-              f"sum={image.sum():.1f} 曝光像素={exposed}")  # 总强度与二值统计
+        # 条件与 bank
+        print(f"  {condition.name:12s} kernel={condition.kernel:7s} "
+              f"dose={condition.dose:.2f} shape={tuple(image.shape)} "
+              f"range=[{image.min():.4f}, {image.max():.4f}] "
+              f"sum={image.sum():.1f} 曝光像素={exposed}")
     print(f"  前向耗时 {elapsed * 1000:.1f} ms")  # 计时结果
     if on_cuda:  # 报告 GPU 显存峰值
         peak = torch.cuda.max_memory_allocated() / 1024 ** 2  # 换算 MiB
@@ -88,8 +93,9 @@ def run_demo(device: str = "auto") -> None:
     # 阶段 5：真实 backward(原生 autograd，非均匀权重防对称掩盖)。
     print("阶段 5 · 真实 backward(原生 autograd)")  # 阶段标题
     leaf = mask.clone().requires_grad_(True)  # 复制为可求导叶子
-    weights = torch.linspace(  # 非均匀上游权重
-        -0.7, 1.3, mask.numel(), dtype=torch.float32).reshape_as(mask)  # 与画布同形
+    # 非均匀上游权重
+    weights = torch.linspace(
+        -0.7, 1.3, mask.numel(), dtype=torch.float32).reshape_as(mask)
     weights = weights.to(model.device)  # 权重搬到输出所在设备
     loss = torch.sum(model(leaf, model.condition("nominal")) * weights)  # 标量损失
     loss.backward()  # 反向传播到 mask
@@ -97,22 +103,26 @@ def run_demo(device: str = "auto") -> None:
     finite = bool(torch.all(torch.isfinite(gradient)).item())  # 有限性
     nonzero = int(torch.count_nonzero(gradient).item())  # 非零元素数
     norm = float(gradient.norm().item())  # L2 范数
-    print(f"  梯度 finite={finite} 非零元素={nonzero}/{gradient.numel()} "  # 梯度摘要
-          f"L2范数={norm:.4f}")  # 摘要续
+    # 梯度摘要
+    print(f"  梯度 finite={finite} 非零元素={nonzero}/{gradient.numel()} "
+          f"L2范数={norm:.4f}")
     print("  仅演示梯度传播；不更新 mask，不引入优化器")  # 边界声明
     # 阶段 6：把光刻计算结果可视化(2*2 灰度面板：输入与三工艺角胶图)。
     print("阶段 6 · 可视化(matplotlib)")  # 阶段标题
-    panels = (  # 四联面板数据：输入透光率 + 三个条件的连续 printed image
+    # 四联面板数据：输入透光率 + 三个条件的连续 printed image
+    panels = (
         ("input mask(0=no optics)", canvas),
         ("nominal(focus * 1.00²)", images["nominal"].cpu().numpy()),
         ("dose_max(focus * 1.02²)", images["dose_max"].cpu().numpy()),
         ("defocus_min(defocus * 0.98²)", images["defocus_min"].cpu().numpy()))
-    figure, axes = plt.subplots(  # 建 2*2 面板
-        2, 2, figsize=(10, 9), layout="constrained")  # 紧凑排版不重叠
+    # 建 2*2 面板
+    figure, axes = plt.subplots(
+        2, 2, figsize=(10, 9), layout="constrained")
     for ax, (title, image) in zip(axes.flat, panels):  # 逐面板绘制
-        drawn = ax.imshow(  # origin=lower 让行 0(最低 Y)显示在底部
-            image, origin="lower", extent=(0, 1824, 0, 1824),  # 轴=context DBU 坐标
-            cmap="gray", vmin=0.0, vmax=1.0)  # 固定灰阶便于跨面板对比
+        # origin=lower 让行 0(最低 Y)显示在底部
+        drawn = ax.imshow(
+            image, origin="lower", extent=(0, 1824, 0, 1824),
+            cmap="gray", vmin=0.0, vmax=1.0)
         ax.set_title(title)  # 面板标题
         ax.set_xlabel("context X(DBU)")  # 横轴说明
         ax.set_ylabel("context Y(DBU)")  # 纵轴说明

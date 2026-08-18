@@ -13,12 +13,16 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from common.io import atomic_write_json, atomic_write_npz  # 原子写出
 from main._mbopc_workflow import MBOPCMethod, run_mbopc_workflow  # 公共生命周期
-from main.configuration import (  # simple 配置解析
+
+# simple 配置解析
+from main.configuration import (
     MBOPCConfig,
     resolve_mbopc_config,
 )
-from opc.iteration.mbopc import (  # simple 求解器
-    SimpleMBOPCConfig,  # summary_extras 的 DBU 配置类型注解
+
+# simple 求解器
+from opc.iteration.mbopc import (
+    SimpleMBOPCConfig,
     SimpleMBOPCResult,
     optimize_macro,
 )
@@ -29,7 +33,8 @@ _RESULT_FORMAT_VERSION = 1  # 每 macro result NPZ 结构版本
 def save_macro_result(macro_dir: Path, macro_id: str,
                       result: SimpleMBOPCResult) -> None:
     """写出 simple 结果 NPZ 与逐轮 metrics（文件名独立于 gradient 产物）。"""
-    atomic_write_npz(  # result NPZ（位移与停止信息）
+    # result NPZ（位移与停止信息）
+    atomic_write_npz(
         macro_dir / "result.npz",
         format_version=np.array([_RESULT_FORMAT_VERSION], np.int32),
         macro_id=np.array([macro_id]),
@@ -37,7 +42,8 @@ def save_macro_result(macro_dir: Path, macro_id: str,
         best_displacements=np.ascontiguousarray(
             result.best_displacements, dtype=np.float64),
         stop_reason=np.array([result.stop_reason]))
-    atomic_write_json(macro_dir / "metrics.json", {  # 逐轮标量与原因
+    # 逐轮标量与原因
+    atomic_write_json(macro_dir / "metrics.json", {
         "macro_id": macro_id,
         "best_round": result.best_round,
         "stop_reason": result.stop_reason,
@@ -49,7 +55,8 @@ def macro_summary(macro_id: str, macro_dir: Path, result: SimpleMBOPCResult,
                   best_gds: Path, elapsed: float) -> dict:
     """构造公共循环消费的逐 macro 摘要条目。"""
     best_record = result.records[result.best_round]  # 最佳轮指标
-    return {  # 摘要（全量记录在 metrics.json）
+    # 摘要（全量记录在 metrics.json）
+    return {
         "macro_id": macro_id,
         "best_round": result.best_round,
         "stop_reason": result.stop_reason,
@@ -66,7 +73,8 @@ def summary_extras(solver_config: SimpleMBOPCConfig) -> dict:
     return {}
 
 
-SIMPLE_METHOD = MBOPCMethod(  # simple 方法适配器实例（公共生命周期消费）
+# simple 方法适配器实例（公共生命周期消费）
+SIMPLE_METHOD = MBOPCMethod(
     method_name="simple_mbopc",
     algo_config_type=MBOPCConfig,
     build_solver_config=resolve_mbopc_config,

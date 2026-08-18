@@ -116,6 +116,10 @@ class TestSingleMacroRunner:
         tmp, summary = single  # 解包
         work = tmp / "work"  # 工作目录
         assert summary["macro_count"] == 1  # 恰一个 macro
+        assert summary["method"] == "simple_mbopc"  # 方法标识（公共层写入）
+        for key in ("rss_start_bytes", "rss_after_prepare_bytes",  # 资源字段
+                    "peak_rss_bytes", "cuda_peak_bytes"):
+            assert key in summary, key  # 资源统计上提公共层后的新增键
         assert summary["device"].startswith("cpu")  # 测试固定 CPU
         assert (work / "plan.json").is_file()  # 计划
         assert (work / "summary.json").is_file()  # 摘要
@@ -183,14 +187,15 @@ class TestMultiMacroRunner:
         """multi 全流程调用 merge_macro_results 恰一次。"""
         gds = _write_gds(tmp_path)  # 生成版图
         config = _write_config(tmp_path, gds, macro_grid="[2, 2]")  # 配置
+        import main._mbopc_workflow as workflow_host  # merge 调用宿主（公共循环）
         calls = []  # 调用计数
-        real = workflow.merge_macro_results  # 原函数
+        real = workflow_host.merge_macro_results  # 原函数
 
         def _counting(*args, **kwargs):
             """计数合并调用并透传。"""
             calls.append(1)
             return real(*args, **kwargs)
-        monkeypatch.setattr(workflow, "merge_macro_results", _counting)
+        monkeypatch.setattr(workflow_host, "merge_macro_results", _counting)
         workflow.run_mbopc(config)  # 完整流程
         assert calls == [1]  # 恰一次
 

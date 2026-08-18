@@ -133,22 +133,27 @@ def evaluate_and_propose(
     max_displacement = float(problem.fragmentation.max_displacement_dbu)  # 位移上限
     next_values = current.copy()  # 提案缓冲（can_update=False 时不写方向）
     written = np.zeros(segment_count, dtype=np.bool_)  # 方向唯一写标记
+    # 批间标量累计
     totals = {"epe": 0, "l2": 0, "pvband": 0,
-              "valid": 0, "ambiguous": 0}  # 批间标量累计
+              "valid": 0, "ambiguous": 0}
     reference_region: kdb.Region | None = None  # cache miss 时才重建参考 Region
     core_count = problem.macro.core_count  # tile 总数
     threshold = float(model.config.print_threshold)  # 像素指标二值阈值
     device = model.device  # 目标设备
     for batch_start in range(0, core_count, config.batch_size):  # 分批评价
-        core_indices = list(range(  # 本批 core（行优先）
+        # 本批 core（行优先）
+        core_indices = list(range(
             batch_start, min(batch_start + config.batch_size, core_count)))
         batch_count = len(core_indices)  # 本批 tile 数
+        # target 批（uint8 缓存格式）
         targets = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                           dtype=np.uint8)  # target 批（uint8 缓存格式）
+                           dtype=np.uint8)
+        # 当前 mask 批
         masks = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                         dtype=np.float32)  # 当前 mask 批
+                         dtype=np.float32)
+        # 计分像素批
         ownership = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                             dtype=np.bool_)  # 计分像素批
+                             dtype=np.bool_)
         probes: list[tuple[int, np.ndarray]] = []  # (batch 槽位, owner 全局索引)
         inner_parts: list[np.ndarray] = []  # 各 core inner canvas 坐标
         outer_parts: list[np.ndarray] = []  # 各 core outer canvas 坐标
@@ -159,36 +164,43 @@ def evaluate_and_propose(
                 if reference_region is None:  # 参考候选只重建一次
                     reference_region = reconstruct_region(
                         problem, np.zeros(segment_count, dtype=np.float64))
-                cached = np.rint(rasterize_mask_canvas(  # 参考透光率 → uint8
+                # 参考透光率 → uint8
+                cached = np.rint(rasterize_mask_canvas(
                     reference_region, spec.context_box, pixel_dbu,
                     canvas_pixels, polarity=problem.polarity) * 255.0
                 ).astype(np.uint8)
                 target_cache.put(macro_id, core_index, cached)  # 回填缓存
             targets[slot] = cached  # 批内拷贝
-            masks[slot] = rasterize_mask_canvas(  # 当前候选直接栅格
+            # 当前候选直接栅格
+            masks[slot] = rasterize_mask_canvas(
                 current_region, spec.context_box, pixel_dbu,
                 canvas_pixels, polarity=problem.polarity)
-            ownership[slot] = ownership_canvas(  # 唯一计分像素
+            # 唯一计分像素
+            ownership[slot] = ownership_canvas(
                 spec.ownership_box, spec.context_box, pixel_dbu, canvas_pixels)
             owner_indices = problem.owner_segments_for_core(core_index)  # 唯一可写段
             if len(owner_indices):  # 空 owner core 无探针，但仍计入完成 tile
-                inner_dbu, outer_dbu = edge_probe_points(  # 参考边中点 ± 法向
+                # 参考边中点 ± 法向
+                inner_dbu, outer_dbu = edge_probe_points(
                     reference.starts[owner_indices], reference.ends[owner_indices],
                     reference.normals[owner_indices], config.epe_distance_dbu)
-                inner_parts.append(points_to_canvas(  # DBU → 居中 canvas 连续坐标
+                # DBU → 居中 canvas 连续坐标
+                inner_parts.append(points_to_canvas(
                     inner_dbu, spec.context_box, pixel_dbu, canvas_pixels))
                 outer_parts.append(points_to_canvas(
                     outer_dbu, spec.context_box, pixel_dbu, canvas_pixels))
                 probes.append((slot, owner_indices))  # 记录探针归属
         # 光刻：target 送设备转 float32/255，一次 forward_many 出三工艺角。
         with torch.no_grad():  # 离散方法不需要梯度图
-            target_tensor = torch.from_numpy(targets).to(  # uint8 → float32/255
+            # uint8 → float32/255
+            target_tensor = torch.from_numpy(targets).to(
                 device=device, dtype=torch.float32).div_(255.0)
             mask_tensor = torch.from_numpy(masks).to(device=device)
             ownership_tensor = torch.from_numpy(ownership).to(device=device)
-            conditions = (model.condition("nominal"),  # 标称
-                          model.condition("dose_max"),  # 大剂量
-                          model.condition("defocus_min"))  # 离焦小剂量
+            # 三工艺角条件：标称 / 大剂量 / 离焦小剂量
+            conditions = (model.condition("nominal"),
+                          model.condition("dose_max"),
+                          model.condition("defocus_min"))
             printed = model.forward_many(mask_tensor, conditions)  # 共享一次 FFT
             nominal = printed["nominal"]  # 标称胶图
             # 像素指标：L2/PVBand 只在 ownership 像素累计，context/padding 不重复计分。
@@ -200,12 +212,14 @@ def evaluate_and_propose(
                 threshold=threshold, ownership_mask=ownership_tensor)
             # EPE：本批全部 owner 探针一次批量评价（batch 索引指向各自 core 图）。
             if probes:
-                batch_index_tensor = torch.cat([  # 每个探针的 batch 槽位
+                # 每个探针的 batch 槽位
+                batch_index_tensor = torch.cat([
                     torch.full((len(idx),), slot, dtype=torch.long)
                     for slot, idx in probes])
                 inner_xy = torch.from_numpy(np.concatenate(inner_parts))
                 outer_xy = torch.from_numpy(np.concatenate(outer_parts))
-                epe_result = evaluate_edge_probes(  # 阈值跟随模型 PrintThresh
+                # 阈值跟随模型 PrintThresh
+                epe_result = evaluate_edge_probes(
                     target_tensor, nominal, batch_index_tensor, inner_xy,
                     outer_xy, threshold=threshold)
                 totals["epe"] += epe_result.violation_count  # 违规段数
@@ -216,7 +230,8 @@ def evaluate_and_propose(
                 totals["valid"] += int(valid_all.sum())  # 整批求和
                 totals["ambiguous"] += int(ambiguous_all.sum())  # 整批求和
                 if can_update:  # 方向只写提案缓冲，current 全程只读
-                    moves = (  # -1/0/+1 方向 × 当前提案步长（一次取回）
+                    # -1/0/+1 方向 × 当前提案步长（一次取回）
+                    moves = (
                         epe_result.directions.cpu().numpy()
                         .astype(np.float64) * step_dbu)
                     cursor = 0  # 探针游标（按 core 顺序回切）
@@ -237,7 +252,8 @@ def evaluate_and_propose(
         if np.any(next_values[context_mask] != 0.0):  # clip 不会触碰 context，防御
             raise RuntimeError("context 段位移被意外修改")
     moved = int(np.count_nonzero(next_values != current))  # 提案改变段数
-    return SimpleMBOPCStep(  # 指标属于刚评价的输入状态，next 只是提案
+    # 指标属于刚评价的输入状态，next 只是提案
+    return SimpleMBOPCStep(
         next_displacements=next_values,
         epe=totals["epe"], l2=totals["l2"], pvband=totals["pvband"],
         valid_probes=totals["valid"], ambiguous_probes=totals["ambiguous"],
@@ -275,11 +291,13 @@ def optimize_macro(
     started = time.perf_counter()  # baseline 计时
     baseline_region = reconstruct_region(problem, zeros)  # 零位移候选
     pending_step = step_for(1)  # baseline 提案使用的步长
-    proposal = evaluate_and_propose(  # 评价 + Round 1 提案
+    # 评价 + Round 1 提案
+    proposal = evaluate_and_propose(
         problem, baseline_region, zeros, model, config, pending_step,
         target_cache, can_update=True, reference=reference,
         on_tiles_completed=on_tiles_completed)
-    records = [IterationRecord(  # records[0] 固定是 baseline
+    # records[0] 固定是 baseline
+    records = [IterationRecord(
         round_index=0, step_dbu=0.0, epe=proposal.epe, l2=proposal.l2,
         pvband=proposal.pvband, valid_probes=proposal.valid_probes,
         ambiguous_probes=proposal.ambiguous_probes, moved_segments=0,
@@ -314,26 +332,29 @@ def optimize_macro(
                 # 捕获 ValueError 有实测依据：几何退化（如共线 ring 少于三
                 # 顶点）会以 ValueError 从 KLayout 数组校验冒出，并非只有
                 # ReconstructionError；把它包装进 ReconstructionError 需要
-                # 改 reconstruction.py（本轮不修改清单），故维持宽捕获。
+                # 改 reconstruction.py，故维持宽捕获。
                 # 位移 shape/有限性由 evaluate_and_propose 入口契约先行拦截，
                 # 此处的 ValueError 几乎只可能是几何退化。
                 stop_reason = "invalid_geometry"  # 保留最后合法 best
-                stop_detail = (  # 错误原因不得吞掉
+                # 错误原因不得吞掉
+                stop_detail = (
                     f"round {round_index} 候选重建失败：{exc}")
                 break
             can_propose = round_index < config.iterations  # 末轮不再生成
             pending_next = step_for(round_index + 1)  # 被丢弃提案的步长（末轮）
-            proposal = evaluate_and_propose(  # 移动后状态评价（末轮纯评价）
+            # 移动后状态评价（末轮纯评价）
+            proposal = evaluate_and_propose(
                 problem, candidate_region, candidate, model, config,
                 pending_next, target_cache, can_update=can_propose,
                 reference=reference,
                 on_tiles_completed=on_tiles_completed)
-            records.append(IterationRecord(  # Round N 指标属第 N 次位移后状态
+            # Round N 指标属第 N 次位移后状态；moved 为产生本状态时移动的段数
+            records.append(IterationRecord(
                 round_index=round_index, step_dbu=pending_step, epe=proposal.epe,
                 l2=proposal.l2, pvband=proposal.pvband,
                 valid_probes=proposal.valid_probes,
                 ambiguous_probes=proposal.ambiguous_probes,
-                moved_segments=candidate_moved,  # 产生本状态时移动的段数
+                moved_segments=candidate_moved,
                 elapsed_seconds=time.perf_counter() - started))
             pending_step = pending_next  # 下轮记录使用的步长
             if owner_count and proposal.valid_probes == 0:  # 移动后无法评价

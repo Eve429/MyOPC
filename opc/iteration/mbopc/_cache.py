@@ -16,8 +16,9 @@ class TargetCanvasCache:
         if not isinstance(max_bytes, int) or max_bytes < 0:
             raise ValueError("max_bytes 必须是非负整数")
         self._max_bytes = max_bytes  # 0 表示完全禁用缓存
+        # (macro_id, core_index) → uint8 canvas，最新在尾
         self._entries: OrderedDict[tuple[str, int], NDArray[np.uint8]] = (
-            OrderedDict())  # (macro_id, core_index) → uint8 canvas，最新在尾
+            OrderedDict())
         self._used_bytes = 0  # 当前缓存占用字节数
 
     def get(self, macro_id: str, core_index: int) -> NDArray[np.uint8] | None:

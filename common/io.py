@@ -10,8 +10,9 @@ import numpy as np  # NPZ 数组载体
 
 def atomic_write_json(path: Path, payload: dict) -> Path:
     """把 JSON 载荷经同目录临时文件原子写出，避免留下半截 plan。"""
-    handle, temporary_name = tempfile.mkstemp(  # 与目标同目录同卷
-        prefix=f".{path.stem}-", suffix=".json", dir=path.parent)  # 临时文件名
+    # 与目标同目录同卷的临时文件（os.replace 的原子性要求）
+    handle, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.stem}-", suffix=".json", dir=path.parent)
     os.close(handle)  # 只借用文件名，内容用文本模式重写
     temporary = Path(temporary_name)  # Path 化
     try:  # 写入并原子替换
@@ -26,8 +27,9 @@ def atomic_write_json(path: Path, payload: dict) -> Path:
 
 def atomic_write_npz(path: Path, **arrays: np.ndarray) -> Path:
     """把 NPZ 载荷经同目录临时文件原子写出。"""
-    handle, temporary_name = tempfile.mkstemp(  # 同目录临时文件
-        prefix=f".{path.stem}-", suffix=".npz", dir=path.parent)  # 命名
+    # 与目标同目录同卷的临时文件（os.replace 的原子性要求）
+    handle, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.stem}-", suffix=".npz", dir=path.parent)
     os.close(handle)  # 关闭句柄
     temporary = Path(temporary_name)  # Path 化
     try:  # 写出并原子替换

@@ -535,3 +535,47 @@ class TestFinalMerge:
             assert db.layers() == (LayerSpec(1, 0), LayerSpec(2, 0))  # 源确有两层
         with LayoutDB.open(summary["final_layout"]) as db:  # 回读最终版图
             assert db.layers() == (LayerSpec(1, 0),)  # 只有目标层被复制
+
+
+class TestSaveFinalLithography:
+    """公共最终光刻留档（随 save_final_lithography 迁入本模块补直测）。"""
+
+    def test_manifest_and_pngs_from_stub_model(self, tmp_path):
+        """stub 模型直测：manifest 键集、逐 tile 双 PNG、tile 数与返回一致。"""
+        from types import SimpleNamespace  # stub 条件对象
+
+        import torch  # stub 设备
+        gds = _write_gds(tmp_path)  # 生成版图（直接当作最终版图输入）
+        configs = _load(_write_config(tmp_path, gds))  # 统一加载
+        plan = _prepare(configs)  # 阶段 0/1（plan 含留档所需键）
+
+        class _StubConfig:
+            """留档消费的最小配置视图。"""
+            canvas = 256  # 画布
+            print_threshold = 0.5  # 二值阈值
+
+        class _StubModel:
+            """直通 stub：forward_many 原样返回 mask（无光刻计算）。"""
+            device = torch.device("cpu")  # CPU 设备
+            config = _StubConfig()  # 配置视图
+
+            def condition(self, name):
+                """按名返回占位条件（stub 不消费）。"""
+                return SimpleNamespace(name=name)
+
+            def forward_many(self, mask, conditions):
+                """nominal = mask 直通。"""
+                return {"nominal": mask}
+
+        out_dir = tmp_path / "final_png"  # 留档目录
+        from main._macro_pipeline import save_final_lithography  # 公共后处理真身
+        manifest = save_final_lithography(  # 直测
+            plan, gds, _StubModel(), 4, out_dir)
+        assert manifest["format_version"] == 1  # manifest 版本
+        assert manifest["pixel_dbu"] == plan["pixel_dbu"]  # 像素一致
+        assert manifest["tile_count"] == len(manifest["tiles"])  # 数目一致
+        assert manifest["tile_count"] >= 1  # 生成图至少一个 tile
+        for tile in manifest["tiles"]:  # 逐 tile 检查
+            assert (out_dir / tile["nominal_png"]).is_file()  # 连续 PNG
+            assert (out_dir / tile["binary_png"]).is_file()  # 二值 PNG
+            assert len(tile["ownership_box"]) == 4  # 计分框四元组

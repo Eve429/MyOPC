@@ -10,7 +10,10 @@ from pathlib import Path  # 全部路径统一使用 Path 对象
 from typing import Literal  # cell_mode 的字面量类型
 
 import klayout.db as kdb  # 写出 macro GDS 与所有权裁剪的原生版图对象
+import numpy as np  # PNG 栅格与像素变换
 import psutil  # 阶段 RSS 峰值测量；缺失时直接 ImportError 不降级
+import torch  # 最终光刻留档的 no_grad 推理
+from PIL import Image  # 最终光刻 PNG 留档
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
@@ -28,7 +31,11 @@ from main.configuration import (  # 统一配置体系（按业务划分的输�
     OutputConfig,
     PartitionConfig,
 )
-from opc.input import plan_macros  # 两级网格规划
+from opc.input import (  # 两级网格规划与留档栅格
+    MaskPolarity,
+    plan_macros,
+    rasterize_mask_canvas,
+)
 from opc.input.edge import MacroProblem, prepare_macro_problem  # problem 构造
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
@@ -233,3 +240,78 @@ def merge_macro_results(
         raise RuntimeError(  # 明确失败
             f"merge 前后覆盖面积改变：{area_before} -> {area_after}")  # 报数值
     return written  # 返回最终版图路径
+
+
+def save_final_lithography(
+        plan: dict, final_layout: Path, model, batch_size: int,
+        output_dir: Path,
+) -> dict:
+    """流式保存最终版图每 tile 的 nominal 连续/二值 PNG 和 manifest。"""
+    layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
+    polarity = MaskPolarity(str(plan["polarity"]))  # 极性枚举
+    pixel_dbu = int(plan["pixel_dbu"])  # 栅格像素
+    canvas_pixels = int(plan["canvas_pixels"])  # 画布
+    core_dbu = int(plan["core_size_dbu"])  # tile 尺寸
+    context_dbu = int(plan["context_dbu"])  # tile 上下文
+    with LayoutDB.open(final_layout) as database:  # 打开一次，全程在内物化消费
+        bounds = database.layer_bbox(layer)  # 目标层真实包络（不用魔法框）
+        if bounds is None:  # 空层无法出图
+            raise ValueError("最终版图目标层为空")
+        # 独立规整 tile 网格：单 macro 全 ROI 按 core 切分。可视化网格不必复刻
+        # 迭代期 macro 边界，网格参数全部写入 manifest 供对账。
+        macro = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=core_dbu,
+                            context_dbu=context_dbu, pixel_dbu=pixel_dbu,
+                            canvas_pixels=canvas_pixels)[0]
+        output_dir.mkdir(parents=True, exist_ok=True)  # 留档目录
+        threshold = float(model.config.print_threshold)  # 二值阈值
+        core_count = macro.core_count  # tile 总数
+        tiles = []  # manifest 条目
+
+        def _window_region(spec):
+            """只物化该 tile context 窗口相交的局部几何，用完即弃。"""
+            return (database.query([layer], spec.context_box)  # 窗口查询
+                    .materialize_intersecting()  # 完整相交物化（局部 Region）
+                    .region(layer))  # 局部几何
+
+        with torch.no_grad():  # 纯推理
+            for batch_start in range(0, core_count, batch_size):  # 流式分批
+                specs = [macro.core(index) for index in range(  # 本批 tile
+                    batch_start, min(batch_start + batch_size, core_count))]
+                masks = np.stack([rasterize_mask_canvas(  # 每 tile 窗口就地栅格
+                    _window_region(spec), spec.context_box, pixel_dbu,
+                    canvas_pixels, polarity=polarity) for spec in specs])
+                mask_tensor = torch.from_numpy(masks).to(model.device)  # 送设备
+                printed = model.forward_many(  # 一次标称前向
+                    mask_tensor, (model.condition("nominal"),))["nominal"]
+                images = printed.cpu().numpy()  # 取回 CPU
+                del printed, mask_tensor  # 每 batch 写完立即释放
+                for spec, image in zip(specs, images):  # 逐 tile 写 PNG
+                    tile_id = spec.core_id  # 稳定 tile 编号
+                    nominal_png = output_dir / f"{tile_id}_nominal.png"  # 连续灰度
+                    Image.fromarray(  # 连续值 0~255
+                        np.rint(image * 255.0).astype(np.uint8), mode="L").save(
+                        nominal_png)
+                    binary_png = output_dir / f"{tile_id}_binary.png"  # 阈值二值
+                    Image.fromarray(  # 阈值以上 255、其余 0
+                        np.where(image >= threshold, 255, 0).astype(np.uint8),
+                        mode="L").save(binary_png)
+                    tiles.append({  # manifest 条目
+                        "tile_id": tile_id,
+                        "ownership_box": [spec.ownership_box.left,
+                                          spec.ownership_box.bottom,
+                                          spec.ownership_box.right,
+                                          spec.ownership_box.top],
+                        "context_box": [spec.context_box.left,
+                                        spec.context_box.bottom,
+                                        spec.context_box.right,
+                                        spec.context_box.top],
+                        "nominal_png": nominal_png.name,
+                        "binary_png": binary_png.name})
+    manifest = {  # 完整清单
+        "format_version": 1,
+        "pixel_dbu": pixel_dbu, "canvas_pixels": canvas_pixels,
+        "threshold": threshold,
+        "grid": {"core_size_dbu": core_dbu, "context_dbu": context_dbu},
+        "tile_count": len(tiles), "tiles": tiles}
+    atomic_write_json(output_dir / "manifest.json", manifest)  # 落盘清单
+    return manifest  # 供 summary 消费

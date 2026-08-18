@@ -246,3 +246,9 @@
 
 - common 收口补遗（f8723c1 后续）：MacroProblem.save 的内联 NPZ 原子写
   改 common.io.atomic_write_npz；全量 444 passed；单遍 smoke 0.12s 照常。
+
+- _mbopc_workflow 按算法拆分（用户方案）：simple/gradient 两 workflow +
+  save_final_lithography 归 _macro_pipeline + 原文件删除；两 runner 测试
+  仅改 import 行（monkeypatch 随别名跟随）；test_macro_pipeline 新增
+  save_final stub 直测。全量 445 passed；双 smoke 基线复现。**新纪律
+  生效：commit 后直接 push 远端**（用户 2026-08-18 明示）。

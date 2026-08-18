@@ -37,8 +37,11 @@ as_points）、`io`（atomic_write_json/atomic_write_npz）、`units`（exact_db
 
 基础层不得反向依赖；`opc.iteration.<method>` 可依赖输入层、`lithography` 与
 `evaluation`（消费 `LithographyModel` 契约而非 ICCAD13 具体类型）；
-`main/_macro_pipeline.py` 是两个真实流程（验证管线与 MB-OPC）共用的 macro
-生命周期，`main/_mbopc_workflow.py` 是 MB-OPC 两入口的共享工作流。
+`main/_macro_pipeline.py` 是全部真实流程共用的 macro 生命周期（problem
+准备/候选写出/最终合并/最终光刻留档）；MB-OPC 按算法分两个工作流：
+`main/_simple_mbopc_workflow.py`（simple）与
+`main/_gradient_mbopc_workflow.py`（gradient），入口各自薄壳直连，不设
+共享中间层（2026-08-18 拆分，防止大 workflow 复燃）。
 
 ## 3. Macro–Core 管线（直接运行，无需安装）
 

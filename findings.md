@@ -371,3 +371,18 @@
   import 随之清零）；收口后 mkstemp 模式全仓仅存 common/io.py 两处唯一
   实现 + _macro_pipeline.write_macro_gds 的 GDS 载荷版（不同载荷、单
   调用点，不收）。
+
+## _mbopc_workflow 拆分事实（2026-08-18）
+
+- 按算法拆分（用户方案全采纳）：_simple/_gradient 两个 workflow 各自
+  独立（配置/结果版本/求解器 import 全分家）；save_final_lithography
+  迁 _macro_pipeline（公共后处理，该文件因此新增 torch/PIL/numpy 依赖
+  ——main 层可接受）；_mbopc_workflow.py 删除，不建 shared 中间层。
+- **测试 import 巧劲**：两 runner 测试都是 `import X as workflow` 单别名
+  ——只改 import 行，全部 monkeypatch 目标（prepare_problems/
+  ICCAD13Lithography/merge_macro_results/optimize_*）随别名自动跟随新
+  模块，测试体零改动。
+- save_final 直测用直通 stub（forward_many=mask 恒等）：四成员
+  device/config/condition/forward_many 即满足留档消费面，无需真模型。
+- 手术陷阱延续：_macro_pipeline 追加函数后补依赖要连带 numpy（np.rint/
+  where 在 PNG 变换里）；第三方 import 排序 klayout<numpy<psutil。

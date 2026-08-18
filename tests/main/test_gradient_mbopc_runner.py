@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-import main._mbopc_workflow as workflow
+import main._gradient_mbopc_workflow as workflow
 from layout import DbuBox, LayerSpec, LayoutDB
 from main.configuration import load_config
 

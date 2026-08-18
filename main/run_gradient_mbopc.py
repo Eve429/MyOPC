@@ -6,9 +6,9 @@ from pathlib import Path  # 仓库根定位
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
-    sys.path.insert(0, str(_REPO_ROOT))  # 使 main/_mbopc_workflow 可导入
+    sys.path.insert(0, str(_REPO_ROOT))  # 使 main/_gradient_mbopc_workflow 可导入
 
-from main._mbopc_workflow import run_gradient_mbopc  # 共享工作流
+from main._gradient_mbopc_workflow import run_gradient_mbopc  # 梯度工作流
 
 
 def main() -> int:

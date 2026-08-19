@@ -929,3 +929,21 @@
   成立；原表述把它写成任意阈值的通用不变量。修正为限定 0.5；threshold
   可调性保留。OBS：监督目标是 u8 量化 T（≤1/510）为规格契约。
 - 全量 528 → 529 passed。
+
+
+## 2026-08-20 Gradient EPE loss 规格修正（用户 P1/P2，Rev 0.2）
+
+- **P1（profile 聚合 mean→sum）**：固定边缘偏移下 D 的非零槽位数 ≈ 过渡区宽±偏移，
+  与 R 无关——sum 使 d_s 近似"偏移的 pixel 数"，Q/epe_distance_nm 改变不再漂移
+  loss 尺度；mean 随 Q 线性稀释。原 DEC-002"不使用 sum"的裁决反转（zero-based
+  ×(sigmoid−0.5) 与 [0,1) 值域保持）。连带：sum 使 gamma·d_s 更易饱和，
+  epe_steepness=4.0 列为实施 smoke 待验证项。
+- **P2（segment 归约等权→参考长度加权）**：等权下 16nm corner 段与 32nm 长段贡献
+  相同（短段单位边长权重 ×2），仅改 fragmentation 即改目标；长度加权
+  Σlen·pen/Σlen = 沿 target 边界的均匀离散积分，对切段基本不敏感。len_s 由参考段
+  两端点计算、随 EPE 元数据缓存（§8.3 新数据行）。
+- 规格同步面：REQ-003/INV-005/§7.3–7.4/§8.3/§10.1–10.2/DEC-002 重写 + DEC-007
+  新增；新测试 TEST-013（Q 不变性，mean 版在该用例必然线性衰减构成判别）与
+  TEST-014（切段不变性，含非等长混合段）+ 矩阵行 + AC-011；基线刷新至 08f4866。
+  两个修正相互独立：P1 治 profile 宽度漂移，P2 治 fragmentation 漂移。
+- 规格仍为 draft，待用户批准后实施。

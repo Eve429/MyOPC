@@ -435,3 +435,8 @@
   （P1-4，防 2^31 构造期溢出）+ curvature×context≥1px 入口联合约束（P2-1）
   + REQ-B 二值一致性限定 threshold=0.5；测试 +1（约束双向）+ dtype 断言；
   全量 529 passed；fix + docs 两 commit。
+
+
+- Gradient EPE loss 规格修正（用户 P1/P2）：profile 聚合 mean→sum（Q 不变性）+
+  segment 归约等权→参考长度加权（切段不变性）；DEC-002 反转 + DEC-007 新增 +
+  TEST-013/014 + AC-011，基线刷新至 08f4866；Rev 0.2，仍 draft 待批。

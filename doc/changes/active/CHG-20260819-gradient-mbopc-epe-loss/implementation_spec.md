@@ -3,14 +3,8 @@ id: CHG-20260819-gradient-mbopc-epe-loss
 title: Gradient MB-OPC 可微 EPE Loss
 type: implementation-spec
 status: draft
-baseline_commit: 540a0121eb06904bdc44ae7fe3bd491aeff22fb5
-baseline_worktree: dirty
-baseline_dirty_paths:
-  - doc/changes/active/CHG-20260818-simple-ilt/implementation_spec.md
-  - findings.md
-  - progress.md
-  - task_plan.md
-  - .learnings/
+baseline_commit: 08f4866（Simple ILT 全部交付后；生产源码与测试相对其无修改）
+baseline_worktree: dirty（仅本规格与规划记录的修订差异）
 scope:
   - opc/iteration/mbopc/gradient.py
   - main
@@ -148,19 +142,28 @@ Q = 2R
 
 ```text
 D = (Z_nom - T)^2
-d_s = mean_q(bilinear_sample(D, xy_profile[s, q]))
+d_s = sum_q(bilinear_sample(D, xy_profile[s, q]))
 penalty_s = 2 * (sigmoid(epe_steepness * d_s) - 0.5)
-O = 当前 macro 的 owner segment 总数
-L_epe = sum_s(penalty_s) / O
+len_s = reference segment s 的参考长度（由参考段两端点计算，DBU）
+L_sum = sum_s(len_s)   # 全 macro owner segment 的长度总和，macro 内常量
+L_epe = sum_s(len_s * penalty_s) / L_sum
 L_total = w_nominal*L_nominal
         + w_process*L_process
         + w_pv*L_pv
         + weight_epe*L_epe
 ```
 
-`L_epe` MUST 在零 profile error 时严格为 0，范围为 `[0,1)`。profile 内用 mean 而非 sum，
-segment 间按全 macro 固定 O 归一；每个 batch MUST 贡献 `sum(batch_penalty)/O`，不得用 batch
-自己的 segment 数作分母。
+`L_epe` MUST 在零 profile error 时严格为 0，范围为 `[0,1)`。聚合与归一化的两条不变性
+契约（Rev 0.2 修正）：
+
+- **profile 内用 sum 而非 mean**：固定边缘偏移下，D 的非零槽位数 ≈ 过渡区宽 ± 偏移量，
+  与 R/Q 无关（只要 profile 覆盖误差区）；sum 使 `d_s` 数值近似"边缘偏移了多少 pixel"，
+  更改 `epe_distance_nm` 不改变 loss 尺度。mean 会随 Q 人为稀释，使距离参数与 loss
+  尺度耦合。
+- **segment 间按参考长度加权而非等权**：等权使短段（如 corner 段）单位边长权重高于长段，
+  且仅改 fragmentation 参数就会改变优化目标；长度加权等价于沿 target 边界的均匀离散
+  积分，对切段方式基本不敏感。每个 batch MUST 贡献 `sum_s∈batch(len_s * penalty_s) / L_sum`，
+  不得用 batch 自己的 segment 数或长度作分母。
 
 ### REQ-004 — Ownership and gradient semantics
 
@@ -256,8 +259,9 @@ clear/opaque/hole 不改变公式或梯度符号约定。
 
 ### INV-005 — Normalization
 
-`L_epe` 的分母只由当前 macro 固定 owner segment 数 O 决定，不随 core 数、membership 数、
-batch size、core 顺序或有效离散 probe 数变化。
+`L_epe` 的分母是全 macro owner segment 参考长度总和 `L_sum`（macro 内常量），不随 core 数、
+membership 数、batch size、core 顺序或有效离散 probe 数变化；分子按各段参考长度加权，
+使目标近似沿 target 边界均匀积分、对 fragmentation 切段方式基本不敏感（TEST-014 锁定）。
 
 ### INV-006 — Legal publication
 
@@ -289,7 +293,8 @@ main -> opc.iteration.mbopc.gradient -> opc.input / lithography / evaluation
 ```text
 MacroProblem + target cache
         |
-        +-- owner reference midpoint/normal --> CPU profile coordinates [O,Q,2]
+        +-- owner reference midpoint/normal/length --> CPU profile coordinates [O,Q,2]
+        |       与每段参考长度 len_s（DBU）、分母 L_sum
         |
 state d_k snapshot
         |
@@ -308,7 +313,7 @@ state d_k snapshot
 
 | Stage | Input | Work | Output | MUST NOT repeat |
 |---|---|---|---|---|
-| Macro prepare | `MacroProblem`、config | owner profile 与分母 O | CPU static context | 每 state 重算 reference 坐标 |
+| Macro prepare | `MacroProblem`、config | owner profile、每段参考长度与分母 L_sum | CPU static context | 每 state 重算 reference 坐标/长度 |
 | State/batch | 固定 `d_k`、core batch | raster、一次 `forward_many`、四项 loss/backward | 累积参数 gradient、detached metrics | 为 EPE 单独 forward |
 | State barrier | 全部 batch gradient | 一次 Adam、裁剪、合法重构 | 已发布 `d_(k+1)` | batch 内提前 step |
 | Persist | best snapshot、records | NPZ/JSON/GDS/summary | 权威产物 | 重算优化或改变 best |
@@ -343,12 +348,14 @@ EPE 时 MUST 显式写入实际值。空问题或关闭路径记录 `0.0`。JSON
 
 ### 8.3 Private precomputed data
 
-每 core 只需在既有私有 context 中追加 owner profile 坐标及对应 owner segment identity/数量映射；
-数据必须是 CPU contiguous array。不得为单一调用建立公共类型、注册器或新模块。
+每 core 只需在既有私有 context 中追加 owner profile 坐标、对应 owner segment 的参考长度
+及全 macro 分母 `L_sum`；数据必须是 CPU contiguous array。不得为单一调用建立公共类型、
+注册器或新模块。
 
 | Data | Owner/lifetime | dtype/shape | Unit/coordinate | Mutability/residency |
 |---|---|---|---|---|
 | owner profile coordinates | `_GradientMacroContext` / macro solve | CPU `float64 [E_core,Q,2]` | canvas continuous `(x,y)` | immutable CPU，batch 临时转 GPU |
+| owner segment reference lengths | `_GradientMacroContext` / macro solve | CPU `float64 [E_core]` | DBU（参考段两端点距离） | immutable CPU，与 profile 一同预计算 |
 | nominal error | `_evaluate_state` / batch | device `float32 [B,H,W]` | transmission squared | transient GPU autograd tensor |
 | batch profile samples | `_evaluate_state` / batch | device `float32 [E_batch,Q]` | transmission squared | transient GPU autograd tensor |
 | macro EPE accumulator | `_evaluate_state` / state | Python/CPU float scalar | normalized loss | detached accumulation only |
@@ -383,10 +390,12 @@ EPE 时 MUST 显式写入实际值。空问题或关闭路径记录 `0.0`。JSON
 1. 校验既有 config 与启用时的 distance/pixel 关系；该校验先于空 owner 快速返回；
 2. 若 `weight_epe==0`，设置关闭标记并跳过本节余项；
 3. 从 `problem.macro.pixel_dbu` 与 `epe_distance_dbu` 计算整数 R 和 Q；
-4. 按 owner core 收集唯一 owner segment 的 reference midpoint 与 unit normal；
+4. 按 owner core 收集唯一 owner segment 的 reference midpoint、unit normal 与参考长度
+   `len_s`（由参考段两端点计算，随 profile 元数据一并缓存，不逐 state 重算）；
 5. 一次向量化生成 `[E_core,Q,2]` DBU profile，再用既有坐标契约转为 canvas 浮点坐标；
 6. 校验全部坐标落在 canvas 闭区间 `[0, canvas_pixels-1]`；越界立即失败；
-7. 校验所有 core 的 profile 总数严格等于 O。
+7. 校验所有 core 的 profile 总数严格等于 O，并一次累计全 macro 分母 `L_sum = Σ len_s`
+   （O>0 时恒正，无除零分支）。
 
 ### 10.2 State evaluation
 
@@ -399,7 +408,9 @@ for each core batch using the same d_state:
     existing ownership losses use nominal_error/process/PV
     if EPE enabled:
         samples = bilinear_gather(nominal_error, owner_profiles)
-        batch_epe = sum(2*(sigmoid(gamma*mean(samples, q))-0.5)) / O
+        d_s = sum(samples, dim=q)                 # Rev 0.2：sum 聚合（Q 不变性）
+        penalty_s = 2*(sigmoid(gamma*d_s)-0.5)
+        batch_epe = sum(len_s * penalty_s) / L_sum  # Rev 0.2：参考长度加权（切段不变性）
         macro_epe += detached(batch_epe)
         batch_loss += weight_epe * batch_epe
     backward batch_loss once when gradient is requested
@@ -420,7 +431,7 @@ sampler 必须保留 `D` 的 autograd，profile coordinates 为固定常量，�
 
 | State/data | Owner | Writers | Readers | Publish point | Lifetime |
 |---|---|---|---|---|---|
-| reference profile | macro static context | `_prepare_macro_context` once | `_evaluate_state` | context construction succeeds | macro solve |
+| reference profile 与段长 | macro static context | `_prepare_macro_context` once | `_evaluate_state` | context construction succeeds | macro solve |
 | owner parameters | optimizer | Adam at state barrier only | every core batch | legal candidate reconstruction | macro solve |
 | batch graph/samples | current core batch | PyTorch autograd | same batch backward | never persisted | one batch |
 | `epe_loss` record | state evaluation | `_evaluate_state` | best/artifact workflow | all core batches complete | result lifetime |
@@ -504,8 +515,8 @@ batch_size 或 core 遍历顺序不得改变公式、分母或参数更新语义
 
 ### TEST-001 — Formula and zero baseline
 
-用手算小 tensor 验证双线性采样、profile mean、zero-based sigmoid、macro owner mean；全零误差
-必须得到精确 `epe_loss==0`。
+用手算小 tensor 验证双线性采样、profile sum 聚合、zero-based sigmoid 与参考长度加权归一；
+全零误差必须得到精确 `epe_loss==0`。
 
 ### TEST-002 — Direction and topology
 
@@ -542,6 +553,19 @@ stub differentiable lithography 下，EPE-only loss 必须对 hard mask 和 owne
 验证 state0..N、末 state 无 backward、EPE 参与 total/best、metrics record 新字段、summary 四权重
 及 steepness、NPZ version/arrays 不变、旧 TOML 默认兼容。
 
+### TEST-013 — Profile-width invariance（Rev 0.2）
+
+固定 1 pixel 边缘偏移的确定性成像（stub model、小 gamma 保证未饱和），仅改变 Q
+（R=2/4/8，即 `epe_distance_nm` 变化）：各段 `d_s`（pre-sigmoid）不得因除以 Q 而下降
+——sum 聚合下同偏移的 `d_s` 在 profile 覆盖误差区的前提下保持同量级；mean 版本在此
+用例上必然随 Q 线性衰减，构成对旧裁决的判别。
+
+### TEST-014 — Segmentation invariance（Rev 0.2）
+
+同一条直边在相同成像条件下分别按 1 段、2 等分、非等长多段（混合 corner 段与长段）
+构造 problem：长度加权的 `L_epe` 在各切法间基本一致（容差内，允许 midpoint 采样位置
+不同带来的一阶近似差）；等权版本在混合长短段时显著偏离，构成判别。
+
 ### TEST-009 — EPE-only optimization
 
 在确定性生成问题和可微 stub model 上设置旧三权重为 0、`weight_epe>0`；至少一次合法更新必须
@@ -570,6 +594,7 @@ spy 验证启用 EPE 不增加 `forward_many` 次数、reference profile 每 mac
 | Test IDs | Planned function(s) |
 |---|---|
 | TEST-001..003 | `test_epe_profile_formula_and_zero_baseline`、`test_epe_profile_coordinates_all_directions`、`test_epe_loss_backpropagates_through_midpoint_ste` |
+| TEST-013..014 | `test_epe_profile_width_invariant_d_s`、`test_epe_loss_invariant_to_segmentation` |
 | TEST-004..006 | `test_epe_owner_scores_once_membership_gradients_sum`、`test_epe_batch_size_invariant`、`test_epe_disabled_is_exactly_compatible` |
 | TEST-007 | `test_epe_training_validation_fails_before_device_allocation`、参数化 config validation tests |
 | TEST-008 | `test_epe_record_summary_and_npz_contract`、runner/config additive schema tests |
@@ -580,6 +605,7 @@ spy 验证启用 EPE 不增加 `forward_many` 次数、reference profile 每 mac
 | Dimension | Cases | Expected distinction |
 |---|---|---|
 | Geometry | H、V、45°、outer、hole、跨 core | 坐标统一、owner 唯一、membership gradient sum |
+| Scale | Q 变化（R=2/4/8）、切段 1/2/非等长多段 | `d_s` 对 profile 宽度不变、`L_epe` 对切段基本不变（Rev 0.2） |
 | Objective | EPE-only、四项混合、EPE disabled | EPE 参与或完全退出 total/gradient |
 | State/batch | state0、可更新 state、末 state；batch 1/多 core；正/逆序 | snapshot、barrier、best、分母不变 |
 | Device | CPU、CUDA（可用时） | loss/gradient/update 在既有容差内一致 |
@@ -605,7 +631,7 @@ CUDA parity 只在 `torch.cuda.is_available()` 为真时执行；否则仅对应
 |---|---|---|---|
 | REQ-001 | config dataclasses、`resolve_gradient_config` | TEST-006..008 | AC-004, AC-006 |
 | REQ-002, INV-002, INV-004 | `_prepare_macro_context` | TEST-002, TEST-004, TEST-007 | AC-003 |
-| REQ-003, INV-005 | private sampler、`_evaluate_state` | TEST-001, TEST-005, TEST-009 | AC-002, AC-003 |
+| REQ-003, INV-005 | private sampler、`_evaluate_state` | TEST-001, TEST-005, TEST-009, TEST-013, TEST-014 | AC-002, AC-003, AC-011 |
 | REQ-004, INV-001 | `_evaluate_state`、`_EdgeGradientMask.backward` | TEST-003, TEST-004 | AC-003 |
 | REQ-005, INV-003, INV-006 | `_evaluate_state`、`optimize_gradient_macro` | TEST-008, TEST-009 | AC-001, AC-002 |
 | REQ-006 | config default、`_prepare_macro_context`、`_evaluate_state` | TEST-006 | AC-004 |
@@ -626,6 +652,7 @@ CUDA parity 只在 `torch.cuda.is_available()` 为真时执行；否则仅对应
 - [ ] AC-009：未修改 Protected Areas、`00_PAST/`、用户数据或无关工作树修改；
 - [ ] AC-010：完成差异、未调用函数、重复实现、异常入口和覆盖未命中分支审计，并更新两份报告及
   三份规划记录。
+- [ ] AC-011（Rev 0.2）：profile 宽度不变性（TEST-013）与切段不变性（TEST-014）测试通过。
 
 ## 18. Compatibility
 
@@ -643,10 +670,14 @@ CUDA parity 只在 `torch.cuda.is_available()` 为真时执行；否则仅对应
 采用 reference segment unit normal + bilinear sampling，统一支持 H/V 与斜边；不复制官方 H/V
 分支。理由：当前 MyOPC 的 segment 契约不限于 Manhattan。
 
-### DEC-002 — Use a normalized zero-based sigmoid
+### DEC-002 — Zero-based sigmoid over the profile SUM
 
-采用 `2*(sigmoid(gamma*mean(D))-0.5)`，不原样使用 `sigmoid(gamma*sum(D))`。理由：完美匹配
-应为 0，且 loss 权重不应随 profile 像素数和 segment 数漂移。
+采用 `2*(sigmoid(gamma*sum_q(D))-0.5)`（Rev 0.2 反转初稿的 mean 裁决）。理由：完美匹配
+仍严格为 0（`sigmoid(0)=0.5`）；profile 内改用 sum 聚合后，`d_s` 近似"边缘偏移的
+pixel 数"，loss 尺度不再与 `epe_distance_nm`（即 Q）耦合——mean 会把同样 1 pixel 的
+EPE 随 profile 加宽人为稀释（TEST-013 锁定）。尺度不随 segment 数漂移由 DEC-007 的
+长度加权承担。注意 sum 使 `gamma*d_s` 更易饱和，`epe_steepness` 默认 4.0 保留但
+属于待实施 smoke 验证项（见 Known Limitations）。
 
 ### DEC-003 — Fixed target profile, unique owner loss
 
@@ -662,6 +693,14 @@ profile 固定在 reference segment，只由 owner core 计一次；mask gradien
 
 API 默认 `weight_epe=0` 保护旧配置与旧数值；仓库示例显式设为 1 展示功能。该权重仅是默认
 示例，不宣称适用于所有 workload。
+
+### DEC-007 — Length-weighted segment reduction
+
+segment 间按参考段长度加权（`Σ len_s·penalty_s / Σ len_s`，Rev 0.2 新增），取代初稿的
+等权平均。理由：等权下 corner 短段（如 16nm）与普通长段（32nm）贡献相同，短段单位
+边长权重约高一倍，且仅修改 fragmentation 参数就会改变优化目标；长度加权等价于沿
+target 边界的均匀离散积分，对切段方式基本不敏感（TEST-014 锁定）。midpoint、normal
+与 profile 采样本身不变，长度由参考段两端点计算并随 EPE 元数据缓存。
 
 ### DEC-006 — Keep implementation private and local
 
@@ -717,7 +756,9 @@ None. 本文处于 draft 是因为尚待用户批准，不表示存在未定义�
 - loss 是 target-normal 局部误差聚焦 surrogate，不直接计算 printed contour 到 target contour 的
   几何距离；
 - 固定 reference profile 不追踪大位移后的 current contour；
-- sigmoid 在大误差处会饱和，steepness 需要按 workload 验证；
+- sigmoid 在大误差处会饱和，steepness 需要按 workload 验证；sum 聚合（Rev 0.2）使
+  `gamma*d_s` 更快进入饱和区，默认 `epe_steepness=4.0` 的适配性属实施 smoke 待验证项；
+- 长度加权是参考段 midpoint 采样下的一阶积分近似，切段不变性在容差内成立而非逐位相等；
 - 独立 macro context 不随邻 macro 更新；
 - 不处理 MRC、SRAF、shot count、曲率或拓扑变化；
 - 任意角度扩展是 MyOPC 设计，不是官方 DiffOPC benchmark 的逐值复现。
@@ -737,3 +778,4 @@ None. 本文处于 draft 是因为尚待用户批准，不表示存在未定义�
 | Revision | Date | Status | Summary |
 |---|---|---|---|
 | 0.1 | 2026-08-19 | draft | 新增任意方向、唯一 owner、归一化且默认关闭的 Gradient EPE loss 设计 |
+| 0.2 | 2026-08-20 | draft | 用户修正：profile 聚合 mean→sum（Q 不变性，TEST-013）与 segment 归约等权→参考长度加权（切段不变性，TEST-014）；DEC-002 反转、新增 DEC-007、INV-005/REQ-003/§8.3/§10 同步；基线刷新至 08f4866 |

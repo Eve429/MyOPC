@@ -33,6 +33,7 @@ from opc.iteration.mbopc.gradient import (
     _EdgeGradientMask,
     _evaluate_state,
     _prepare_macro_context,
+    _profile_d_s,
     _take_optimizer_step,
 )
 
@@ -699,6 +700,291 @@ class TestGeometryMatrix:
                            polarity="opaque")
         result = _optimize(problem, _LinearModel(), _config())
         self._assert_valid_publication(problem, result)
+
+
+class TestEpeLoss:
+    """可微 EPE loss：公式、方向、owner、batch、关闭兼容与两个不变性。"""
+
+    @staticmethod
+    def _identity_model():
+        """三条件剂量全 1 的线性模型：零位移下 printed == target。"""
+        return _LinearModel({"nominal": 1.0, "dose_max": 1.0,
+                             "defocus_min": 1.0})
+
+    def test_epe_profile_formula_and_zero_baseline(self):
+        """双线性采样 + sum 聚合 + zero-based sigmoid + 长度加权的逐值公式。"""
+        # 手算张量：1×6×6 误差图，两条 profile 采整数/半整数中心混合点
+        error = torch.zeros(1, 6, 6)
+        error[0, 2, 3] = 0.4   # (y=2, x=3)
+        error[0, 3, 4] = 1.0   # (y=3, x=4)
+        xy = torch.tensor([[[3.0, 2.0], [4.5, 3.0]],      # 整数中心 + 半像素
+                           [[3.0, 2.5], [4.0, 3.0]]])     # 半像素 + 整数中心
+        slots = torch.tensor([0, 0])
+        d_s = _profile_d_s(error, slots, xy)
+        # 段0：0.4 + bilinear(1.0@y3x4 于 (4.5,3)) = 0.4 + 0.5
+        # 段1：bilinear(0.4@y2x3 于 y2.5) + 1.0 = 0.2 + 1.0
+        assert float(d_s[0]) == pytest.approx(0.9, abs=1e-6)
+        assert float(d_s[1]) == pytest.approx(1.2, abs=1e-6)
+        # penalty = 2(σ(γ·d)−0.5)；L_epe = Σ len·pen / Σ len
+        gamma = 4.0
+        penalty = 2.0 * (torch.sigmoid(gamma * d_s) - 0.5)
+        lengths = torch.tensor([8.0, 16.0])
+        epe = float((lengths * penalty).sum() / lengths.sum())
+        expected = (8.0 * float(penalty[0]) + 16.0 * float(penalty[1])) / 24.0
+        assert epe == pytest.approx(expected, rel=1e-6)
+        assert epe >= 0.0  # zero-based：值域 [0,1)
+        # 零误差基线：恒等模型 + 零位移（mask==target）→ epe_loss 严格 0
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
+        result = _optimize(problem, self._identity_model(),
+                           _config(weight_epe=1.0))
+        assert result.records[0].epe_loss == 0.0
+        assert result.records[0].total_loss == 0.0
+
+    def test_epe_profile_coordinates_all_directions(self):
+        """H/V/45° 的 profile 坐标 = 参考中点 + q·单位法向（画布换算）。"""
+        polygon = kdb.Polygon([kdb.Point(8, 8), kdb.Point(48, 8),
+                               kdb.Point(48, 24), kdb.Point(24, 24),
+                               kdb.Point(24, 48), kdb.Point(8, 48)])
+        problem = _problem(kdb.Region(polygon))  # L 形含 H/V 边；另加斜边
+        problem2 = _problem(kdb.Region(kdb.Polygon([
+            kdb.Point(8, 8), kdb.Point(48, 8), kdb.Point(8, 48)])))
+        for target_problem in (problem, problem2):
+            ctx = _prepare_macro_context(
+                target_problem, _LinearModel(), _config(weight_epe=1.0))
+            assert ctx.epe_length_sum > 0.0
+            reference = target_problem.segments.materialize()
+            pixel = target_problem.macro.pixel_dbu
+            radius = 1  # 默认 epe_distance_dbu=4 / pixel 4 → Q=2
+            offsets = (np.arange(2 * radius) - radius + 0.5) * pixel
+            for core_index in range(target_problem.macro.core_count):
+                owner = ctx.core_owner_members[core_index]
+                profile = ctx.epe_profiles[core_index]
+                if not len(owner):
+                    assert profile is None
+                    continue
+                assert profile.shape == (len(owner), 2 * radius, 2)
+                mids = (reference.starts[owner] + reference.ends[owner]) * 0.5
+                normals = reference.normals[owner]
+                lengths = np.linalg.norm(
+                    reference.ends[owner] - reference.starts[owner], axis=1)
+                assert np.allclose(ctx.epe_lengths[core_index], lengths)
+                expected = mids[:, None, :] + offsets[None, :, None] * normals[
+                    :, None, :]
+                from opc.input import points_to_canvas as p2c
+                spec = target_problem.macro.core(core_index)
+                expected_xy = p2c(expected.reshape(-1, 2), spec.context_box,
+                                  pixel, 256).reshape(len(owner), -1, 2)
+                assert np.allclose(profile, expected_xy, atol=1e-9)
+                # 结构性质：坐标在闭区间 [0, 255] 内
+                assert profile.min() >= 0.0 and profile.max() <= 255.0
+            assert np.isclose(
+                sum(np.sum(ctx.epe_lengths[c]) if ctx.epe_lengths[c] is not None
+                    else 0.0
+                    for c in range(target_problem.macro.core_count)),
+                ctx.epe_length_sum)
+            del reference
+
+    def test_epe_loss_backpropagates_through_midpoint_ste(self, monkeypatch):
+        """EPE-only 梯度经既有 midpoint STE 到达唯一 owner 参数。"""
+        counts = {"apply": 0}
+        real_apply = _EdgeGradientMask.apply
+
+        def counting_apply(*args, **kwargs):
+            """计数 STE apply 调用并透传。"""
+            counts["apply"] += 1
+            return real_apply(*args, **kwargs)
+
+        monkeypatch.setattr(gradient_module, "_EdgeGradientMask",
+                            type("Spy", (), {"apply": staticmethod(
+                                counting_apply)}))
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
+        config = _config(weight_nominal_l2=0.0, weight_process_l2=0.0,
+                         weight_pvband=0.0, weight_epe=1.0)
+        result = _optimize(problem, _LinearModel(), config)
+        assert counts["apply"] > 0  # EPE 梯度路径经过 STE
+        # EPE-only：梯度非零 → 参数移动 → 位移发布
+        assert result.records[1].displaced_segments > 0
+        assert all(np.isfinite(r.epe_loss) for r in result.records)
+
+    def test_epe_owner_scores_once_membership_gradients_sum(self):
+        """每段 profile 恰在其 owner core 计一次（分母 L_sum 全宏唯一）。"""
+        problem = _problem(kdb.Region(kdb.Box(4, 4, 76, 76)))  # 跨 2×2 core
+        ctx = _prepare_macro_context(problem, _LinearModel(),
+                                     _config(weight_epe=1.0))
+        owner_total = sum(len(ctx.core_owner_members[c])
+                          for c in range(problem.macro.core_count))
+        profile_total = sum(ctx.epe_profiles[c].shape[0]
+                            if ctx.epe_profiles[c] is not None else 0
+                            for c in range(problem.macro.core_count))
+        assert profile_total == owner_total  # 无 membership 重复条目
+
+    def test_epe_batch_size_invariant(self):
+        """batch 1/2/4 下四项 loss 与位移更新一致（分母 L_sum 不变）。"""
+        problem = _problem(kdb.Region(kdb.Box(4, 4, 76, 76)))
+        results = []
+        for batch_size in (1, 2, 4):
+            results.append(_optimize(
+                problem, _LinearModel(),
+                _config(iterations=2, batch_size=batch_size,
+                        weight_epe=1.0)))
+        base = results[0]
+        for other in results[1:]:
+            assert other.best_state_index == base.best_state_index
+            assert np.allclose(other.best_displacements,
+                               base.best_displacements, rtol=1e-5, atol=1e-6)
+            for record_b, record_o in zip(base.records, other.records):
+                assert record_o.epe_loss == pytest.approx(
+                    record_b.epe_loss, rel=1e-5, abs=1e-9)
+                assert record_o.total_loss == pytest.approx(
+                    record_b.total_loss, rel=1e-5, abs=1e-9)
+
+    def test_epe_disabled_is_exactly_compatible(self, monkeypatch):
+        """weight_epe=0：不建 profile、不采样、epe 恒 0、total 为三项加权和。"""
+        calls = {"profile": 0}
+        real = gradient_module._profile_d_s
+
+        def spy(*args, **kwargs):
+            """采样器不得在关闭路径被调用。"""
+            calls["profile"] += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(gradient_module, "_profile_d_s", spy)
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
+        ctx = _prepare_macro_context(problem, _LinearModel(), _config())
+        assert ctx.epe_length_sum == 0.0  # 关闭：无 profile 无分母
+        assert all(p is None for p in ctx.epe_profiles)
+        result = _optimize(problem, self._identity_model(), _config())
+        assert calls["profile"] == 0
+        for record in result.records:
+            assert record.epe_loss == 0.0
+            expected = (record.nominal_l2_loss + 0.5 * record.process_l2_loss
+                        + 0.1 * record.pvband_loss)
+            assert record.total_loss == pytest.approx(expected, rel=1e-12)
+
+    @pytest.mark.parametrize(
+        "overrides, match",
+        [({"weight_epe": -0.1}, "非负"),
+         ({"epe_steepness": 0.0}, "epe_steepness"),
+         ({"epe_steepness": float("nan")}, "epe_steepness"),
+         ({"weight_nominal_l2": 0.0, "weight_process_l2": 0.0,
+           "weight_pvband": 0.0}, "至少一个为正")],
+        ids=["w_epe<0", "gamma=0", "gamma=nan", "全零权重"])
+    def test_epe_config_validation_fails(self, overrides, match):
+        """非法权重/陡度在构造期失败。"""
+        with pytest.raises(ValueError, match=match):
+            _config(**overrides)
+
+    def test_epe_distance_must_be_pixel_multiple_when_enabled(self):
+        """启用时 epe_distance 非 pixel 整数倍在入口、空 owner 返回前失败。"""
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
+        with pytest.raises(ValueError, match="正整数倍"):
+            _optimize(problem, _LinearModel(),
+                      _config(weight_epe=1.0, epe_distance_dbu=6.0))
+        # R≥1：距离小于一个 pixel 同样拒绝
+        with pytest.raises(ValueError, match="正整数倍"):
+            _optimize(problem, _LinearModel(),
+                      _config(weight_epe=1.0, epe_distance_dbu=2.0))
+
+    def test_epe_profile_out_of_canvas_rejected(self, monkeypatch):
+        """profile 越界守卫：构造期 ValueError，不裁剪不跳过。"""
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
+        ctx_probe_rows = len(problem.owner_segments_for_core(0))
+        real = gradient_module.points_to_canvas
+
+        def shifted(points, *args, **kwargs):
+            """profile 规模的调用（E·Q 行）平移出画布，探针调用透传。"""
+            out = real(points, *args, **kwargs)
+            if len(out) > ctx_probe_rows:  # E·Q > E（Q≥2 恒成立）
+                return out + 1e4
+            return out
+
+        monkeypatch.setattr(gradient_module, "points_to_canvas", shifted)
+        with pytest.raises(ValueError, match="越出画布"):
+            _prepare_macro_context(problem, _LinearModel(),
+                                   _config(weight_epe=1.0))
+
+    def test_epe_only_update_improves_evaluated_loss(self):
+        """EPE-only：至少一次合法更新使已评价 epe_loss 严格下降。"""
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
+        config = _config(weight_nominal_l2=0.0, weight_process_l2=0.0,
+                         weight_pvband=0.0, weight_epe=1.0)
+        result = _optimize(problem, _LinearModel(), config)
+        assert result.records[0].epe_loss > 0.0
+        assert result.records[1].epe_loss < result.records[0].epe_loss
+        best = result.records[result.best_state_index]
+        losses = [record.epe_loss for record in result.records]
+        assert best.epe_loss == min(losses)  # best 与记录一致
+
+    def test_epe_forward_count_unchanged_and_profile_built_once(
+            self, monkeypatch):
+        """启用 EPE 不增加 forward；profile 每宏恰建一次（不随 state 重建）。"""
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
+        prepare_calls = {"n": 0}
+        real = gradient_module._prepare_macro_context
+
+        def counting(*args, **kwargs):
+            """计数上下文（含 profile 坐标）构造次数。"""
+            prepare_calls["n"] += 1
+            return real(*args, **kwargs)
+
+        models = {}
+        for enabled in (False, True):
+            monkeypatch.setattr(gradient_module, "_prepare_macro_context",
+                                counting)
+            prepare_calls["n"] = 0
+            model = _LinearModel()
+            _optimize(problem, model,
+                      _config(iterations=2, weight_epe=1.0 if enabled else 0.0))
+            models[enabled] = model
+            # profile 坐标随上下文每宏恰构造一次，不随 state 重复
+            assert prepare_calls["n"] == 1
+        # forward 次数与关闭时完全一致（(N+1)×批数）
+        assert models[True].calls == models[False].calls
+
+    def test_epe_profile_width_invariant_d_s(self):
+        """Q 不变性（DEC-002）：1px 阶跃偏移下 d_s 不随 R 衰减（sum 聚合）。"""
+        # 理想阶跃：D 仅 2 槽非零（x=9、10），图像宽 20 保证 R=8 的
+        # 坐标（x∈[2,17]）落在闭区间 [0,19] 内（采样器的构造期前提）
+        error = torch.zeros(1, 1, 20)
+        error[0, 0, 9] = 1.0
+        error[0, 0, 10] = 1.0
+        d_values = []
+        for radius in (2, 4, 8):
+            q_slots = 2 * radius
+            offsets = (np.arange(q_slots) - radius + 0.5).astype(float)
+            xy = np.stack([9.5 + offsets, np.zeros(q_slots)], axis=1)
+            xy = torch.from_numpy(xy)[None, :, :]  # [1,Q,2]
+            slots = torch.zeros(1, dtype=torch.long)
+            d_values.append(float(_profile_d_s(error, slots, xy)[0]))
+        # sum 聚合：三个 R 的 d_s 都是 2.0（mean 版本将是 1.0/0.5/0.25）
+        for value in d_values:
+            assert value == pytest.approx(2.0, abs=1e-6)
+
+    def test_epe_loss_invariant_to_segmentation(self):
+        """切段不变性（DEC-007）：同一直边不同 fragmentation 的 L_epe 一致。"""
+        # 邻近第二矩形使光学沿线非均匀（否则任何归约都恒等、无判别力）
+        def make_problem(corner, segment):
+            """按 fragmentation 参数构造同一直边问题。"""
+            frag = FragmentationConfig(
+                corner_length_dbu=corner, max_segment_length_dbu=segment,
+                max_displacement_dbu=10.0, miter_limit=4.0)
+            region = kdb.Region(kdb.Box(8, 8, 72, 12))
+            region.insert(kdb.Box(20, 20, 56, 40))  # 光学沿线变化的邻特征
+            macro = _macro()
+            batch = RegionBatch({LAYER: region}, macro.query_box)
+            return prepare_macro_problem(batch, LAYER, "clear", frag, macro)
+
+        losses = []
+        for corner, segment in ((8.0, 16.0), (4.0, 32.0), (2.0, 30.0)):
+            problem = make_problem(corner, segment)
+            assert problem.segments.segment_count > 4  # 确实多段且长短混合
+            result = _optimize(problem, _LinearModel(),
+                               _config(iterations=1, weight_epe=1.0))
+            losses.append(result.records[0].epe_loss)
+        # 容差依据：midpoint 求积的一阶近似差，本几何实测 spread ≈0.8%
+        # （等权归约在同组切法下随短段占比漂移，不具该稳定性——DEC-007）
+        spread = max(losses) - min(losses)
+        assert spread == pytest.approx(0.0, abs=2e-2 * max(abs(l) for l in losses))
 
 
 class TestCallCounts:

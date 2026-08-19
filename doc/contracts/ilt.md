@@ -41,10 +41,11 @@ def optimize_simple_macro(problem, model, config, *,
   loss ownership，不截断 context 内可训练像素的梯度；梯度 scatter-add
   求和（绝不平均）；全部 core 完成后恰一次同步 SGD step；N 次更新对应
   N+1 个已评价状态（末状态纯评价）。
-- **transmission 单一定义**：trainable 与固定 context（macro 外、终评
-  画布）同为 σ(β·params)（context 恒取初始值 2T−1，无梯度）；监督/
-  指标目标是 raw T。同一物理像素在不同宏画布中的初始值一致（跨宏
-  seam 测试锁定）。
+- **transmission 单一定义（三值语义）**：trainable→当前 soft；真实
+  context（macro 外、终评画布，含物理 T=0 像素）→初始 soft
+  σ(β(2T−1))，无梯度；context window 外的数值 padding→恒 0
+  （`context_valid_canvas` 判据）。监督/指标目标是 raw T。同一物理
+  像素在不同宏画布中的初始值一致（跨宏 seam 测试锁定）。
 - **macro best**：只按完整宏总损失严格更低选择，batch 切分/顺序不变。
 - **异常**：非有限 loss/梯度/参数 → FloatingPointError，不发布当前宏。
 

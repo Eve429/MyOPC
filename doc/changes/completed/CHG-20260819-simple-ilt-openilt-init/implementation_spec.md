@@ -55,10 +55,13 @@ supersedes:
 - **REQ-C**（P1-1 回归）：纯对齐几何（无分数格）+ 真实 ICCAD13 一轮
   更新可观测：records[1].total_loss ≠ records[0]，且 best_parameters
   相对初值 max|Δp| > 1e-5（实测 ≈3.9e-4；饱和初始化 <1e-6）。
-- **REQ-D**（2026-08-19 Rev 1.1，context 统一）：固定 context（macro 外
-  与终评画布）统一为初始版图 state0 transmission σ(β(2T−1))，无梯度；
-  监督/指标目标保持 raw T。同一物理像素在不同 macro 画布中的初始
-  mask 值必须一致（跨宏 seam 测试锁定），消除 ~1.8% 的人为跳变。
+- **REQ-D**（2026-08-19 Rev 1.1，context 统一；Rev 1.2 补 padding）：
+  固定 context（macro 外与终评画布）统一为初始版图 state0 transmission
+  σ(β(2T−1))，无梯度；监督/指标目标保持 raw T。同一物理像素在不同
+  macro 画布中的初始 mask 值必须一致（跨宏 seam 测试锁定），消除
+  ~1.8% 的人为跳变。**三值语义**：trainable→当前 soft；真实 context
+  window 内（含物理 T=0 像素）→初始 soft；context window 外的数值
+  padding→恒 0（`context_valid_canvas` 掩码判据，padding 判别测试锁定）。
 
 ## 4. Scope
 
@@ -94,8 +97,10 @@ Out：初始化策略配置开关；context 直通 target 的固定区设计；�
 
 - 放弃 state0 精确恢复契约是用户裁决（2026-08-19 P1-1）：可优化性优先
   于 state0 损失最小化；OpenILT 原方案即此取舍。
-- context 固定区仍直通 target（不采用 OpenILT 的 fixed_soft 参数化），
-  维持 CHG-20260818 的既有保真差异。
+- ~~context 固定区仍直通 target（不采用 OpenILT 的 fixed_soft 参数化），
+  维持 CHG-20260818 的既有保真差异。~~
+  【Rev 1.1 已修订：固定 context 统一为 σ(β(2T−1))（见 REQ-D），不再
+  直通 target；与 OpenILT fixed_soft 同构。】
 
 ## 9. Revision History
 
@@ -104,3 +109,4 @@ Out：初始化策略配置开关；context 直通 target 的固定区设计；�
 | 0.1 | 2026-08-19 | approved | 首版（用户 P1-1 裁决 + 批准开发计划） | 用户 |
 | 1.0 | 2026-08-19 | completed | 实施完成（ebce389）：526 passed；REQ-C 阈值定 1e-5、smoke step_size 重调 1.0（偏差见 development_report）；smoke 新基线 7952→6233 | 开发/测试报告 |
 | 1.1 | 2026-08-19 | completed | REQ-D：固定 context 统一 σ(β(2T−1))（4c5f5f1），跨宏 seam 测试锁定；顺带 P1-3 性能修复（aa583a5，索引块窗口化）；527 passed；smoke 基线 7880.69→6162.49 | 用户 P1/P2 审查 |
+| 1.2 | 2026-08-20 | completed | REQ-D 补三值语义：数值 padding 不得 sigmoid（新 context_valid_canvas 掩码 + padding 判别测试）；Decisions 旧 context 直通条目标注已修订；smoke 新基线 6162.66（缩短 core 的 padding 环消除为语义变化） | 用户边界审查 |

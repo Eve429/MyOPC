@@ -608,7 +608,7 @@ for state in 0..N:
 ```
 
 同一 state 的 batch 只读同一 `macro_parameters` snapshot；scatter-add 是求和，禁止按一个 pixel
-出现的 core 数量做平均。macro 外部 context/padding 从 target canvas 直通且无参数。严格 0/1
+出现的 core 数量做平均。~~macro 外部 context/padding 从 target canvas 直通且无参数。~~【2026-08-19 起已取代（CHG-20260819 Rev 1.1/1.2）：真实 context 用 σ(β(2T−1))，数值 padding 恒 0】严格 0/1
 target 的 epsilon clamp 只改变 state0 的数值近似，不改变 target、loss ownership 或最终二值阈值。
 
 曲率使用固定 3×3 零和核；只对卷积有效区对应的 ownership 像素求和。`curvature_weight=0`
@@ -809,7 +809,7 @@ total、RSS/CUDA peak；本 change 只记录基线，不设硬阈值。
 
 - Given：一个 macro 内相邻 core，共享光学 context；某个 macro pixel 同时影响两个 core loss。
 - Then：两个 core 只统计各自 ownership loss，但该 pixel 获得两份 local gradient 之和且只对应一个
-  参数；去掉任一 core loss 时梯度相应减少。macro 外 context/padding 始终等于初始 target 且无梯度。
+  参数；去掉任一 core loss 时梯度相应减少。~~macro 外 context/padding 始终等于初始 target 且无梯度。~~【2026-08-19 起已取代（CHG-20260819 Rev 1.1/1.2）：真实 context 为初始 soft σ(β(2T−1))，数值 padding 恒 0，均无梯度】
 - Covers：REQ-005/009、INV-002。
 
 ### TEST-009：真实 ICCAD13 backward
@@ -1023,3 +1023,4 @@ None.
 | 0.3 | 2026-08-19 | approved | §14 补录 `main/run_single_pass.py`（PrepareRuntime 字段消费方，IF-001 迁移牵连，事实核对发现）；ILTStateRecord 的 stage/scale 字段经用户裁定保留；ilt_plan.json 须携带 merge/final-litho 兼容键记入实施约束 | 用户批准开发计划 |
 | 1.0 | 2026-08-19 | completed | 五阶段实施完成（5ad8ac0/54ab866/1539b6f/fefaea8/bdf86ac + 本报告批）；偏差与裁决见 development_report.md（含 merge 空 macro 候选容忍修复）；525 passed；smoke 基线见 test_report.md | 开发/测试报告 |
 | 1.1 | 2026-08-19 | completed | 标注 REQ-006/§10.2/TEST-005/COMP-001 的初始化描述已被 CHG-20260819 取代（正文保留历史） | 用户文档同步指令 |
+| 1.2 | 2026-08-20 | completed | 补标注 §10.2 与 TEST-008 的 context/padding 直通描述（已被 CHG-20260819 Rev 1.1/1.2 取代） | 用户文档同步指令 |

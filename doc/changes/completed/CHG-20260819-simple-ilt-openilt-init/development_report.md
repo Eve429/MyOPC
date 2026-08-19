@@ -58,3 +58,19 @@ binary L2 = 2893（旧基线 2896）；总 0.99s；RSS 936 MiB；CUDA peak 503 M
 4. **新基线**：全量 527 passed；smoke 7880.69→6162.49（−21.8%）、
    binaryL2 2875、binaryPVBand 883——context 统一消除 seam 光学不一致后
    终评指标较 Rev 1.0（2893）进一步改善。
+
+## Rev 1.2 追加（2026-08-20，用户边界审查）
+
+1. **数值 padding 不得 sigmoid**：Rev 1.1 把整个 target_tensor 做
+   σ(β(2T−1))，画布 padding（window 外填 0）被误变成 σ(−β)≈0.018 的
+   人为透光环。修复：`PixelMacroProblem.context_valid_canvas()` 提供真实
+   window 掩码，训练与终评统一三值语义（trainable→soft、真实 context→
+   初始 soft、padding→0）；镜像同步。新增判别测试：context 4（window
+   12px<<256）下 padding 严格 0、物理 T=0 context 格为 σ(−β)。
+2. **smoke 差异归因**：corners_unit 的缩短末端 core（108 DBU，window
+   155px）确有 padding——smoke 6162.49→6162.66（+2.8e-5 rel）是修复的
+   语义变化（环消除），非数值噪声；两次复跑逐位一致。
+3. 文档冲突清理：本规格 Decisions 的"context 直通"旧条目标注已修订；
+   CHG-20260818 §10.2/TEST-008 的 context/padding 直通描述加取代标注。
+4. 命名澄清：solver 内 trainable 槽位掩码更名 owned（与窗口掩码
+   valid_canvases 区分）。全量 528 passed。

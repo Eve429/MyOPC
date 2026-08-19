@@ -421,3 +421,11 @@
   测试报告加【已取代】标注、CHG-20260819 Rev 1.1 补 REQ-D 与两报告、
   contracts/ilt.md transmission 单一定义、测试旧注释清理）。全量 527
   passed；三个独立 commit。
+
+
+- Simple ILT P1-1 Rev 1.2（用户边界审查：padding 不得 sigmoid）：新增
+  PixelMacroProblem.context_valid_canvas()，训练/终评/镜像统一三值语义，
+  padding 判别测试（window 12px core）；smoke 6162.49→6162.66 为缩短
+  core 环消除的语义变化；双真源文档清理（Decisions 旧条目 +
+  CHG-20260818 §10.2/TEST-008 标注）。全量 528 passed；fix + docs 两
+  commit。P1-3 按用户复核结论关闭。

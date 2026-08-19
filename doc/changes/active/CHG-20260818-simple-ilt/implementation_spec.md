@@ -2,11 +2,16 @@
 id: CHG-20260818-simple-ilt
 title: Simple ILT 与像素型 ILT 基础管线迁移
 type: implementation-spec
-status: draft
-baseline_commit: 2fa75ea89ea6cd64122214f1e2e0ed14cae518c3
+status: approved
+baseline_commit: 540a0121eb06904bdc44ae7fe3bd491aeff22fb5
 baseline_worktree: dirty
 baseline_dirty_paths:
-  - opc/input/grid.py
+  - doc/changes/active/CHG-20260818-simple-ilt/implementation_spec.md
+  - findings.md
+  - progress.md
+  - task_plan.md
+  - .learnings/ERRORS.md
+  - .learnings/LEARNINGS.md
 scope:
   - opc/input/pixel
   - opc/iteration/ilt
@@ -55,17 +60,17 @@ supersedes: []
 
 迁移 OpenILT Simple ILT，并建立后续 LevelSet、CurvMulti、Multilevel 可直接复用的最小像素
 problem、结果和 macro/core 执行边界，使用户可以直接运行一个 Python 文件，从 GDS 输入完成
-tile-batched 优化、指标计算、逐 macro 结果、最终 GDS 合并和可选最终光刻图保存。
+macro 同步优化、core-batched 光刻计算、指标计算、逐 macro 结果、最终 GDS 合并和可选最终光刻图保存。
 
 ## 2. Baseline and Evidence
 
 ### 2.1 Baseline
 
-- Commit：`2fa75ea89ea6cd64122214f1e2e0ed14cae518c3`
-- Worktree：设计开始时 clean；交付前发现 `opc/input/grid.py` 有一处未提交的注释删改（删除
-  “设计文档 §5.3”字样），不改变代码行为、来源无法确认，本 change MUST 保留且不得提交该差异。
-- 验证环境：Windows、Python `D:/app/miniforge/envs/myopc/python.exe`、PyTorch、KLayout。
-- 基线回归：`446 passed in 98.28s`。
+- Commit：`540a0121eb06904bdc44ae7fe3bd491aeff22fb5`
+- Worktree：本次修订仅修改本规格、根目录工作记录与 `.learnings/` 记录；生产源码和测试无未提交差异。
+- 验证环境：Linux、Python `/home/wzh/miniconda3/envs/myopc312/bin/python` 3.12.0、CPU；当前环境
+  CUDA 不可用。
+- 基线回归：`450 passed, 8 skipped in 87.86s`；8 项跳过均为 CUDA 测试。
 
 ### 2.2 Confirmed Facts
 
@@ -82,10 +87,11 @@ tile-batched 优化、指标计算、逐 macro 结果、最终 GDS 合并和可�
 | FACT-009 | 旧迁移 Simple ILT 是 sigmoid 参数化、SGD、连续 nominal/process/PV loss 和可选 mask curvature | `00_PAST/opc/iteration/ilt/simple.py::optimize` | 只读静态阅读 |
 | FACT-010 | OpenILT 上游按中央 filter 固定 context，最后一次 SGD 更新未评价，batch 共用一个 best | `OpenILT/pyilt/simpleilt.py::SimpleILT.solve` | 只读静态阅读 |
 | FACT-011 | OpenILT 根许可证是 MIT | `OpenILT/LICENSE` | 只读静态阅读 |
+| FACT-012 | 名义 core/context 已强制为 pixel 整数倍，但版图 bbox 末端缩短 core 仍可不是 pixel 整数倍 | `opc/input/grid.py::plan_macros/_core_cuts`、`tests/opc/input/test_grid.py::TestGridValidation` | 源码与测试静态阅读 |
 
 ### 2.3 Uncertainty Boundary
 
-- 本 change 不宣称 tile 独立求解等价于全 reticle 联合 ILT；相邻 tile 不交换已优化 context。
+- 本 change 不宣称逐 macro 独立求解等价于全 reticle 联合 ILT；相邻 macro 不交换已优化参数。
 - 本 change 不宣称像素 GDS 满足 MRC、shot count、最小线宽或全局最优。
 - 当前没有可核验的性能阈值；本 change 只记录固定 smoke 的时间/RSS/CUDA peak，不声称提速。
 
@@ -93,7 +99,7 @@ tile-batched 优化、指标计算、逐 macro 结果、最终 GDS 合并和可�
 
 | Reference | Role | Adopt | Explicitly reject | Reason |
 |---|---|---|---|---|
-| `OpenILT/pyilt/simpleilt.py` | 原始算法 | sigmoid、中央可动区、SGD、三连续损失、best snapshot | 全局变量、DataParallel、assert 配置、最后一步不评价、batch 共用 best | 与当前接口、状态语义和 batch 不变量冲突 |
+| `OpenILT/pyilt/simpleilt.py` | 原始算法 | sigmoid、SGD、三连续损失、best snapshot | 全局变量、DataParallel、assert 配置、固定 core context、最后一步不评价、batch 共用 best | 与 macro 同步状态和 batch 不变量冲突 |
 | `OpenILT/SIMPLEILT_IMPLEMENTATION_GUIDE.md` | 算法解释与实测 | loss 公式、ROI/filter、EPE 仅评价的事实 | 旧 2048 benchmark runner 与 shot 依赖 | 当前模型固定 256 且工程管线不同 |
 | `00_PAST/opc/iteration/ilt/simple.py` | 首次适配参考 | 具名 ProcessCondition、结构化 record/result、真实模型测试 | `SimpleILTResult` 被其他方法反向引用、单图 runner | 本次从首个方法建立中性公共结果契约 |
 | `00_PAST/main/run_ilt.py` | 旧接线反例与产物参考 | NPZ/PNG/资源统计字段意图 | method 大分派、旧 offline_inputs/artifacts、无 macro、无 GDS | 不符合当前 main 结构和大版图路线 |
@@ -126,34 +132,49 @@ target；迭代阶段 MUST 从该数组切 core canvas，不重复调用 KLayout
 
 ### REQ-004
 
-所有数组 MUST 使用 `[y,x]`，row 0=最低全局 Y，`1=透光/0=不透光`；clear/opaque 只在
-problem 构造与最终 GDS 反变换边界处理，求解器内部 MUST 无极性分支。
+所有数组 MUST 使用 `[y,x]`，row 0=最低全局 Y，`1=透光/0=不透光`，中间值保留面积覆盖率；
+clear/opaque 只在 problem 构造与最终 GDS 反变换边界处理，求解器内部 MUST 无极性分支。
 
 ### REQ-005
 
-每个 core 的 context/padding MUST 固定为初始 target；只有 core ownership 像素可训练、
-计分和最终回写。内部 core 切线像素归右/上，最外侧不足一个 pixel 的末端像素归最后 core，
-最终几何精确裁到 macro ownership。
+core ownership 只定义当前 core 唯一统计 loss 的区域；macro trainable domain 是当前 macro
+ownership 内全部可修改 pixel；simulation context 是该 core 完整 256×256 光刻画布。处理一个 core
+时，simulation context 内属于 macro trainable domain 的全部 pixel MUST 保持可微，只有 macro 外部
+context 与 padding 固定。最终写回仍只发布 macro ownership，不能从 context 重复写回。
+
+ILT prepare 还 MUST 在栅格化前确认每个实际 macro/core ownership box 的宽高都是 `pixel_dbu`
+整数倍；最外侧缩短 core 不满足时必须 `ValueError`，不得创建 partial ownership pixel。
 
 ### REQ-006
 
-Simple ILT MUST 使用 `parameters -> sigmoid(beta*parameters)`、SGD、nominal L2、process-corner
-L2、连续 PV loss 和可选 mask curvature；每项 loss 只对 ownership 像素求和。
+Simple ILT MUST 保留 `target_u8/255` 的 fractional transmission coverage。设 `T=target_u8/255`，
+macro 参数初值 MUST 为 `logit(clamp(T, eps, 1-eps))/beta`，其中 `eps` 是仅用于避免严格 0/1
+产生无穷值的固定 float32 小量，不增加配置项；state 0 的 soft mask MUST 在绝对误差 `1e-6`
+内恢复 T。macro 外部 context 直接使用输入 transmission，不参数化。
+
+训练仍使用 sigmoid、SGD、nominal L2、process-corner L2、连续 PV loss 和可选 mask curvature；
+每个 core 的各项 loss 只在其 ownership 像素求和，不做 overlap loss averaging。
 
 ### REQ-007
 
-`iterations=N` MUST 表示发布并评价 N 次 SGD 更新：记录 state 0 baseline 与 state 1..N；
-state N 不再做无效更新。
+`iterations=N` MUST 表示 macro 级发布并评价 N 次同步 SGD 更新：同一 state 的全部 core/batch
+读取同一 macro parameter snapshot，各自反向后把 local gradient scatter-add 到唯一
+macro gradient；全部 core 完成后才允许执行一次 step 并发布下一 state。记录 state 0 baseline
+与 state 1..N；state N 只执行 forward/loss/best 评价，不再 backward 或 step。
 
 ### REQ-008
 
-batch 内每个样本 MUST 独立选择 total loss 最低的 best state；改变 `batch_size` MUST NOT
-因共享 best iteration 改变同一 core 的结果（允许浮点约定容差）。
+每个 state 完成全部 core 评价后，MUST 把各 core ownership loss 求和为 `macro_total_loss`，并按
+严格更低值选择唯一 `best_macro_parameters`。不得把不同 core 的不同 best state 拼成最终 mask。
+改变 `batch_size` 或 core 遍历顺序 MUST NOT 改变宏级 best 与最终输出（允许浮点约定容差）。
 
 ### REQ-009
 
-一个 core batch MUST 在 GPU 上完成全部状态后立即把 best ownership 参数/软 mask/二值 mask
-回写 CPU macro 数组并释放 batch 张量；不得保存整张 reticle tensor。
+CPU MUST 只常驻当前 macro 的 target、parameters、accumulated gradient 与 best parameters；GPU
+一次只处理一个 core batch。每批 backward 后只把 local gradient scatter-add 回 CPU macro
+gradient 并释放 autograd graph；同一物理 pixel 只有一个 macro 参数，可以累加来自多个 core loss
+的梯度，不得建立重叠参数副本或对重叠梯度取平均。全部 batch 完成后才更新 CPU macro parameters；
+不得把整个 macro 或 reticle tensor 常驻 GPU。
 
 ### REQ-010
 
@@ -172,7 +193,7 @@ opaque 输出 ownership 内的不透光像素，所有矩形 MUST 裁到 macro o
 
 ### REQ-013
 
-首个实现 MUST 提供仅含当前真实调用方的 `ILTMethod`、通用 batch result/record 和公共 workflow；
+首个实现 MUST 提供仅含当前真实调用方的 `ILTMethod`、通用 macro result/record 和公共 workflow；
 MUST NOT 建 solver 基类、注册器或未使用方法模块。
 
 ### REQ-014
@@ -183,7 +204,7 @@ core 数增加；异常路径 MUST 在 `finally` 关闭内外层进度条。
 ### REQ-015
 
 summary MUST 记录输入/准备/优化/合并/总耗时、RSS 起点/准备后/峰值、显式 CUDA device peak、
-macro/core/pixel 数、loss/指标、产物路径和已知 tile seam 策略。
+macro/core/pixel 数、loss/指标、产物路径和已知 macro seam 策略。
 
 ### REQ-016
 
@@ -200,8 +221,8 @@ macro/core/pixel 数、loss/指标、产物路径和已知 tile seam 策略。
 
 ### 5.1 In Scope
 
-- 像素 MacroProblem 的构造、NPZ、core canvas/ownership 映射和 pixel→Region。
-- Simple ILT batch optimizer、公共 ILT record/result、公共 ILT workflow。
+- 像素 MacroProblem 的构造、NPZ、core canvas/loss ownership/trainable index 映射和 pixel→Region。
+- Simple ILT macro optimizer、公共 ILT record/result、公共 ILT workflow。
 - TOML 配置、一个薄适配器、一个直接入口、逐 macro/最终产物。
 - CPU 单元/集成测试、可用时 CUDA parity、生成式多图形与真实小 GDS smoke。
 - 当前文档、开发/测试报告与项目规划记录同步。
@@ -209,7 +230,7 @@ macro/core/pixel 数、loss/指标、产物路径和已知 tile seam 策略。
 ### 5.2 Out of Scope
 
 - LevelSet、CurvMulti、Multilevel 的代码实现；本 change 只冻结它们可复用的接口。
-- macro 全场联合参数、tile 间更新 context 交换、Schwarz/overlap reconciliation。
+- 跨 macro 联合参数、更新交换、Schwarz/overlap reconciliation。
 - EPE loss、EPE 像素轮廓评价、shot、MRC、SRAF、mask rule regularization。
 - NPZ 直接离线入口、训练 checkpoint/resume、分布式 worker、多 GPU DataParallel。
 - 全局多边形最小化或非像素格矢量拟合。
@@ -224,15 +245,17 @@ macro/core/pixel 数、loss/指标、产物路径和已知 tile seam 策略。
 
 ### INV-001
 
-一个 macro ownership 像素 MUST 有且只有一个 core writer；context 和 padding MUST 无 writer。
+一个 macro ownership 像素 MUST 有且只有一个最终 writer，并且只属于一个 core 的 loss ownership；
+macro 外部 context 和 padding MUST 无 writer。
 
-Enforced by：`PixelMacroProblem.place_owned_canvas` 的写入计数测试。
+Enforced by：core ownership 计数、macro trainable index 映射与最终写出测试。
 
 ### INV-002
 
-同一 core 的 state 0..N MUST 读取相同 target/context；SGD 只能修改 ownership 参数。
+同一 state 的全部 core/batch MUST 读取同一 macro parameter snapshot；core ownership 只限制 loss
+统计，不截断 simulation context 内 macro-trainable pixel 的梯度。全部 core 梯度完成前参数不可更新。
 
-Enforced by：mask 混合公式与 fixed-area 回归。
+Enforced by：跨 core 梯度求和、state 屏障与反序/batch size 对照。
 
 ### INV-003
 
@@ -242,9 +265,9 @@ Enforced by：N+1 record、手算一阶更新与 best snapshot 测试。
 
 ### INV-004
 
-batch 中样本的 best state MUST 独立；batch 重排或拆分不能改变样本 best。
+best state MUST 是完整 macro 已评价状态；batch 重排或拆分不能改变 macro best。
 
-Enforced by：batch size 1/2 和反序输入对照。
+Enforced by：batch size 1/2、core 正逆序和“不同 core 局部最优轮不同”对照。
 
 ### INV-005
 
@@ -265,9 +288,9 @@ Enforced by：clear/opaque、core/macro seam 与回读 XOR/面积测试。
 | Component | Responsibility | MUST NOT own |
 |---|---|---|
 | `opc.input.pixel.problem` | macro target 一次栅格、NPZ、core 映射、owned raster→Region | 光刻、loss、optimizer、CLI |
-| `opc.iteration.ilt._common` | 通用 record/result、batch 归一化、逐样本连续 loss/curvature | 方法分派、GDS、进度 |
-| `opc.iteration.ilt.simple` | sigmoid、SGD、state/best | layout、macro merge、tqdm |
-| `main._ilt_workflow` | 配置、problem 准备、core batch、指标、产物、macro merge | 具体参数化和 optimizer 数学 |
+| `opc.iteration.ilt._common` | 通用 macro record/result、连续 loss/curvature | 方法分派、GDS、进度 |
+| `opc.iteration.ilt.simple` | macro 参数、core-batched 梯度累加、同步 SGD、macro state/best | layout、macro merge、tqdm |
+| `main._ilt_workflow` | 配置、problem 准备、指标、产物、macro merge | 具体参数化和 optimizer 数学 |
 | `main._simple_ilt_workflow` | Simple 方法描述对象与薄调用 | 公共生命周期复制 |
 | `main.run_simple_ilt` | CLI config path、调用、摘要打印 | 算法与业务逻辑 |
 
@@ -300,10 +323,14 @@ GDS + TOML
  -> per macro query(query_box).materialize_intersecting
  -> prepare_pixel_macro_problem -> pixel_problems/<macro>.npz
  -> per macro load once
- -> per core batch: target_canvas + ownership_canvas
-    -> optimize_simple_batch: state 0..N, forward/backward, per-sample best
-    -> final best binary forward + owned L2/PV
-    -> place_owned_canvas into macro arrays; release batch GPU graph
+ -> optimize_simple_macro: initialize one macro parameter state from coverage
+    -> per state 0..N
+       -> per core batch: snapshot context canvas + ownership loss mask
+          -> forward/backward; scatter-add local gradient to macro gradient
+          -> release batch GPU graph
+       -> aggregate macro loss; update macro best
+       -> if not state N: one synchronized CPU SGD step
+    -> final best binary per-core forward + owned L2/PV
  -> reconstruct_pixel_region -> best.gds + result/metrics
  -> merge_macro_results exactly once
  -> optional save_final_lithography
@@ -319,9 +346,9 @@ GDS + TOML
 |---|---|---|---|---|
 | 0 | TOML+GDS | 配置/DBU/网格 | macros | 不物化 geometry |
 | 1 | 一个 macro query | 一次物化/栅格 | PixelMacroProblem NPZ | 不提边；不按 core 调 KLayout |
-| 2 | 一个 problem | 加载 target、分配 macro result | CPU resident state | 不重读 GDS |
-| 3 | 一个 core batch | N+1 状态优化、best、最终指标 | owned batch result | batch 内不写 GDS |
-| 4 | macro 全 core | pixel→Region、NPZ/JSON/GDS | macro artifacts | 不逐 core 写 GDS |
+| 2 | 一个 problem | 加载 target、初始化 macro 参数/梯度/best | CPU macro state | 不重读 GDS |
+| 3 | 一个 macro state | 全部 core batch 评价/反向、梯度累加、同步 step | 下一 macro state 或 final best | 屏障前不更新参数 |
+| 4 | macro best | final binary 指标、pixel→Region、NPZ/JSON/GDS | macro artifacts | 不逐 core 写 GDS |
 | 5 | 全部 macro GDS | ownership merge、可选最终光刻 | final artifacts | 全局 merge 恰一次 |
 
 ### 7.5 Planned Call Graph
@@ -335,12 +362,12 @@ main/run_simple_ilt.py::main
       ├─ ICCAD13Lithography
       ├─ per macro
       │  ├─ PixelMacroProblem.load
-      │  ├─ per core batch                             [progress/state sync]
-      │  │  ├─ problem.target_canvas/ownership_canvas
-      │  │  ├─ simple.optimize_simple_batch            [state loop N+1]
-      │  │  │  └─ model.forward_many                   [once per state]
-      │  │  ├─ model.forward_many(best binary)         [once final evaluation]
-      │  │  └─ problem.place_owned_canvas
+      │  ├─ simple.optimize_simple_macro                [macro state loop N+1]
+      │  │  └─ per core batch                           [same snapshot]
+      │  │     ├─ problem.target_canvas/trainable_index_canvas/ownership_canvas
+      │  │     ├─ model.forward_many                    [once per batch state]
+      │  │     └─ scatter-add local gradient            [CPU macro gradient]
+      │  ├─ model.forward_many(best binary)             [per core batch final evaluation]
       │  ├─ reconstruct_pixel_region
       │  └─ write_macro_gds + NPZ/JSON
       ├─ merge_macro_results                           [once]
@@ -365,7 +392,8 @@ main/run_simple_ilt.py::main
 | `polarity` | `MaskPolarity` | scalar | - | GDS polygon→transmission 解释 |
 | `target_u8` | NumPy `uint8` | `[Hq,Wq]` | 1/255 | query box 覆盖率 transmission，0..255 |
 
-`Hq=ceil(query_box.height/pixel_dbu)`，`Wq` 同理；不得存每 core 的重复 256 canvas。
+ILT prepare 已保证 query/macro/core box 尺寸整除 pixel，因此
+`Hq=query_box.height/pixel_dbu`，`Wq` 同理；不得存每 core 的重复 256 canvas。
 
 Public operations：
 
@@ -375,14 +403,17 @@ PixelMacroProblem.save(path) -> Path
 PixelMacroProblem.load(path) -> PixelMacroProblem
 PixelMacroProblem.target_canvas(core_index) -> np.ndarray[np.uint8]       # [256,256]
 PixelMacroProblem.ownership_canvas(core_index) -> np.ndarray[np.bool_]   # [256,256]
-PixelMacroProblem.place_owned_canvas(destination, core_index, canvas) -> None
+PixelMacroProblem.trainable_index_canvas(core_index) -> np.ndarray[np.int32]  # [256,256]，macro 外=-1
 reconstruct_pixel_region(problem, binary_ownership) -> kdb.Region
 ```
+
+`trainable_index_canvas` 的非负值是 `[Hm,Wm]` macro parameter 的 row-major 扁平索引；同一物理
+pixel 在不同 core context 中必须返回同一个索引。
 
 ### `ILTStateRecord`
 
 - Owner：`opc.iteration.ilt._common`
-- Lifetime：one batch result；macro workflow 按相同 state 坐标求和。
+- Lifetime：one macro result；每条记录对应完整 macro 已评价 state。
 
 | Field | dtype | unit | meaning |
 |---|---|---|---|
@@ -390,28 +421,28 @@ reconstruct_pixel_region(problem, binary_ownership) -> kdb.Region
 | `stage_index` | int | stage | Simple 固定 0；为后续多尺度保留真实通用坐标 |
 | `stage_state_index` | int | state | Simple 等于 state_index |
 | `scale` | int | pixel ratio | Simple 固定 1 |
-| `total_loss` | float | 1 | batch 样本加权 loss 之和 |
+| `total_loss` | float | 1 | 全部 core ownership 加权 loss 之和 |
 | `nominal_l2` | float | 1 | ownership 连续 nominal L2 |
 | `process_l2` | float | 1 | ownership 全 process conditions 对 target L2 |
 | `pvband_loss` | float | 1 | ownership process max-min 连续平方差 |
 | `curvature_loss` | float | 1 | ownership mask 曲率平方和 |
-| `elapsed_seconds` | float | second | 本 batch state wall time |
+| `elapsed_seconds` | float | second | 本 macro state 全部 core wall time |
 
-### `ILTBatchResult`
+### `ILTMacroResult`
 
 - Owner：具体 ILT optimizer；workflow 只读。
-- Lifetime：one core batch；回写后立即释放。
-- Resident：model device，输出边界转 CPU。
+- Lifetime：one macro solve。
+- Resident：CPU；GPU batch graph 在每批 backward 后释放。
 
 | Field | dtype | shape | meaning |
 |---|---|---|---|
-| `best_parameters` | torch float32 | `[B,256,256]` | 每样本 best 已评价参数 |
-| `soft_mask` | torch float32 | `[B,256,256]` | 对应 best transmission |
-| `binary_mask` | torch bool | `[B,256,256]` | 按方法定义二值化的 best mask |
-| `best_state_indices` | torch int64 | `[B]` | 每样本独立 best state |
-| `records` | tuple[`ILTStateRecord`,...] | `[N+1]` | batch 聚合状态记录 |
+| `best_parameters` | NumPy float32 | `[Hm,Wm]` | 唯一 macro best 已评价参数 |
+| `soft_mask` | NumPy float32 | `[Hm,Wm]` | 对应 macro ownership transmission |
+| `binary_mask` | NumPy bool | `[Hm,Wm]` | 按方法定义二值化的 macro best mask |
+| `best_state_index` | int | scalar | 唯一 macro best state |
+| `records` | tuple[`ILTStateRecord`,...] | `[N+1]` | macro 状态记录 |
 
-空 batch 非法；`B>=1`。输出 tensor MUST detach，不携带 autograd graph。
+`Hm/Wm` 是 macro ownership 的整像素形状。结果不携带 autograd graph。
 
 ### `ILTMethod`
 
@@ -421,8 +452,8 @@ reconstruct_pixel_region(problem, binary_ownership) -> kdb.Region
 |---|---|
 | `method_name` | summary/artifact 稳定标识 `simple_ilt` |
 | `config_type` | `load_config` 请求的算法 dataclass |
-| `optimize_batch` | 统一 solver 签名 |
-| `evaluated_states` | 从具体配置返回每 core 评价状态数；Simple=`iterations+1` |
+| `optimize_macro` | 统一 solver 签名 |
+| `evaluated_states` | 从具体配置返回每 macro 评价状态数；Simple=`iterations+1` |
 
 不得增加 save/summary 等没有真实差异的 hook。
 
@@ -450,7 +481,7 @@ nominal L2 权重固定 1.0，与 OpenILT Simple 公式一致；不得增加未�
 |---|---|---|
 | `ilt_plan.json` | JSON v1 | layout/top/layer/polarity/dbu/grid、macro entries、pixel/problem bytes、准备时间/RSS |
 | `pixel_problems/<macro>.npz` | `myopc.pixel-ilt-problem` v1，uncompressed，allow_pickle=False | macro cuts/boxes/grid、layer/polarity、`target_u8[Hq,Wq]` |
-| `macros/<macro>/simple_ilt_result.npz` | v1 | ownership origin/shape、best_parameters float32、soft_mask float32、binary_mask uint8、best_state_indices int32[C] |
+| `macros/<macro>/simple_ilt_result.npz` | v1 | ownership origin/shape、best_parameters float32、soft_mask float32、binary_mask uint8、best_state_index int32 scalar |
 | `macros/<macro>/metrics.json` | JSON v1 | aggregated records、binary L2/PVBand、core count、耗时 |
 | `macros/<macro>/best.gds` | GDS | `RESULT` cell、目标 layer、完整 macro 候选 |
 | final layout | GDS | 现有 ownership merge/cell_mode contract |
@@ -506,18 +537,17 @@ Target：`_parse_config` 对每个 config type 调用一次 `get_type_hints(conf
 ### IF-004：新增统一 optimizer 签名
 
 ```python
-optimize_simple_batch(
-    target: torch.Tensor,
-    ownership: torch.Tensor,
+optimize_simple_macro(
+    problem: PixelMacroProblem,
     model: LithographyModel,
     config: SimpleILTConfig,
     *,
-    on_states_completed: Callable[[int], None] | None = None,
-) -> ILTBatchResult
+    on_tiles_completed: Callable[[int], None] | None = None,
+) -> ILTMacroResult
 ```
 
-`target/ownership` 必须是同形 `[B,256,256]`；target float32 `[0,1]`，ownership bool。
-非法输入抛 `ValueError`，模型/CUDA 异常原样传播。
+solver 内部按 `config.batch_size` 提取 `[B,256,256]` simulation canvas；非法 problem/config
+抛 `ValueError`，模型/CUDA 异常原样传播。
 
 ### IF-005：新增公共 workflow 与直接入口
 
@@ -546,29 +576,38 @@ for macro in stable row-major order:
 write ilt_plan only after all macros succeed
 ```
 
-### 10.2 Core batch 与 Simple 状态
+### 10.2 Macro 同步状态与 core batch 梯度
 
 ```text
-target = target_u8 / 255
-movable = ownership bool
-initial_params = 2*target - 1
-fixed_soft = sigmoid(beta*initial_params).detach()
-params = clone(initial_params, requires_grad=True)
-SGD(params, lr=step_size)
-best_loss[B] = +inf
+T = macro ownership target_u8 / 255
+T_clamped = clamp(T, float32_eps, 1-float32_eps)
+macro_parameters = log(T_clamped/(1-T_clamped)) / beta
+assert abs(sigmoid(beta*macro_parameters)-T) <= 1e-6
+best_macro_loss = +inf
 
 for state in 0..N:
-    optimized_soft = sigmoid(beta*params)
-    mask = where(movable, optimized_soft, fixed_soft)
-    printed = forward_many(mask, nominal+dose_max+defocus_min)
-    per_sample components = selected continuous losses
-    update each sample best where its total loss strictly decreases
-    append aggregate record
-    notify progress(B)
+    build_gradient = state < N
+    macro_gradient = zeros_like(macro_parameters) if build_gradient else None
+    macro loss components = 0
+    for core batch in stable order:
+        extract full 256x256 target transmission canvas as target_u8 / 255
+        gather current macro parameters for every trainable pixel in each simulation context
+        mask = target canvas, overwritten by sigmoid(beta*local_parameters) where trainable_index >= 0
+        printed = forward_many(mask, nominal+dose_max+defocus_min)
+        compute each core loss only on its core ownership
+        if build_gradient:
+            backward(sum(core losses))
+            scatter-add local parameter gradients into macro_gradient by trainable_index
+        release batch tensors/autograd graph; notify progress(B)
+    sum all core components into one macro state record
+    update best_macro_parameters only if macro_total_loss strictly decreases
     if state == N: break
-    backward(sum(per_sample total))
-    optimizer.step()
+    macro_parameters -= step_size * macro_gradient
 ```
+
+同一 state 的 batch 只读同一 `macro_parameters` snapshot；scatter-add 是求和，禁止按一个 pixel
+出现的 core 数量做平均。macro 外部 context/padding 从 target canvas 直通且无参数。严格 0/1
+target 的 epsilon clamp 只改变 state0 的数值近似，不改变 target、loss ownership 或最终二值阈值。
 
 曲率使用固定 3×3 零和核；只对卷积有效区对应的 ownership 像素求和。`curvature_weight=0`
 时不得执行 conv2d。process 条件为空不作为配置能力暴露；当前固定两个既有 process conditions。
@@ -576,12 +615,12 @@ for state in 0..N:
 ### 10.3 最终评价与回写
 
 ```text
-binary = best_soft >= mask_threshold
-forward_many(binary.float, three conditions) under no_grad
-evaluate binary L2/PVBand with ownership
-copy best arrays to CPU once
-for each core: place only owned canvas slice into macro ownership arrays
-after all cores: assert write_count == 1 for every macro pixel
+best_soft = sigmoid(beta*best_macro_parameters)
+binary_macro = best_soft >= mask_threshold
+for each core batch:
+    compose full simulation canvas from binary_macro inside this macro and initial target outside
+    forward_many(canvas, three conditions) under no_grad
+    evaluate binary L2/PVBand only on each core ownership
 reconstruct row-run Region; polarity inverse; clip ownership; merge
 ```
 
@@ -590,8 +629,9 @@ reconstruct row-run Region; polarity inverse; clip ownership; merge
 | Condition | Required behavior |
 |---|---|
 | 空目标层 | prepare 前 `ValueError`，无 plan |
-| 最后 core 小于名义 core | 居中 canvas；所有与 ownership 正面积相交的末端 pixel 归最后 core |
-| core/macro seam | 唯一 owner 回写；context 不回写；记录 tile-independent 限制 |
+| 最后 core 小于名义 core | 允许缩短，但实际宽高必须为 pixel 整数倍；否则 raster 前失败 |
+| core seam | 同一 macro 参数与梯度跨 core 共享；loss ownership 唯一，不平均重叠梯度 |
+| macro seam | macro 外 context 固定初始 target；最终仅写自身 ownership，记录独立 macro 限制 |
 | clear/opaque | solver 输入均为 transmission；最终 Region 按 polarity 逆变换 |
 | hole/concave/diagonal | 像素域允许；GDS 为合并的 pixel stair-step geometry |
 | batch 尾部不足 B | 真实 batch 大小，进度按真实数 |
@@ -604,7 +644,7 @@ reconstruct row-run Region; polarity inverse; clip ownership; merge
 S0 --evaluate/save best--> metrics(S0) --backward/step--> S1
 S1 --evaluate/save best--> metrics(S1) --backward/step--> S2
 ...
-SN --evaluate/save best--> metrics(SN) --no step--> result
+SN --forward/evaluate/save best--> metrics(SN) --no backward/step--> result
 ```
 
 ## 11. Ownership and State
@@ -612,23 +652,25 @@ SN --evaluate/save best--> metrics(SN) --no step--> result
 | State/data | Owner | Writers | Readers | Publish point | Lifetime |
 |---|---|---|---|---|---|
 | PixelMacroProblem | input layer | prepare only | workflow | NPZ atomic replace | persisted macro |
-| target/context | problem | none | optimizer/model | problem load | macro/batch |
-| params | optimizer | SGD only ownership gradient | current state | step complete | one batch |
-| batch best | optimizer | strict per-sample lower loss | workflow | evaluated state | one batch |
-| macro result arrays | workflow | `place_owned_canvas` unique writer | artifact writer | all cores complete | one macro |
+| target/context | problem | none | optimizer/model | problem load | one macro |
+| macro parameters | optimizer | synchronized SGD step | all core batches | all core gradients complete | one macro |
+| macro gradient | optimizer | local gradient scatter-add | synchronized SGD step | all core batches complete | one state |
+| macro best | optimizer | strict lower macro total loss | workflow/artifact writer | evaluated macro state | one macro |
+| macro result arrays | optimizer | best state materialization | artifact writer | solve complete | one macro |
 | macro GDS | workflow | writer | final merge | macro complete | disk |
 | final GDS | merge | merge only | user/final litho | all macros complete | disk |
 
-tile/context 是只读近似边界；单机顺序、不同 batch 切法和未来并行不得改变 ownership 或 per-core
-数值语义。异常时不发布当前 macro；既有已完成 macro 文件可留作诊断，但不得写最终 summary。
+macro 外 context 是只读近似边界；core context 内的 macro-trainable pixel 不是只读。单机顺序、
+不同 batch 切法和未来并行不得改变 loss ownership、梯度求和或 macro best 语义。异常时不发布
+当前 macro；既有已完成 macro 文件可留作诊断，但不得写最终 summary。
 
 ## 12. Error Handling
 
 ### ERR-001：配置/网格非法
 
-- Detection：`load_config`、`resolve_grid_config`、`plan_macros`
+- Detection：`load_config`、`resolve_grid_config`、`plan_macros`、ILT 实际 macro/core cuts 对齐校验
 - Behavior：`ValueError`，消息包含 section/key 或尺寸原因。
-- MUST NOT：自动改 pixel/core/context 或 fallback CPU。
+- MUST NOT：自动改 pixel/core/context、保留 partial ownership pixel 或 fallback CPU。
 
 ### ERR-002：problem 损坏
 
@@ -638,7 +680,7 @@ tile/context 是只读近似边界；单机顺序、不同 batch 切法和未来
 
 ### ERR-003：优化非有限
 
-- Detection：每个已评价 state 的 per-sample loss 与 step 后 parameters。
+- Detection：每个已评价 state 的 macro loss、local gradient、累积 gradient 与 step 后 parameters。
 - Behavior：`FloatingPointError`，不发布当前 macro。
 - MUST NOT：跳过样本、clamp NaN、降低学习率重试。
 
@@ -655,18 +697,19 @@ prepare 对每个 macro 恰好一次 KLayout materialization 和一次 query-box
 
 ### PERF-002
 
-CPU 常驻上界为一个 `uint8[Hq,Wq]` problem + 三个 macro ownership 输出数组（两个 float32、
-一个 uint8）+ 一个 core batch；不得常驻全 reticle raster。
+CPU 常驻上界为一个 `uint8[Hq,Wq]` problem、当前/梯度/best 三个 macro ownership float32 数组、
+final soft/binary 输出和一个 core batch；不得常驻全 reticle raster。
 
 ### PERF-003
 
-GPU 常驻为一个 `[B,256,256]` batch 的参数、SGD 状态、mask 与光刻 autograd；batch 完成后释放。
-Simple SGD 不得分配 Adam 两份状态。
+GPU 常驻为一个 `[B,256,256]` batch 的 local parameters、mask 与光刻 autograd；batch backward 后
+只回传 local gradient 并释放。macro parameters/gradient/best 常驻 CPU，Simple SGD 不得分配 Adam
+两份状态，也不得把整个 macro 复制到 GPU。
 
 ### PERF-004
 
-同一 state 每 batch 必须一次 `forward_many` 产生三条件；final binary 评价再一次。不得按 condition
-重复 mask FFT。`curvature_weight=0` 时不得构建 curvature kernel/conv graph。
+同一 macro state 每 batch 必须一次 `forward_many` 产生三条件；final binary 评价每 batch 再一次。
+不得按 condition 重复 mask FFT。`curvature_weight=0` 时不得构建 curvature kernel/conv graph。
 
 ### PERF-005
 
@@ -683,15 +726,16 @@ total、RSS/CUDA peak；本 change 只记录基线，不设硬阈值。
 | File / Symbol | File type | Action | Contract change | Reason |
 |---|---|---|---|---|
 | `opc/input/pixel/__init__.py` | 业务代码 | add | 导出像素 problem API | REQ-002/003 |
-| `opc/input/pixel/problem.py` | 业务代码 | add | `PixelMacroProblem`、prepare/core mapping/reconstruct | REQ-003..005/012 |
+| `opc/input/pixel/problem.py` | 业务代码 | add | `PixelMacroProblem`、实际 cuts 整像素校验、core mapping/reconstruct | REQ-003..005/012 |
 | `opc/iteration/ilt/__init__.py` | 业务代码 | add | 导出公共结果与 Simple API | REQ-013 |
-| `opc/iteration/ilt/_common.py` | 业务代码 | add | `ILTStateRecord/ILTBatchResult`、输入/loss/curvature | REQ-006/008/013 |
-| `opc/iteration/ilt/simple.py` | 业务代码 | add | `SimpleILTConfig/optimize_simple_batch` | REQ-006..009 |
+| `opc/iteration/ilt/_common.py` | 业务代码 | add | `ILTStateRecord/ILTMacroResult`、loss/curvature | REQ-006/008/013 |
+| `opc/iteration/ilt/simple.py` | 业务代码 | add | `SimpleILTConfig/optimize_simple_macro` | REQ-006..009 |
 | `main/configuration.py::GridRuntime/resolve_grid_config/PrepareRuntime/_parse_config/CONFIG_SECTIONS` | 业务代码 | modify | 抽出无 edge 网格解析；解析外部 dataclass 注解；注册 `[simple_ilt]` | IF-001/003、REQ-017 |
 | `main/_macro_pipeline.py::prepare_problems/write_macro_gds` | 业务代码 | modify | 适配 GridRuntime 和显式 layer writer | IF-001/002 |
+| `main/run_single_pass.py` | 业务代码 | modify | 适配 GridRuntime 字段结构（`runtime.grid.*`） | IF-001 |
 | `main/run_macro_pipeline.py::run_round` | 业务代码 | modify | writer 调用迁移 | IF-002 |
 | `main/_mbopc_workflow.py::_solve_macro` | 业务代码 | modify | writer 调用迁移 | IF-002 |
-| `main/_ilt_workflow.py` | 业务代码 | add | `ILTMethod`、pixel prepare、batch/macro/output 生命周期 | REQ-001/009..015 |
+| `main/_ilt_workflow.py` | 业务代码 | add | `ILTMethod`、pixel prepare、macro/output 生命周期 | REQ-001/009..015 |
 | `main/_simple_ilt_workflow.py` | 方法适配器 | add | METHOD + `run_simple_ilt` | REQ-013 |
 | `main/run_simple_ilt.py` | 运行入口 | add | 直接 Python 入口 | REQ-001 |
 | `config/simple_ilt.toml` | 配置文件 | add | 完整 smoke 配置 | §8.1 |
@@ -722,8 +766,9 @@ total、RSS/CUDA peak；本 change 只记录基线，不设硬阈值。
 
 ### TEST-002：core ownership 完整唯一
 
-- Given：常规 core、跨 core 图形、末端不足 pixel/core、2×2 macro。
-- Then：所有 macro ownership pixel write count 恰 1；context 为 0；右/上和末端规则精确。
+- Given：常规 core、跨 core 图形、整像素缩短末端 core、非整像素 bbox、2×2 macro。
+- Then：合法场景所有 macro ownership pixel/core loss owner count 恰 1；非整像素实际 core 在 raster
+  前明确失败，不生成 partial ownership pixel。
 - Covers：REQ-005、INV-001/006。
 
 ### TEST-003：pixel→Region 极性与几何矩阵
@@ -739,37 +784,44 @@ total、RSS/CUDA peak；本 change 只记录基线，不设硬阈值。
 
 ### TEST-005：Simple 参数化与 loss 精确公式
 
-- Given：identity differentiable model 与手算小图。
-- Then：sigmoid、四项 loss、ownership 选择、curvature on/off 逐值一致。
+- Given：由 0/0.25/0.5/0.75/1 coverage 量化得到的 `target_u8`、identity differentiable model 与手算小图。
+- Then：logit 初始化使 state0 soft 在 `1e-6` 内恢复 `target_u8/255`；四项 loss、ownership 选择、
+  curvature on/off 逐值一致，严格 0/1 参数有限。
 - Covers：REQ-006。
 
 ### TEST-006：N 次更新/N+1 已评价状态
 
 - Given：N=1/2，已知 SGD 梯度。
-- Then：state 编号、step 后最终评价、best snapshot 精确；无多余 step。
+- Then：全部 core 同 state snapshot、宏级 state 编号、屏障后 step、最终评价和 best snapshot 精确；
+  无 core 提前更新，state N 不 backward 且无多余 step。
 - Covers：REQ-007、INV-003。
 
-### TEST-007：逐样本 best 与 batch 不变量
+### TEST-007：macro best 与 batch 不变量
 
-- Given：两个最优轮不同的样本；batch=1、2、反序。
-- Then：每样本 best state/输出相同，records 聚合和一致。
+- Given：两个 core 的局部最优轮不同；batch=1、2、core 正序/反序。
+- Then：只按完整 macro total loss 选择一个 best state；不得拼接局部 best；batch 切分/顺序下
+  macro records、best 和输出在约定容差内一致。
 - Covers：REQ-008、INV-004。
 
-### TEST-008：context 只读
+### TEST-008：跨 core context 梯度累加
 
-- Given：ownership 中心小窗、非零 context。
-- Then：任意轮 context soft/binary 等于初始；参数梯度/更新仅 owned。
+- Given：一个 macro 内相邻 core，共享光学 context；某个 macro pixel 同时影响两个 core loss。
+- Then：两个 core 只统计各自 ownership loss，但该 pixel 获得两份 local gradient 之和且只对应一个
+  参数；去掉任一 core loss 时梯度相应减少。macro 外 context/padding 始终等于初始 target 且无梯度。
 - Covers：REQ-005/009、INV-002。
 
 ### TEST-009：真实 ICCAD13 backward
 
 - Given：CPU 小 batch，一次更新；CUDA 可用时同输入。
-- Then：loss/参数有限，至少一个 owned pixel 改变；CPU/CUDA loss 容差 `1e-4 relative/absolute`。
+- Then：loss/参数/累积梯度有限，至少一个 macro-trainable pixel 改变；CPU/CUDA loss 容差
+  `1e-4 relative/absolute`。
 - Covers：REQ-006/016。
 
 ### TEST-010：调用次数与释放边界
 
-- Then：训练 forward=`N+1`/batch，final forward=1/batch；三条件共享；curvature=0 无 conv；callback 真实。
+- Then：训练 forward=`(N+1)*core_batch_count`，其中仅前 N 个 state backward；final binary
+  forward=`core_batch_count`。前 N 个 state 各恰一次 macro gradient 清零与 step 屏障，三条件共享，
+  curvature=0 无 conv，batch graph 及时释放，callback 真实。
 - Covers：REQ-009/014、PERF-003/004。
 
 ### TEST-011：配置与直接入口
@@ -809,8 +861,8 @@ total、RSS/CUDA peak；本 change 只记录基线，不设硬阈值。
 |---|---|---|
 | Geometry | rectangle/hole/concave/diagonal/multi-island/empty/full | 栅格和 Region 逐类断言 |
 | Polarity | clear/opaque | solver 统一 transmission，GDS 逆变换不同 |
-| Boundary | partial pixel/core、cross core、cross macro | 唯一写、裁剪、merge |
-| State | N=1/2、不同 per-sample best | N+1、batch invariance |
+| Boundary | non-aligned final core、cross core、cross macro | 前置拒绝、唯一 loss/write、merge |
+| State | N=1/2、不同 core 局部 best | macro N+1、同步屏障、batch invariance |
 | Scale | one core/multi core/2×2 macro | 内存不累计、产物完整 |
 | Device | CPU/CUDA | backward 与容差 |
 | Failure | config/problem/nonfinite/I/O | 明确异常、无 completed summary |
@@ -841,17 +893,17 @@ CUDA 测试仅在 `torch.cuda.is_available()` 为 false 时 skip；CPU 核心 co
 | REQ-012 | reconstruct_pixel_region | TEST-003/013 | AC-002/004 |
 | REQ-016 | existing callers/tests | TEST-015 | AC-006 |
 | REQ-017 | `configuration._parse_config` | TEST-011/015 | AC-006 |
-| INV-001/002 | ownership/mask blend | TEST-002/008 | AC-002/003 |
-| INV-003/004 | state/best | TEST-006/007 | AC-003 |
+| INV-001/002 | ownership/trainable mapping/gradient sum | TEST-002/008 | AC-002/003 |
+| INV-003/004 | macro state/best | TEST-006/007 | AC-003 |
 | INV-005/006 | coordinate/polarity/merge | TEST-001/003/013 | AC-002/004 |
 
 ## 17. Acceptance Criteria
 
 - [ ] **AC-001**：直接 Python 入口从仓库外 cwd 成功运行，summary method=`simple_ilt`。
-- [ ] **AC-002**：pixel problem、坐标、极性、末端像素与 pixel→GDS 全矩阵通过。
-- [ ] **AC-003**：Simple loss/state/per-sample best/batch invariance/真实 backward 全通过。
+- [ ] **AC-002**：pixel problem、坐标、极性、实际 core 整像素限制与 pixel→GDS 全矩阵通过。
+- [ ] **AC-003**：coverage 初始化、跨 core 梯度和、macro 同步 state/best、batch invariance 与真实 backward 全通过。
 - [ ] **AC-004**：2×2 macro 跨界端到端产物完整，merge 恰一次，拼接 raster 无重叠遗漏。
-- [ ] **AC-005**：smoke 记录时间、RSS/CUDA peak、规模与 tile-independent seam 限制。
+- [ ] **AC-005**：smoke 记录时间、RSS/CUDA peak、规模与 macro-independent seam 限制。
 - [ ] **AC-006**：全量 pytest、ruff、compileall、diff check 通过，现有 writer 数值零变化。
 - [ ] **AC-007**：开发/测试手册、contracts/architecture、两报告和规划记录同步。
 - [ ] **AC-008**：最终审计无未调用函数、重复 raster/atomic writer、吞异常、一次性抽象或清单外改动。
@@ -864,17 +916,21 @@ CUDA 测试仅在 `torch.cuda.is_available()` 为 false 时 skip；CPU 核心 co
 - Data：新增 pixel problem/result v1；不读取 `00_PAST` NPZ，无旧数据兼容要求。
 - Archive：`00_PAST` 只读。
 - CLI：新增 `run_simple_ilt.py`，不恢复旧 `run_simpleilt.py` 参数兼容。
-- Numerical：Simple 核心公式与 OpenILT/PAST 同源；N+1 状态、per-sample best、ownership-only loss、
-  具名条件和面积覆盖率输入是明确工程修正，不承诺与 OpenILT benchmark 逐值相同。
+- Numerical：Simple 核心 loss 与 OpenILT/PAST 同源；coverage-preserving logit 初始化、macro 同步
+  N+1 状态、macro best、ownership-only loss 统计与 context gradient、具名条件是明确工程修正，
+  不承诺与 OpenILT benchmark 逐值相同。
 
 ## 19. Decisions
 
-### DEC-001：首个 ILT 使用独立 core solve
+### DEC-001：首个 ILT 使用 macro 同步状态与 core-batched 光刻
 
-- Decision：每个 core 的 context 固定初始值，core 独立完成全部迭代；macro 聚合 owned 输出。
-- Reason：忠实匹配固定 canvas OpenILT，四个候选方法可复用，内存与 reticle 总尺寸解耦。
-- Rejected：macro 全场参数+跨 tile 梯度屏障；会显著扩大首迁算法并使多尺度尺寸/显存语义复杂化。
-- Consequence：可能产生 core seam，列为限制；未来跨 tile 协调必须单独 change。
+- Decision：每个 macro 维护唯一参数/梯度/best；core 只负责 simulation canvas 与唯一 loss ownership，
+  同一 state 全部 core 梯度求和后统一 step。
+- Reason：保留跨 core 光学耦合的梯度，并保证被选 best 是实际评价过的完整 macro mask；GPU 仍只常驻
+  core batch，显存不随 macro/reticle 尺寸增长。
+- Rejected：core 独立参数/固定 context/per-core best，会丢梯度并拼出未整体评价的 mask；overlap
+  loss averaging 会改变全局 loss 的真实梯度。
+- Consequence：core seam 不再来自独立 state；macro 之间仍固定外部 context，跨 macro 协调另立 change。
 
 ### DEC-002：建立 pixel input 子包，不复用 edge problem
 
@@ -884,9 +940,10 @@ CUDA 测试仅在 `torch.cuda.is_available()` 为 false 时 skip；CPU 核心 co
 
 - Reason：共享 workflow 有当前 Simple 调用方，且后三份已规划方法只需相同三处差异；无运行时发现需求。
 
-### DEC-004：逐样本 best，评价最后更新
+### DEC-004：macro best，评价最后更新
 
-- Reason：修复 OpenILT batch-size 依赖和无效末步；与当前 MB-OPC “指标属于已评价状态”一致。
+- Reason：修复 OpenILT batch-size 依赖、无效末步和 per-core best 拼接；与当前 MB-OPC “全部 core
+  读取同一状态、指标属于已评价状态、屏障后发布更新”一致。
 
 ### DEC-005：最终输出 GDS
 
@@ -910,13 +967,13 @@ None.
 
 ### 20.2 Non-blocking
 
-- 未来是否采用 macro 全场同步 ILT、overlap Schwarz 或 seam refinement，必须另立 change。
+- 未来是否采用跨 macro 同步 ILT、overlap Schwarz 或 seam refinement，必须另立 change。
 - pixel stair-step GDS 的 MRC/shot 优化不属于本 change。
 
 ## 21. Implementation Freedom
 
 实现 AI 可以决定局部变量名、行程扫描的等价向量化写法、私有 helper 排布；不得改变 public API、
-字段、坐标/极性、tile 独立语义、N+1 状态、per-sample best、产物格式、依赖方向或文件清单。
+字段、坐标/极性、macro 同步语义、N+1 状态、macro best、产物格式、依赖方向或文件清单。
 
 ## 22. Implementation Stages and Local Commits
 
@@ -940,7 +997,7 @@ None.
 
 ## 24. Known Limitations and Future Work
 
-- tile 优化结果不进入相邻 tile context，可能有 core seam；macro 之间同样独立。
+- macro 之间不交换优化后参数，macro seam 仍可能存在。
 - 输出是 pixel-grid stair-step 几何，不做全局轮廓平滑、MRC 或 shot 优化。
 - 只支持现有 ICCAD13 256 canvas contract；模型可经 `LithographyModel` 替换，但网格尺寸仍由配置校验。
 - 不支持 checkpoint/resume、offline NPZ 输入和分布式 worker。
@@ -948,7 +1005,7 @@ None.
 ## 25. Specification Approval Gate
 
 - [ ] baseline 与相关工作树已核对；
-- [ ] 用户接受 DEC-001 的 tile 独立/seam 取舍；
+- [ ] 用户确认 DEC-001 的 macro 同步/core-batched 梯度与跨 macro 独立取舍；
 - [ ] public API、配置、pixel problem/result、坐标/极性和 GDS 输出已确认；
 - [ ] 每个 MUST/invariant 映射到测试与 AC；
 - [ ] Blocking Open Questions 为 None；
@@ -960,3 +1017,5 @@ None.
 | Revision | Date | Status | Change | Reviewer |
 |---|---|---|---|---|
 | 0.1 | 2026-08-18 | draft | 首版；选择 tile 独立大版图执行，冻结 pixel problem、N+1 状态、per-sample best 与最终 GDS | 待用户审核 |
+| 0.2 | 2026-08-19 | draft | 修正为 macro 唯一参数、跨 core 梯度累加、同步 N+1、macro best、coverage-preserving 初始化与实际 core 整像素限制 | 待用户审核 |
+| 0.3 | 2026-08-19 | approved | §14 补录 `main/run_single_pass.py`（PrepareRuntime 字段消费方，IF-001 迁移牵连，事实核对发现）；ILTStateRecord 的 stage/scale 字段经用户裁定保留；ilt_plan.json 须携带 merge/final-litho 兼容键记入实施约束 | 用户批准开发计划 |

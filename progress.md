@@ -296,3 +296,18 @@
   geometry/contour.py 豁免，刻意不配 format 段）；requirements 补
   pytest 9.1.1/ruff 0.16.2 门禁工具并复核运行时版本零漂移。裸
   ruff 门禁命令（无 --exclude）经配置直接通过；452 passed。
+
+- gradient 结构重构（用户三段方案，收口 midpoint 修复时立案的结构待办）：
+  optimize_gradient_macro 由 308 行拆为 _prepare_macro_context（静态
+  上下文 + _GradientMacroContext）/_evaluate_state（批评价 +
+  _GradientStateEvaluation，只 backward）/ _take_optimizer_step（step +
+  clamp + 候选重构，返回 (Region, midpoints) | None，异常上抛）+ 主函数
+  ~110 行编排；_GradientCandidate 按用户裁定取消。逻辑逐字迁移零算法
+  变化（详见 findings「gradient 结构重构事实」节）；既有 45 例零改动，
+  新增 TestStructuralSplit 4 例。
+  验证（WSL ~/miniconda3/envs/myopc312，修正早前"会话内无法跑门禁"的
+  误判）：compileall/ruff 通过（ruff 抓出 _evaluate_state 漏传 model 的
+  F821 真 bug，补参数修复）；458 passed；CPU A/B（gcd_30um 单 macro、
+  iterations=6、870 core）重构前后逐 state loss/l2/pv/epe/disp 精确相等
+  （loss 0.149844393→0.120088223）、best_state=6、stop=iteration_limit、
+  best_displacements npz 逐位一致。

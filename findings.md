@@ -566,3 +566,35 @@
   偏差校正瞬态改变早期微观轨迹，避开了退化候选）。Adam 对统一缩放
   仅近似不变（eps=1e-8 非零、偏差校正期敏感）——印证用户"实际优化
   影响往往不大但非零"的判断。454 passed；simple 逐位不变。
+
+## gradient 结构重构事实（2026-08-19，收口上一节立案待办）
+
+- **边界**（用户三段方案，两私有 dataclass）：`_GradientMacroContext`
+  只存整个优化不变的静态量（owner 映射、参考 Region+零位移中点、逐 core
+  sampling/owner membership、探针坐标、total_pixels、device/threshold/
+  conditions）；`_GradientStateEvaluation` 只描述一次评价的多指标输出。
+  parameters/optimizer/current 几何/best 刻意不入 ctx——静态上下文与
+  迭代态显式分离。
+- **三段函数**：`_prepare_macro_context`（原 L187–242，含 total_pixels==0
+  数据损坏 raise；`del reference` 释放随迁）；`_evaluate_state`（原 batch
+  循环 L262–405 逐字搬入；只 backward，绝不 zero_grad/step）；
+  `_take_optimizer_step`（原 L433–447；None 即 no_update，非法重构的
+  ValueError/ReconstructionError 原样上抛由主函数定停止——不引入
+  valid:bool 复制异常体系）。主函数只留编排（入口校验、no_owner 快速
+  返回、循环控制、record 构造、best 严格更小、停止判断、成对发布
+  Region+midpoint），308 → ~110 行。
+- **裁决记录**：用户曾提议把 reconstruction.py 整理成共享
+  materialize_reconstructed_geometry——该 drift 已由上节 P1 修复消除
+  （reconstruct_region_with_midpoints 即同源接口），本轮裁定不改
+  reconstruction.py。`_take_optimizer_step` 增 macro_id/state_index 两个
+  仅服务错误消息的关键字参数（保留 FloatingPointError 原消息文本）。
+- **唯一接受的非契约微差**：records 的 elapsed_seconds 语义收窄为纯
+  评价耗时（原值额外含一次 parameters.detach().cpu() 同步）；无测试
+  断言、无消费方比较。
+- **行为不变验证方式**：既有 45 例期望零改动（只经公共入口与模块级
+  _EdgeGradientMask monkeypatch）；新增 TestStructuralSplit 4 例结构单测
+  （ctx 映射与 problem 一致、build_gradient=False 不建 grad、=True 只
+  累积不改参数、step 返回 None/二元组/异常上抛三态）；数值等价以
+  CPU A/B 逐项对比验收（重构前后各跑一次 gradient_mbopc，逐 state
+  loss/诊断指标/best/stop 排除计时字段后全等，best_displacements
+  npz 逐位一致）。

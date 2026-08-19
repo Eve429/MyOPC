@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
 
+import klayout.db as kdb
 import numpy as np
 import torch
 from numpy.typing import NDArray
@@ -16,7 +17,7 @@ from evaluation import (
     evaluate_edge_probes,
     evaluate_pvband,
 )
-from lithography import LithographyModel
+from lithography import LithographyModel, ProcessCondition
 from opc.errors import ReconstructionError
 from opc.input import ownership_canvas, points_to_canvas, rasterize_mask_canvas
 from opc.input.edge import MacroProblem, reconstruct_region_with_midpoints
@@ -94,6 +95,50 @@ class GradientMBOPCResult:
     stop_detail: str | None   # 非法候选的明确原因；正常停止为 None
 
 
+@dataclass(frozen=True, slots=True)
+class _GradientMacroContext:
+    """保存单个 macro 优化期间完全不变的静态输入与预计算映射。
+
+    只收集"全部状态迭代复用"的数据；parameters/optimizer/current 几何与
+    best 跟踪属于迭代状态，刻意不入本类。列表内容按只读约定消费。
+    """
+
+    macro_id: str                    # cache 键与错误消息的 macro 部分
+    segment_count: int               # 段数 S
+    canvas_pixels: int               # 问题侧画布
+    pixel_dbu: int                   # 栅格像素
+    core_count: int                  # tile 总数
+    max_displacement: float          # 位移上限（step 后裁剪用）
+    owner_ids: NDArray[np.int64]     # owner 段全局号升序
+    segment_to_parameter: NDArray[np.int32]  # 段号→参数下标；非 owner 恒 -1
+    reference_region: kdb.Region     # 零位移参考几何（target 缓存未命中源）
+    reference_segment_midpoints: NDArray[np.float64]  # 零位移各段采样中点 [S,2]
+    core_sampling_members: list[NDArray[np.int32]]  # 每 core 梯度采样段（owner∩membership）
+    core_owner_members: list[NDArray[np.int32]]     # 每 core EPE 探针段（owner 语义）
+    probe_inner_xy: list[NDArray[np.float64] | None]  # 每 core 探针 canvas 坐标
+    probe_outer_xy: list[NDArray[np.float64] | None]
+    total_pixels: int                # loss 归一分母 P：全部 core ownership 像素数
+    device: torch.device            # 参数与批张量的目标设备
+    threshold: float                # 离散诊断二值阈值
+    conditions: tuple[ProcessCondition, ...]  # 三工艺角一次前向
+
+
+@dataclass(frozen=True, slots=True)
+class _GradientStateEvaluation:
+    """保存一次已评价状态的连续 loss、离散诊断与纯评价耗时。"""
+
+    total_loss: float       # 加权连续 loss（所有权像素归一）
+    nominal_loss: float     # L_nom
+    process_loss: float     # L_process
+    pvband_loss: float      # L_pv
+    l2: int                 # 离散二值 L2（诊断）
+    pvband: int             # 离散 PVBand（诊断）
+    epe: int                # 离散 EPE（诊断）
+    valid_probes: int       # 有效探针
+    ambiguous_probes: int   # 歧义探针
+    elapsed_seconds: float  # 全部 tile 评价耗时（不含参数快照与记录组装）
+
+
 class _EdgeGradientMask(torch.autograd.Function):
     """hard 面积覆盖率前向与 DiffOPC Algorithm 4 的 midpoint STE 反向。"""
 
@@ -156,38 +201,17 @@ class _EdgeGradientMask(torch.autograd.Function):
         return None, 2.0 * g_mid / ctx.pixel_dbu, None, None, None
 
 
-def optimize_gradient_macro(
-        problem: MacroProblem,
-        model: LithographyModel,
-        config: GradientMBOPCConfig,
-        target_cache: TargetCanvasCache,
-        *,
-        on_tiles_completed: OnTilesCompleted | None = None,
-) -> GradientMBOPCResult:
-    """优化一个 macro 的 owner 边段法向位移并返回最佳已评价合法状态。"""
-    # 入口契约：进入 GPU 大分配前挡住不兼容。
-    segment_count = problem.segments.segment_count  # 段数 S
-    canvas_pixels = int(problem.macro.canvas_pixels)
-    if int(model.config.canvas) != canvas_pixels:
-        raise ValueError("模型画布与 problem 画布不一致")
-    if config.epe_distance_dbu > float(problem.macro.context_dbu):
-        raise ValueError("epe_distance_dbu 超过 problem 的 context 宽度")
-    owner_ids = np.flatnonzero(problem.owner_indices >= 0)  # owner 段全局号
-    if len(owner_ids) == 0:
-        # 空或纯 context macro：没有可训练参数，O=0 必然没有计分像素，
-        # 任何评价都只会得到 0/0；直接以全零 baseline 停止，不建 optimizer。
-        empty = GradientMBOPCIterationRecord(
-            state_index=0, total_loss=0.0, nominal_l2_loss=0.0,
-            process_l2_loss=0.0, pvband_loss=0.0, l2=0, pvband=0, epe=0,
-            valid_probes=0, ambiguous_probes=0, displaced_segments=0,
-            elapsed_seconds=0.0)
-        return GradientMBOPCResult(
-            np.zeros(segment_count, dtype=np.float64), (empty,), 0,
-            "no_owned_segments", None)
+def _prepare_macro_context(
+        problem: MacroProblem, model: LithographyModel,
+        config: GradientMBOPCConfig) -> _GradientMacroContext:
+    """一次性构造整个优化期间不变的 owner 映射、参考几何与探针静态输入。"""
     macro_id = problem.macro.macro_id  # cache 键与错误消息的 macro 部分
-    pixel_dbu = int(problem.macro.pixel_dbu)
-    core_count = problem.macro.core_count
+    pixel_dbu = int(problem.macro.pixel_dbu)  # 栅格像素
+    core_count = problem.macro.core_count  # tile 总数
+    canvas_pixels = int(problem.macro.canvas_pixels)  # 问题侧画布
     max_displacement = float(problem.fragmentation.max_displacement_dbu)
+    owner_ids = np.flatnonzero(problem.owner_indices >= 0)  # owner 段全局号
+    segment_count = problem.segments.segment_count  # 段数 S
     # 初始化：owner 映射、参考中点/法向与探针坐标只建一次，全部状态迭代
     # 复用（同轮内不得重建 mapping）。
     # segment_to_parameter 把 owner 段全局号压缩成 Adam 参数下标 [0, O)：
@@ -199,7 +223,7 @@ def optimize_gradient_macro(
     reference = problem.segments.materialize()  # 参考几何唯一物化（探针用）
     # 零位移参考几何与段采样中点：target/EPE 基准与 state0 采样共用一次
     # 重构；中点由重构几何提供（含 corner miter 切向调整），非刚体推算。
-    reference_region, current_segment_midpoints = (
+    reference_region, reference_segment_midpoints = (
         reconstruct_region_with_midpoints(
             problem, np.zeros(segment_count, dtype=np.float64)))
     core_owner_members = []  # 每 core 的 owner 段号（EPE 探针专用，语义不变）
@@ -240,187 +264,291 @@ def optimize_gradient_macro(
     # 三工艺角一次前向
     conditions = (model.condition("nominal"), model.condition("dose_max"),
                   model.condition("defocus_min"))
+    return _GradientMacroContext(
+        macro_id=macro_id, segment_count=segment_count,
+        canvas_pixels=canvas_pixels, pixel_dbu=pixel_dbu,
+        core_count=core_count, max_displacement=max_displacement,
+        owner_ids=owner_ids, segment_to_parameter=segment_to_parameter,
+        reference_region=reference_region,
+        reference_segment_midpoints=reference_segment_midpoints,
+        core_sampling_members=core_sampling_members,
+        core_owner_members=core_owner_members,
+        probe_inner_xy=probe_inner_xy, probe_outer_xy=probe_outer_xy,
+        total_pixels=total_pixels, device=device, threshold=threshold,
+        conditions=conditions)
+
+
+def _evaluate_state(
+        ctx: _GradientMacroContext, model: LithographyModel,
+        problem: MacroProblem, config: GradientMBOPCConfig,
+        target_cache: TargetCanvasCache, parameters: torch.Tensor,
+        current_region: kdb.Region,
+        current_segment_midpoints: NDArray[np.float64], *,
+        build_gradient: bool,
+        on_tiles_completed: OnTilesCompleted | None = None,
+) -> _GradientStateEvaluation:
+    """评价当前已发布几何的全部 core，按批累积连续 loss 梯度与离散诊断。
+
+    只允许 backward：zero_grad 与 optimizer.step 属于调用方的更新职责，
+    本函数绝不触碰参数值——同轮多批梯度因此天然累积在同一参数快照上。
+    """
+    sums = {"nominal": 0.0, "process": 0.0, "pvband": 0.0}  # 连续分量累计
+    diag = {"l2": 0, "pvband": 0, "epe": 0, "valid": 0, "ambiguous": 0}
+    started = time.perf_counter()  # 本状态评价计时
+    for batch_start in range(0, ctx.core_count, config.batch_size):
+        # 本批 core（行优先稳定序）
+        core_indices = list(range(
+            batch_start, min(batch_start + config.batch_size, ctx.core_count)))
+        batch_count = len(core_indices)
+        # target 批（uint8 缓存格式）
+        targets = np.empty((batch_count, ctx.canvas_pixels, ctx.canvas_pixels),
+                           dtype=np.uint8)
+        # 当前 mask 批
+        masks = np.empty((batch_count, ctx.canvas_pixels, ctx.canvas_pixels),
+                         dtype=np.float32)
+        # 计分像素批
+        ownership = np.empty((batch_count, ctx.canvas_pixels, ctx.canvas_pixels),
+                             dtype=np.bool_)
+        member_slots = []  # 梯度采样条目的 batch 槽位（int64）
+        member_params = []  # 梯度采样条目指向的参数索引（int64）
+        member_mids = []  # 梯度采样条目的当前中点 canvas 坐标
+        probe_slots = []  # EPE 探针条目的 batch 槽位（与梯度条目独立）
+        for slot, core_index in enumerate(core_indices):  # 逐 core 组批
+            spec = problem.macro.core(core_index)
+            cached = target_cache.get(ctx.macro_id, core_index)
+            if cached is None:  # 未命中：参考几何栅格化并回填缓存
+                cached = np.rint(rasterize_mask_canvas(
+                    ctx.reference_region, spec.context_box, ctx.pixel_dbu,
+                    ctx.canvas_pixels, polarity=problem.polarity)
+                    * 255.0).astype(np.uint8)
+                target_cache.put(ctx.macro_id, core_index, cached)
+            targets[slot] = cached
+            # 当前候选直接栅格
+            masks[slot] = rasterize_mask_canvas(
+                current_region, spec.context_box, ctx.pixel_dbu,
+                ctx.canvas_pixels, polarity=problem.polarity)
+            # 唯一计分像素
+            ownership[slot] = ownership_canvas(
+                spec.ownership_box, spec.context_box, ctx.pixel_dbu,
+                ctx.canvas_pixels)
+            sampling_members = ctx.core_sampling_members[core_index]
+            if len(sampling_members):  # 梯度采样：全部 membership 中 owner 段
+                # 采样中点由当前已发布的重构几何提供（corner miter 后含
+                # 切向调整），与栅格化用 Region 恒来自同一次合法重构。
+                midpoints_dbu = current_segment_midpoints[sampling_members]
+                # DBU→canvas 唯一换算
+                member_mids.append(points_to_canvas(
+                    midpoints_dbu, spec.context_box, ctx.pixel_dbu,
+                    ctx.canvas_pixels))
+                member_slots.append(np.full(
+                    len(sampling_members), slot, dtype=np.int64))
+                member_params.append(ctx.segment_to_parameter[
+                    sampling_members].astype(np.int64))
+            owner_members = ctx.core_owner_members[core_index]  # 探针语义
+            if len(owner_members):  # 无 owner 段的 core 仍计完成 tile
+                # 探针槽位独立于梯度条目
+                probe_slots.append(np.full(
+                    len(owner_members), slot, dtype=np.int64))
+        trainable = bool(member_params)  # 本批是否有可训练 membership
+        build_graph = trainable and build_gradient  # 末状态纯评价不建图
+        # uint8→float32/255
+        target_tensor = torch.from_numpy(targets).to(
+            device=ctx.device, dtype=torch.float32).div_(255.0)
+        ownership_tensor = torch.from_numpy(ownership).to(device=ctx.device)
+        hard = torch.from_numpy(masks).to(device=ctx.device)
+        if build_graph:  # STE：forward 数值不变，autograd 边接到位移
+            # 批号与参数索引一次上设备
+            slots = torch.from_numpy(
+                np.concatenate(member_slots)).to(ctx.device)
+            owned = torch.from_numpy(
+                np.concatenate(member_params)).to(ctx.device)
+            # 中点坐标转 float32 上设备
+            mids = torch.from_numpy(
+                np.concatenate(member_mids)).to(device=ctx.device,
+                                                 dtype=torch.float32)
+            local = parameters[owned]  # gather 出 [M]，autograd 边
+            # pixel_dbu 随批传入：backward 把采样梯度换算回 DBU 单位。
+            mask_tensor = _EdgeGradientMask.apply(hard, local, slots, mids,
+                                                  ctx.pixel_dbu)
+        else:
+            mask_tensor = hard  # 无梯度路径直通
+        printed = model.forward_many(mask_tensor, ctx.conditions)  # 一次 FFT
+        nominal = printed["nominal"]
+        dose_max = printed["dose_max"]
+        defocus_min = printed["defocus_min"]
+        if build_graph:  # 建图版连续 loss：backward 累积到 parameters.grad
+            l_nom = ((nominal - target_tensor) ** 2
+                     * ownership_tensor).sum()
+            l_proc = (((dose_max - target_tensor) ** 2
+                       + (defocus_min - target_tensor) ** 2)
+                      * ownership_tensor).sum()
+            l_pv = ((dose_max - defocus_min) ** 2
+                    * ownership_tensor).sum()
+            batch_loss = (config.weight_nominal_l2 * l_nom
+                          + config.weight_process_l2 * l_proc
+                          + config.weight_pvband * l_pv) / ctx.total_pixels
+            batch_loss.backward()  # 批间梯度直接累加（同一参数快照）
+            triple = (l_nom, l_proc, l_pv)
+        else:
+            with torch.no_grad():  # 纯评价路径不建图
+                triple = (((nominal - target_tensor) ** 2
+                           * ownership_tensor).sum(),
+                          (((dose_max - target_tensor) ** 2
+                            + (defocus_min - target_tensor) ** 2)
+                           * ownership_tensor).sum(),
+                          ((dose_max - defocus_min) ** 2
+                           * ownership_tensor).sum())
+        with torch.no_grad():  # 离散诊断只读数值，不进入训练
+            sums["nominal"] += float(triple[0]) / ctx.total_pixels
+            sums["process"] += float(triple[1]) / ctx.total_pixels
+            sums["pvband"] += float(triple[2]) / ctx.total_pixels
+            diag["l2"] += evaluate_binary_l2(
+                target_tensor, nominal, threshold=ctx.threshold,
+                ownership_mask=ownership_tensor)
+            diag["pvband"] += evaluate_pvband(
+                dose_max, defocus_min, threshold=ctx.threshold,
+                ownership_mask=ownership_tensor)
+            if probe_slots:  # 本批 owner 探针一次批量评价（owner-core 语义）
+                batch_index_tensor = torch.from_numpy(
+                    np.concatenate(probe_slots))
+                inner_xy = torch.from_numpy(np.concatenate(
+                    [ctx.probe_inner_xy[c] for c in core_indices
+                     if len(ctx.core_owner_members[c])]))
+                outer_xy = torch.from_numpy(np.concatenate(
+                    [ctx.probe_outer_xy[c] for c in core_indices
+                     if len(ctx.core_owner_members[c])]))
+                # 阈值跟随模型 PrintThresh
+                epe_result = evaluate_edge_probes(
+                    target_tensor, nominal, batch_index_tensor,
+                    inner_xy, outer_xy, threshold=ctx.threshold)
+                diag["epe"] += epe_result.violation_count
+                diag["valid"] += int(epe_result.valid.cpu().numpy().sum())
+                diag["ambiguous"] += int(
+                    epe_result.ambiguous.cpu().numpy().sum())
+        # 释放：批结束只保留标量与梯度，光刻图和批张量立即失去引用。
+        del printed, nominal, dose_max, defocus_min, mask_tensor, hard
+        del target_tensor, ownership_tensor
+        if on_tiles_completed is not None:  # backward 且释放后才报进度
+            on_tiles_completed(batch_count)
+    nominal_loss = sums["nominal"]
+    process_loss = sums["process"]
+    pvband_loss = sums["pvband"]
+    total_loss = (config.weight_nominal_l2 * nominal_loss
+                  + config.weight_process_l2 * process_loss
+                  + config.weight_pvband * pvband_loss)
+    return _GradientStateEvaluation(
+        total_loss=total_loss, nominal_loss=nominal_loss,
+        process_loss=process_loss, pvband_loss=pvband_loss, l2=diag["l2"],
+        pvband=diag["pvband"], epe=diag["epe"], valid_probes=diag["valid"],
+        ambiguous_probes=diag["ambiguous"],
+        elapsed_seconds=time.perf_counter() - started)
+
+
+def _take_optimizer_step(
+        problem: MacroProblem, parameters: torch.Tensor,
+        optimizer: torch.optim.Optimizer, owner_ids: NDArray[np.int64],
+        candidate_full: NDArray[np.float64], max_displacement: float, *,
+        macro_id: str, state_index: int,
+) -> tuple[kdb.Region, NDArray[np.float64]] | None:
+    """执行一次 Adam 更新，并把新参数重构为可发布的合法候选几何。
+
+    返回 None 表示参数无变化（no_update 判据）；重构失败以 ValueError/
+    ReconstructionError 原样上抛，停止决策留给调用方。macro_id 与
+    state_index 仅供异常消息定位，不参与计算。
+    """
+    before = parameters.detach().clone()  # 更新前快照（no_update 判据）
+    optimizer.step()  # 每 state 至多一次
+    with torch.no_grad():
+        parameters.clamp_(-max_displacement, max_displacement)  # 先裁上限
+    if not bool(torch.isfinite(parameters).all()):
+        raise FloatingPointError(
+            f"{macro_id} state {state_index} 候选参数非有限")
+    if torch.equal(parameters.detach(), before):  # 梯度全零时步长为零
+        return None
+    candidate_full[owner_ids] = parameters.detach().cpu().numpy().astype(
+        np.float64)
+    # 候选必须先通过方向/hole/有效性守卫才可发布；返回的 Region 与采样
+    # 中点来自同一次重构，调用方必须成对发布（失败时两者都不更新）。
+    return reconstruct_region_with_midpoints(problem, candidate_full)
+
+
+def optimize_gradient_macro(
+        problem: MacroProblem,
+        model: LithographyModel,
+        config: GradientMBOPCConfig,
+        target_cache: TargetCanvasCache,
+        *,
+        on_tiles_completed: OnTilesCompleted | None = None,
+) -> GradientMBOPCResult:
+    """优化一个 macro 的 owner 边段法向位移并返回最佳已评价合法状态。"""
+    # 入口契约：进入 GPU 大分配前挡住不兼容。
+    segment_count = problem.segments.segment_count  # 段数 S
+    canvas_pixels = int(problem.macro.canvas_pixels)
+    if int(model.config.canvas) != canvas_pixels:
+        raise ValueError("模型画布与 problem 画布不一致")
+    if config.epe_distance_dbu > float(problem.macro.context_dbu):
+        raise ValueError("epe_distance_dbu 超过 problem 的 context 宽度")
+    owner_ids = np.flatnonzero(problem.owner_indices >= 0)  # owner 段全局号
+    if len(owner_ids) == 0:
+        # 空或纯 context macro：没有可训练参数，O=0 必然没有计分像素，
+        # 任何评价都只会得到 0/0；直接以全零 baseline 停止，不建 optimizer。
+        empty = GradientMBOPCIterationRecord(
+            state_index=0, total_loss=0.0, nominal_l2_loss=0.0,
+            process_l2_loss=0.0, pvband_loss=0.0, l2=0, pvband=0, epe=0,
+            valid_probes=0, ambiguous_probes=0, displaced_segments=0,
+            elapsed_seconds=0.0)
+        return GradientMBOPCResult(
+            np.zeros(segment_count, dtype=np.float64), (empty,), 0,
+            "no_owned_segments", None)
+    # 静态输入只准备一次，全部状态迭代复用。
+    ctx = _prepare_macro_context(problem, model, config)
     # 唯一可训练参数：owner 法向位移 [O]
     parameters = torch.zeros(
-        len(owner_ids), dtype=torch.float32, device=device, requires_grad=True)
+        len(owner_ids), dtype=torch.float32, device=ctx.device,
+        requires_grad=True)
     # 固定超参（规格钉死，不新增配置面）
     optimizer = torch.optim.Adam(
         [parameters], lr=config.learning_rate_dbu, betas=(0.9, 0.999),
         eps=1e-8, weight_decay=0.0, amsgrad=False)
-    current_region = reference_region  # 当前已发布合法几何
+    current_region = ctx.reference_region  # 当前已发布合法几何
+    current_segment_midpoints = ctx.reference_segment_midpoints
     records = []  # 已评价状态记录（records[0] 恒为 baseline）
     best_loss = float("inf")  # 严格更小才更新（平局保留较早状态）
     best_state_index = 0
     best_owner = np.zeros(len(owner_ids), dtype=np.float64)
-    stop_reason = None
-    stop_detail = None
+    stop_reason: str | None = None
+    stop_detail: str | None = None
     candidate_full = np.zeros(segment_count, dtype=np.float64)  # 展开缓冲
     for state_index in range(config.iterations + 1):
         can_update = state_index < config.iterations  # 末状态纯评价
         if can_update:
             optimizer.zero_grad(set_to_none=True)  # 梯度按状态清零后累积
-        started = time.perf_counter()  # 本状态评价计时
         current_owner = parameters.detach().cpu().numpy().astype(np.float64)
-        sums = {"nominal": 0.0, "process": 0.0, "pvband": 0.0}  # 连续分量累计
-        diag = {"l2": 0, "pvband": 0, "epe": 0, "valid": 0, "ambiguous": 0}
-        for batch_start in range(0, core_count, config.batch_size):
-            # 本批 core（行优先稳定序）
-            core_indices = list(range(
-                batch_start, min(batch_start + config.batch_size, core_count)))
-            batch_count = len(core_indices)
-            # target 批（uint8 缓存格式）
-            targets = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                               dtype=np.uint8)
-            # 当前 mask 批
-            masks = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                             dtype=np.float32)
-            # 计分像素批
-            ownership = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                                 dtype=np.bool_)
-            member_slots = []  # 梯度采样条目的 batch 槽位（int64）
-            member_params = []  # 梯度采样条目指向的参数索引（int64）
-            member_mids = []  # 梯度采样条目的当前中点 canvas 坐标
-            probe_slots = []  # EPE 探针条目的 batch 槽位（与梯度条目独立）
-            for slot, core_index in enumerate(core_indices):  # 逐 core 组批
-                spec = problem.macro.core(core_index)
-                cached = target_cache.get(macro_id, core_index)
-                if cached is None:  # 未命中：参考几何栅格化并回填缓存
-                    cached = np.rint(rasterize_mask_canvas(
-                        reference_region, spec.context_box, pixel_dbu,
-                        canvas_pixels, polarity=problem.polarity)
-                        * 255.0).astype(np.uint8)
-                    target_cache.put(macro_id, core_index, cached)
-                targets[slot] = cached
-                # 当前候选直接栅格
-                masks[slot] = rasterize_mask_canvas(
-                    current_region, spec.context_box, pixel_dbu,
-                    canvas_pixels, polarity=problem.polarity)
-                # 唯一计分像素
-                ownership[slot] = ownership_canvas(
-                    spec.ownership_box, spec.context_box, pixel_dbu,
-                    canvas_pixels)
-                sampling_members = core_sampling_members[core_index]
-                if len(sampling_members):  # 梯度采样：全部 membership 中 owner 段
-                    # 采样中点由当前已发布的重构几何提供（corner miter 后含
-                    # 切向调整），与栅格化用 Region 恒来自同一次合法重构。
-                    midpoints_dbu = current_segment_midpoints[sampling_members]
-                    # DBU→canvas 唯一换算
-                    member_mids.append(points_to_canvas(
-                        midpoints_dbu, spec.context_box, pixel_dbu,
-                        canvas_pixels))
-                    member_slots.append(np.full(
-                        len(sampling_members), slot, dtype=np.int64))
-                    member_params.append(segment_to_parameter[
-                        sampling_members].astype(np.int64))
-                owner_members = core_owner_members[core_index]  # 探针语义
-                if len(owner_members):  # 无 owner 段的 core 仍计完成 tile
-                    # 探针槽位独立于梯度条目
-                    probe_slots.append(np.full(
-                        len(owner_members), slot, dtype=np.int64))
-            trainable = bool(member_params)  # 本批是否有可训练 membership
-            build_graph = trainable and can_update  # 末状态纯评价不建图
-            # uint8→float32/255
-            target_tensor = torch.from_numpy(targets).to(
-                device=device, dtype=torch.float32).div_(255.0)
-            ownership_tensor = torch.from_numpy(ownership).to(device=device)
-            hard = torch.from_numpy(masks).to(device=device)
-            if build_graph:  # STE：forward 数值不变，autograd 边接到位移
-                # 批号与参数索引一次上设备
-                slots = torch.from_numpy(
-                    np.concatenate(member_slots)).to(device)
-                owned = torch.from_numpy(
-                    np.concatenate(member_params)).to(device)
-                # 中点坐标转 float32 上设备
-                mids = torch.from_numpy(
-                    np.concatenate(member_mids)).to(device=device,
-                                                     dtype=torch.float32)
-                local = parameters[owned]  # gather 出 [M]，autograd 边
-                # pixel_dbu 随批传入：backward 把采样梯度换算回 DBU 单位。
-                mask_tensor = _EdgeGradientMask.apply(hard, local, slots, mids,
-                                                      pixel_dbu)
-            else:
-                mask_tensor = hard  # 无梯度路径直通
-            printed = model.forward_many(mask_tensor, conditions)  # 一次 FFT
-            nominal = printed["nominal"]
-            dose_max = printed["dose_max"]
-            defocus_min = printed["defocus_min"]
-            if build_graph:  # 建图版连续 loss：backward 累积到 parameters.grad
-                l_nom = ((nominal - target_tensor) ** 2
-                         * ownership_tensor).sum()
-                l_proc = (((dose_max - target_tensor) ** 2
-                           + (defocus_min - target_tensor) ** 2)
-                          * ownership_tensor).sum()
-                l_pv = ((dose_max - defocus_min) ** 2
-                        * ownership_tensor).sum()
-                batch_loss = (config.weight_nominal_l2 * l_nom
-                              + config.weight_process_l2 * l_proc
-                              + config.weight_pvband * l_pv) / total_pixels
-                batch_loss.backward()  # 批间梯度直接累加（同一参数快照）
-                triple = (l_nom, l_proc, l_pv)
-            else:
-                with torch.no_grad():  # 纯评价路径不建图
-                    triple = (((nominal - target_tensor) ** 2
-                               * ownership_tensor).sum(),
-                              (((dose_max - target_tensor) ** 2
-                                + (defocus_min - target_tensor) ** 2)
-                               * ownership_tensor).sum(),
-                              ((dose_max - defocus_min) ** 2
-                               * ownership_tensor).sum())
-            with torch.no_grad():  # 离散诊断只读数值，不进入训练
-                sums["nominal"] += float(triple[0]) / total_pixels
-                sums["process"] += float(triple[1]) / total_pixels
-                sums["pvband"] += float(triple[2]) / total_pixels
-                diag["l2"] += evaluate_binary_l2(
-                    target_tensor, nominal, threshold=threshold,
-                    ownership_mask=ownership_tensor)
-                diag["pvband"] += evaluate_pvband(
-                    dose_max, defocus_min, threshold=threshold,
-                    ownership_mask=ownership_tensor)
-                if probe_slots:  # 本批 owner 探针一次批量评价（owner-core 语义）
-                    batch_index_tensor = torch.from_numpy(
-                        np.concatenate(probe_slots))
-                    inner_xy = torch.from_numpy(np.concatenate(
-                        [probe_inner_xy[c] for c in core_indices
-                         if len(core_owner_members[c])]))
-                    outer_xy = torch.from_numpy(np.concatenate(
-                        [probe_outer_xy[c] for c in core_indices
-                         if len(core_owner_members[c])]))
-                    # 阈值跟随模型 PrintThresh
-                    epe_result = evaluate_edge_probes(
-                        target_tensor, nominal, batch_index_tensor,
-                        inner_xy, outer_xy, threshold=threshold)
-                    diag["epe"] += epe_result.violation_count
-                    diag["valid"] += int(epe_result.valid.cpu().numpy().sum())
-                    diag["ambiguous"] += int(
-                        epe_result.ambiguous.cpu().numpy().sum())
-            # 释放：批结束只保留标量与梯度，光刻图和批张量立即失去引用。
-            del printed, nominal, dose_max, defocus_min, mask_tensor, hard
-            del target_tensor, ownership_tensor
-            if on_tiles_completed is not None:  # backward 且释放后才报进度
-                on_tiles_completed(batch_count)
-        nominal_loss = sums["nominal"]
-        process_loss = sums["process"]
-        pvband_loss = sums["pvband"]
-        total_loss = (config.weight_nominal_l2 * nominal_loss
-                      + config.weight_process_l2 * process_loss
-                      + config.weight_pvband * pvband_loss)
-        if not (isfinite(total_loss) and isfinite(nominal_loss)
-                and isfinite(process_loss) and isfinite(pvband_loss)):
+        evaluation = _evaluate_state(
+            ctx, model, problem, config, target_cache, parameters,
+            current_region, current_segment_midpoints,
+            build_gradient=can_update, on_tiles_completed=on_tiles_completed)
+        if not (isfinite(evaluation.total_loss)
+                and isfinite(evaluation.nominal_loss)
+                and isfinite(evaluation.process_loss)
+                and isfinite(evaluation.pvband_loss)):
             raise FloatingPointError(
-                f"{macro_id} state {state_index} 连续 loss 非有限")
+                f"{ctx.macro_id} state {state_index} 连续 loss 非有限")
         records.append(GradientMBOPCIterationRecord(
-            state_index=state_index, total_loss=total_loss,
-            nominal_l2_loss=nominal_loss, process_l2_loss=process_loss,
-            pvband_loss=pvband_loss, l2=diag["l2"], pvband=diag["pvband"],
-            epe=diag["epe"], valid_probes=diag["valid"],
-            ambiguous_probes=diag["ambiguous"],
+            state_index=state_index, total_loss=evaluation.total_loss,
+            nominal_l2_loss=evaluation.nominal_loss,
+            process_l2_loss=evaluation.process_loss,
+            pvband_loss=evaluation.pvband_loss, l2=evaluation.l2,
+            pvband=evaluation.pvband, epe=evaluation.epe,
+            valid_probes=evaluation.valid_probes,
+            ambiguous_probes=evaluation.ambiguous_probes,
             displaced_segments=int(np.count_nonzero(current_owner)),
-            elapsed_seconds=time.perf_counter() - started))
-        if total_loss < best_loss:  # 严格更小才更新；相同保留较早状态
-            best_loss = total_loss
+            elapsed_seconds=evaluation.elapsed_seconds))
+        if evaluation.total_loss < best_loss:  # 严格更小才更新；相同保留较早状态
+            best_loss = evaluation.total_loss
             best_state_index = state_index
             best_owner = current_owner.copy()
-        if total_loss == 0.0:  # 连续 loss 恰为零即达目的
+        if evaluation.total_loss == 0.0:  # 连续 loss 恰为零即达目的
             stop_reason = "zero_loss"
             break
         if state_index == config.iterations:  # 轮次自然用尽
@@ -429,22 +557,12 @@ def optimize_gradient_macro(
         grad = parameters.grad  # 全部 batch 完成后的唯一屏障内检查
         if grad is None or not bool(torch.isfinite(grad).all()):
             raise FloatingPointError(
-                f"{macro_id} state {state_index} 梯度缺失或非有限")
-        before = parameters.detach().clone()  # 更新前快照（no_update 判据）
-        optimizer.step()  # 每 state 至多一次
-        with torch.no_grad():
-            parameters.clamp_(-max_displacement, max_displacement)  # 先裁上限
-        if not bool(torch.isfinite(parameters).all()):
-            raise FloatingPointError(
-                f"{macro_id} state {state_index} 候选参数非有限")
-        if torch.equal(parameters.detach(), before):  # 梯度全零时步长为零
-            stop_reason = "no_update"
-            break
-        candidate_full[owner_ids] = parameters.detach().cpu().numpy().astype(
-            np.float64)
+                f"{ctx.macro_id} state {state_index} 梯度缺失或非有限")
         try:  # 候选必须先通过方向/hole/有效性守卫才可发布
-            candidate_region, candidate_midpoints = (
-                reconstruct_region_with_midpoints(problem, candidate_full))
+            candidate = _take_optimizer_step(
+                problem, parameters, optimizer, owner_ids, candidate_full,
+                ctx.max_displacement, macro_id=ctx.macro_id,
+                state_index=state_index)
         except (ValueError, ReconstructionError) as exc:
             # 宽捕获有实测依据：几何退化（如位移共线使 ring 顶点不足）会以
             # ValueError 从 KLayout 冒出而非 ReconstructionError（simple.py
@@ -452,10 +570,12 @@ def optimize_gradient_macro(
             stop_reason = "invalid_geometry"
             stop_detail = f"state {state_index + 1} 候选重建失败：{exc}"
             break
+        if candidate is None:  # 参数无变化
+            stop_reason = "no_update"
+            break
         # Region 与采样中点绑定发布：下一状态的栅格化与梯度采样恒来自
         # 同一次合法候选重构（失败时两者都不更新）。
-        current_region = candidate_region
-        current_segment_midpoints = candidate_midpoints
+        current_region, current_segment_midpoints = candidate
     if stop_reason is None:  # 防御兜底（iterations>=1 时循环内必设）
         stop_reason = "iteration_limit"
     best_full = np.zeros(segment_count, dtype=np.float64)

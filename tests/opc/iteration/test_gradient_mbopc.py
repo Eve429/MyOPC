@@ -9,6 +9,7 @@ import torch
 
 from layout import DbuBox, LayerSpec, RegionBatch
 from lithography import ICCAD13Lithography, ProcessCondition
+from opc.errors import ReconstructionError
 from opc.input import (
     ownership_canvas,
     plan_macros,
@@ -28,7 +29,12 @@ from opc.iteration.mbopc import (
     optimize_gradient_macro,
 )
 from opc.iteration.mbopc import gradient as gradient_module
-from opc.iteration.mbopc.gradient import _EdgeGradientMask
+from opc.iteration.mbopc.gradient import (
+    _EdgeGradientMask,
+    _evaluate_state,
+    _prepare_macro_context,
+    _take_optimizer_step,
+)
 
 LAYER = LayerSpec(1, 0)
 # 廉价契约：80² 版图、单 macro、core 40、context 20、pixel 4 → 2×2 core。
@@ -794,6 +800,103 @@ class TestCallCounts:
         _optimize(problem, _LinearModel(), _config(),
                   cache=TargetCanvasCache(0))  # 禁用缓存对照
         assert counts["n"] == 16 + 24  # 每 state 的 target 都要重栅格
+
+
+class TestStructuralSplit:
+    """三段函数拆分的结构级单测（数值行为由既有端到端用例守护）。"""
+
+    def test_prepare_macro_context_static_mappings(self):
+        """静态上下文的 owner 映射、membership 与计分像素直接来自 problem。"""
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
+        config = _config()
+        ctx = _prepare_macro_context(problem, _LinearModel(), config)
+        owner_ids = np.flatnonzero(problem.owner_indices >= 0)
+        assert np.array_equal(ctx.owner_ids, owner_ids)
+        assert ctx.segment_to_parameter.shape == (
+            problem.segments.segment_count,)
+        assert np.all(ctx.segment_to_parameter[owner_ids] >= 0)
+        assert np.all(
+            ctx.segment_to_parameter[problem.owner_indices < 0] == -1)
+        assert ctx.reference_segment_midpoints.shape == (
+            problem.segments.segment_count, 2)
+        for core_index in range(problem.macro.core_count):
+            members = np.asarray(problem.segments_for_core(core_index))
+            expected = members[ctx.segment_to_parameter[members] >= 0]
+            assert np.array_equal(
+                ctx.core_sampling_members[core_index], expected)
+            assert np.array_equal(
+                ctx.core_owner_members[core_index],
+                problem.owner_segments_for_core(core_index))
+        assert ctx.total_pixels > 0
+        assert [c.name for c in ctx.conditions] == [
+            "nominal", "dose_max", "defocus_min"]
+
+    def test_evaluate_state_without_gradient_keeps_params_clean(self):
+        """纯评价路径不为参数创建梯度（评价与更新职责分离）。"""
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
+        config = _config()
+        model = _LinearModel()
+        ctx = _prepare_macro_context(problem, model, config)
+        parameters = torch.zeros(len(ctx.owner_ids), dtype=torch.float32,
+                                 requires_grad=True)
+        evaluation = _evaluate_state(
+            ctx, model, problem, config, TargetCanvasCache(_CACHE_BUDGET),
+            parameters, ctx.reference_region,
+            ctx.reference_segment_midpoints, build_gradient=False)
+        assert parameters.grad is None
+        assert evaluation.total_loss > 0.0
+
+    def test_evaluate_state_with_gradient_accumulates_only(self):
+        """建图路径只累积梯度，参数值保持调用前原值。"""
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
+        config = _config()
+        model = _LinearModel()
+        ctx = _prepare_macro_context(problem, model, config)
+        parameters = torch.zeros(len(ctx.owner_ids), dtype=torch.float32,
+                                 requires_grad=True)
+        before = parameters.detach().clone()
+        _evaluate_state(
+            ctx, model, problem, config, TargetCanvasCache(_CACHE_BUDGET),
+            parameters, ctx.reference_region,
+            ctx.reference_segment_midpoints, build_gradient=True)
+        assert parameters.grad is not None
+        assert bool(torch.isfinite(parameters.grad).all())
+        assert torch.equal(parameters.detach(), before)
+
+    def test_take_optimizer_step_none_pair_and_raise(self, monkeypatch):
+        """零梯度返回 None；有梯度返回同源二元组；重构异常原样上抛。"""
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
+        owner_ids = np.flatnonzero(problem.owner_indices >= 0)
+        parameters = torch.zeros(len(owner_ids), dtype=torch.float32,
+                                 requires_grad=True)
+        optimizer = torch.optim.Adam([parameters], lr=1.0)
+        candidate_full = np.zeros(problem.segments.segment_count,
+                                  dtype=np.float64)
+        # 梯度全零：Adam 更新量为零，按 no_update 返回 None
+        parameters.grad = torch.zeros_like(parameters)
+        assert _take_optimizer_step(
+            problem, parameters, optimizer, owner_ids, candidate_full,
+            10.0, macro_id="mr0c0", state_index=0) is None
+        # 非零梯度：参数移动并重构出同源 Region+midpoints 二元组
+        parameters.grad = torch.full_like(parameters, 0.5)
+        candidate = _take_optimizer_step(
+            problem, parameters, optimizer, owner_ids, candidate_full,
+            10.0, macro_id="mr0c0", state_index=0)
+        assert isinstance(candidate[0], kdb.Region)
+        assert candidate[1].shape == (problem.segments.segment_count, 2)
+        # 重构失败必须原样上抛，不得吞成返回值
+
+        def _raise(problem, displacements):
+            """模拟非法候选几何。"""
+            raise ReconstructionError("boom")
+
+        monkeypatch.setattr(
+            gradient_module, "reconstruct_region_with_midpoints", _raise)
+        parameters.grad = torch.full_like(parameters, 0.5)
+        with pytest.raises(ReconstructionError):
+            _take_optimizer_step(
+                problem, parameters, optimizer, owner_ids, candidate_full,
+                10.0, macro_id="mr0c0", state_index=0)
 
 
 class TestRealModel:

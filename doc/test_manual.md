@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 444 用例）
+# 全量（当前 458 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py
@@ -22,7 +22,7 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 | tests/main | 统一配置体系（configuration 20：单/多 Config、单次读、未请求段严格、Path 三态）；管线配置校验、双轮状态机、最终合并；单遍入口；simple/gradient runner（119） |
 | tests/lithography | 配置解析、资产哈希/布局、前向数值参考、性能计数、backward 有限差分、CUDA parity、main 直跑（81） |
 | tests/evaluation | L2/PVBand/EPE 指标与方向表、ownership 屏蔽、阈值边界、光刻契约 isinstance（25） |
-| tests/opc/iteration | simple MB-OPC：cache 全路径、入口契约、stub 方向/全部停止路径（含 insufficient_probes 与两个真构造越界）、batch/进度/计数、真实 ICCAD13 图形矩阵、CUDA 直通（54）；gradient MB-OPC：surrogate 2·g_mid 公式与越界/重复索引、真实 ICCAD13 ±1 DBU 有限差分方向一致（clear/opaque）、loss 独立复算与 halo 屏蔽、batch 不变与 Adam 屏障事件序、状态/best 快照、共线退化真构造、几何矩阵、调用计数、跨 core membership 采样计数（40 条）与梯度 SUM 累加（P1-1 回归）、CPU/CUDA（45） |
+| tests/opc/iteration | simple MB-OPC：cache 全路径、入口契约、stub 方向/全部停止路径（含 insufficient_probes 与两个真构造越界）、batch/进度/计数、真实 ICCAD13 图形矩阵、CUDA 直通（54）；gradient MB-OPC：surrogate 2·g_mid 公式与越界/重复索引、真实 ICCAD13 ±1 DBU 有限差分方向一致（clear/opaque）、loss 独立复算与 halo 屏蔽、batch 不变与 Adam 屏障事件序、状态/best 快照、共线退化真构造、几何矩阵、调用计数、跨 core membership 采样计数（40 条）与梯度 SUM 累加（P1-1 回归）、CPU/CUDA（45）＋TestStructuralSplit 结构单测：ctx 映射、build_gradient 两态、step 三态（4） |
 | tests/main/test_mbopc_runners | run_mbopc 单入口端到端（macro 数量随 config）：产物与 records 语义、恰一次 merge、正逆序、batch 不变性、invalid 保留 best、差异上界量化、配置类型注入、仓库外直跑、进度开关（22） |
 | tests/main/test_gradient_mbopc_runner | 梯度入口端到端：[gradient_mbopc] 配置契约（类型/权重/Decimal/epe 整除）、产物与 summary（§8.2 键全集、RSS/CUDA 字段）、多 macro 一次合并、正逆序 XOR==0、进度计数与异常收尾、仓库外直跑（25） |
 

@@ -142,12 +142,17 @@ class PixelMacroProblem:
         canvas = np.full(
             (int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)),
             -1, dtype=np.int32)
-        # context 只覆盖 macro 的一部分时取交集；行主序索引表只构造一次。
+        # context 只覆盖 macro 的一部分时取交集；索引块只按窗口大小直接
+        # 构造：block[i,j] = 行基址 + i*wm + j。本函数是每 state × 每 core
+        # 的热路径，禁止为单个 core 分配 O(宏像素) 的全宏 arange 索引表。
         row0, row1 = max(r0, mrow0), min(r1, mrow0 + hm)
         col0, col1 = max(c0, mcol0), min(c1, mcol0 + wm)
         if row0 < row1 and col0 < col1:
-            indices = np.arange(hm * wm, dtype=np.int32).reshape(hm, wm)
-            block = indices[row0 - mrow0:row1 - mrow0, col0 - mcol0:col1 - mcol0]
+            row_base = (row0 - mrow0) * wm + (col0 - mcol0)
+            rows, cols = row1 - row0, col1 - col0
+            block = (row_base
+                     + np.arange(rows, dtype=np.int32)[:, None] * wm
+                     + np.arange(cols, dtype=np.int32)[None, :])
             low_y, _, low_x, _ = _center_padding(
                 r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
             canvas[low_y + row0 - r0:low_y + row1 - r0,

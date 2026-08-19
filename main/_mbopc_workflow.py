@@ -95,7 +95,7 @@ def _solve_macro(method: MBOPCMethod, problem: MacroProblem, model,
         problem, result.best_displacements)
     # 完整候选 GDS（RESULT Cell）
     best_gds = write_macro_gds(
-        problem, best_region, output_dir / "best.gds", dbu_um)
+        problem.layer, best_region, output_dir / "best.gds", dbu_um)
     return result, best_gds  # 结果与 GDS 路径
 
 

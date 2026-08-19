@@ -233,3 +233,64 @@ class TestPaths:
                                   'layout = "~/reticle.gds"')  # ~ 路径
         layout, = load_config(_write(tmp_path, text), LayoutConfig)
         assert layout.layout == (tmp_path / "reticle.gds").resolve()  # 展开正确
+
+
+class TestGridRuntime:
+    """IF-001：算法无关网格解析与 PrepareRuntime 组合结构。"""
+
+    @staticmethod
+    def _partition(**overrides):
+        """按数量模式默认值组装划分配置。"""
+        values = {"core_size_nm": Decimal(1024), "context_nm": Decimal(400),
+                  "macro_grid": (2, 2)}
+        values.update(overrides)
+        return configuration.PartitionConfig(**values)
+
+    def test_count_mode_grid_values(self):
+        """nm→DBU 精确换算；数量模式 macro_size_dbu 保持 None。"""
+        grid = configuration.resolve_grid_config(
+            self._partition(), LithographyConfig(pixel_nm=Decimal(8)),
+            Decimal(1))
+        assert isinstance(grid, configuration.GridRuntime)
+        assert (grid.core_dbu, grid.context_dbu, grid.pixel_dbu) == (1024, 400, 8)
+        assert grid.macro_size_dbu is None
+
+    def test_size_mode_converts_macro_size(self):
+        """尺寸模式换算 macro_size_dbu（0.1nm DBU 台阶放大十倍）。"""
+        partition = self._partition(macro_grid=None, macro_size_nm=Decimal(4096))
+        grid = configuration.resolve_grid_config(
+            partition, LithographyConfig(pixel_nm=Decimal(8)), Decimal("0.1"))
+        assert grid.macro_size_dbu == 40960
+
+    def test_nonexact_pixel_fails(self):
+        """不能整除的 pixel_nm 在解析期失败，不四舍五入。"""
+        with pytest.raises(ValueError):
+            configuration.resolve_grid_config(
+                self._partition(), LithographyConfig(pixel_nm=Decimal("2.5")),
+                Decimal(1))
+
+    def test_prepare_runtime_composes_grid(self):
+        """resolve_prepare_config 组合 GridRuntime 与边段配置，数值不变。"""
+        edge = configuration.EdgeConfig(
+            corner_nm=Decimal(16), segment_nm=Decimal(32),
+            max_displacement_nm=Decimal(24), miter_limit=4.0)
+        runtime = configuration.resolve_prepare_config(
+            self._partition(), LithographyConfig(pixel_nm=Decimal(8)),
+            edge, Decimal(1))
+        assert runtime.grid.core_dbu == 1024  # 旧平铺字段值经 grid 到达
+        assert runtime.grid.context_dbu == 400
+        assert runtime.grid.pixel_dbu == 8
+        assert runtime.grid.macro_size_dbu is None
+        assert runtime.fragmentation.corner_length_dbu == 16.0
+        assert runtime.fragmentation.max_segment_length_dbu == 32.0
+        assert runtime.fragmentation.max_displacement_dbu == 24.0
+
+    def test_prepare_runtime_keeps_context_contract(self):
+        """max_displacement 超过 context 的既有契约在组合结构下不变。"""
+        edge = configuration.EdgeConfig(
+            corner_nm=Decimal(16), segment_nm=Decimal(32),
+            max_displacement_nm=Decimal(800), miter_limit=4.0)
+        with pytest.raises(ValueError, match="context_nm"):
+            configuration.resolve_prepare_config(
+                self._partition(), LithographyConfig(pixel_nm=Decimal(8)),
+                edge, Decimal(1))

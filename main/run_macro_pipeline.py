@@ -107,7 +107,7 @@ def run_round(plan: dict, round_index: int, delta_dbu: int) -> dict:
             core_transmission_sums=transmission_sums)
         # 完整候选 GDS（RESULT Cell，不裁 ownership）
         write_macro_gds(
-            problem, region, round_dir / "gds" / f"{macro_id}.gds", dbu_um)
+            problem.layer, region, round_dir / "gds" / f"{macro_id}.gds", dbu_um)
         peak_rss = max(peak_rss, process.memory_info().rss)  # 采样峰值
         del problem, region  # 释放当前 macro 再处理下一个
     # 轮次摘要

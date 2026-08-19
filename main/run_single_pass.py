@@ -66,10 +66,10 @@ def run_single_pass(layout: LayoutConfig, partition: PartitionConfig,
         # 两级网格规划（像素整除/画布容量在此校验）
         macros = plan_macros(
             bounds, macro_grid=partition.macro_grid,
-            macro_size_dbu=runtime.macro_size_dbu,
-            core_size_dbu=runtime.core_dbu,
-            context_dbu=runtime.context_dbu,
-            pixel_dbu=runtime.pixel_dbu,
+            macro_size_dbu=runtime.grid.macro_size_dbu,
+            core_size_dbu=runtime.grid.core_dbu,
+            context_dbu=runtime.grid.context_dbu,
+            pixel_dbu=runtime.grid.pixel_dbu,
             canvas_pixels=litho.canvas_pixels)
         # 规划复核：ownership 面积和恰等于父框即无正面积重叠（O(macro 数)）。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积失守

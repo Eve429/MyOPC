@@ -306,35 +306,56 @@ def load_config(config_path: str | Path, *config_types: type) -> tuple:
 
 
 @dataclass(frozen=True, slots=True)
+class GridRuntime:
+    """阶段 0 网格规划的 nm→DBU 解析结果（算法无关，edge 与像素 ILT 共用）。"""
+
+    core_dbu: int              # core 边长
+    context_dbu: int           # 只读上下文宽度
+    pixel_dbu: int             # 采样像素
+    macro_size_dbu: int | None  # 尺寸模式（数量模式为 None）
+
+
+def resolve_grid_config(partition: PartitionConfig,
+                        litho: LithographyConfig,
+                        dbu_nm: Decimal) -> GridRuntime:
+    """把划分/光刻配置换算为算法无关的 DBU 级网格参数。
+
+    不读取 EdgeConfig：像素 ILT 无边段参数，却需要同一套网格换算与
+    像素整除契约，抽出到独立入口避免它伪造边段配置才可用。
+    """
+    # 全部 nm 参数精确换算：不能整除直接失败，不四舍五入吸收误差。
+    core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")  # core
+    context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")  # context
+    pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
+    # 尺寸模式才换算；数量模式保持 None
+    macro_size_dbu = (
+        exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm")
+        if partition.macro_size_nm is not None else None)
+    return GridRuntime(core_dbu=core_dbu, context_dbu=context_dbu,
+                       pixel_dbu=pixel_dbu, macro_size_dbu=macro_size_dbu)
+
+
+@dataclass(frozen=True, slots=True)
 class PrepareRuntime:
     """阶段 0/1 消费的 nm→DBU 解析结果（resolve_prepare_config 的打包）。"""
 
+    grid: GridRuntime                   # 算法无关网格参数
     fragmentation: FragmentationConfig  # DBU 级边段配置
-    core_dbu: int                      # core 边长
-    context_dbu: int                   # 只读上下文宽度
-    pixel_dbu: int                     # 采样像素
-    macro_size_dbu: int | None         # 尺寸模式（数量模式为 None）
 
 
 def resolve_prepare_config(partition: PartitionConfig,
                            litho: LithographyConfig, edge: EdgeConfig,
                            dbu_nm: Decimal) -> PrepareRuntime:
     """把划分/光刻/边段配置换算为 DBU 级准备参数并构造边段配置。"""
-    # 全部 nm 参数精确换算：不能整除直接失败，不四舍五入吸收误差。
-    core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")  # core
-    context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")  # context
-    pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
+    # 网格换算与像素契约复用算法无关入口，保证 edge 与像素流程同源。
+    grid = resolve_grid_config(partition, litho, dbu_nm)
     corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")  # 拐角段
     segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")  # 中段
     # 位移上限
     max_displacement_dbu = exact_dbu(
         edge.max_displacement_nm, dbu_nm, "max_displacement_nm")
-    if max_displacement_dbu > context_dbu:  # context 必须覆盖最大位移
+    if max_displacement_dbu > grid.context_dbu:  # context 必须覆盖最大位移
         raise ValueError("context_nm 必须不小于 max_displacement_nm")
-    # 尺寸模式才换算；数量模式保持 None
-    macro_size_dbu = (
-        exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm")
-        if partition.macro_size_nm is not None else None)
     # 边段数值约束（正长度、segment≥2×corner、非负位移）由 FragmentationConfig
     # 构造统一校验，这里不重复检查。
     fragmentation = FragmentationConfig(
@@ -343,10 +364,7 @@ def resolve_prepare_config(partition: PartitionConfig,
         max_displacement_dbu=float(max_displacement_dbu),
         miter_limit=edge.miter_limit)
     # 打包 problem 准备消费的解析结果
-    return PrepareRuntime(
-        fragmentation=fragmentation, core_dbu=core_dbu,
-        context_dbu=context_dbu, pixel_dbu=pixel_dbu,
-        macro_size_dbu=macro_size_dbu)
+    return PrepareRuntime(grid=grid, fragmentation=fragmentation)
 
 
 def resolve_mbopc_config(mbopc: MBOPCConfig, partition: PartitionConfig,

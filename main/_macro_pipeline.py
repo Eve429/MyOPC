@@ -40,7 +40,7 @@ from opc.input import (
     plan_macros,
     rasterize_mask_canvas,
 )
-from opc.input.edge import MacroProblem, prepare_macro_problem  # problem 构造
+from opc.input.edge import prepare_macro_problem  # problem 构造
 
 _PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
 
@@ -68,10 +68,10 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         # 两级网格规划（内部完成像素/画布校验）
         macros = plan_macros(
             bounds, macro_grid=partition.macro_grid,
-            macro_size_dbu=runtime.macro_size_dbu,
-            core_size_dbu=runtime.core_dbu,
-            context_dbu=runtime.context_dbu,
-            pixel_dbu=runtime.pixel_dbu,
+            macro_size_dbu=runtime.grid.macro_size_dbu,
+            core_size_dbu=runtime.grid.core_dbu,
+            context_dbu=runtime.grid.context_dbu,
+            pixel_dbu=runtime.grid.pixel_dbu,
             canvas_pixels=litho.canvas_pixels)
         # ownership 复核——面积和恰等于父框即无正面积重叠。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积守恒
@@ -119,9 +119,9 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         "dbu_um": float(dbu_nm / 1000),
         "layer": [layer.layer, layer.datatype],
         "polarity": layout.polarity.value,
-        "core_size_dbu": runtime.core_dbu,
-        "context_dbu": runtime.context_dbu,
-        "pixel_dbu": runtime.pixel_dbu,
+        "core_size_dbu": runtime.grid.core_dbu,
+        "context_dbu": runtime.grid.context_dbu,
+        "pixel_dbu": runtime.grid.pixel_dbu,
         "canvas_pixels": litho.canvas_pixels,
         "macro_count": len(macros),
         "core_count": sum(macro.core_count for macro in macros),
@@ -144,15 +144,18 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
     return plan  # 返回内存计划供调用方直接消费
 
 
-def write_macro_gds(problem: MacroProblem, region: kdb.Region, path: Path,
+def write_macro_gds(layer: LayerSpec, region: kdb.Region, path: Path,
                     dbu_um: float) -> Path:
-    """把单 macro 当前完整候选 Region 写入 RESULT Cell，供检查和最终合并。"""
+    """把单 macro 当前完整候选 Region 写入 RESULT Cell，供检查和最终合并。
+
+    layer 显式传入：写出行为只需要目标层号，不绑定 edge MacroProblem——
+    像素 ILT 等非边段方法可直接复用同一写出契约。
+    """
     layout = kdb.Layout()  # 独立原生版图对象
     layout.dbu = dbu_um  # 与源版图一致的 DBU，整数坐标物理尺寸不变
     cell = layout.create_cell("RESULT")  # 固定结果 Cell 名
     # 目标层
-    index = layout.layer(kdb.LayerInfo(
-        problem.layer.layer, problem.layer.datatype))
+    index = layout.layer(kdb.LayerInfo(layer.layer, layer.datatype))
     region.insert_into(layout, cell.cell_index(), index)  # 插入完整候选 Region
     path.parent.mkdir(parents=True, exist_ok=True)  # 确保目录存在
     # 同目录临时文件

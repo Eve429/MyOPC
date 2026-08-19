@@ -125,11 +125,13 @@ class PixelMacroProblem:
             spec.ownership_box, spec.context_box,
             int(self.macro.pixel_dbu), int(self.macro.canvas_pixels))
 
-    def trainable_index_canvas(self, core_index: int) -> NDArray[np.int32]:
+    def trainable_index_canvas(self, core_index: int) -> NDArray[np.int64]:
         """返回 macro 参数扁平索引画布：macro 外（含 context/padding）恒 -1。
 
         非负值是 [Hm,Wm] 行主序扁平下标；同一物理像素在任何 core 的画布
         中都映射到同一索引——索引定义在 macro 网格而非 core 画布上。
+        索引域恒 int64：macro 总像素超过 2^31（4nm pixel 下约 185µm² 宏）
+        时 int32 在构造期溢出，负值会被误判为 macro 外 context。
         """
         _, r0, r1, c0, c1 = self._context_window(core_index)
         pixel_dbu = int(self.macro.pixel_dbu)
@@ -141,7 +143,7 @@ class PixelMacroProblem:
         hm, wm = self.ownership_shape
         canvas = np.full(
             (int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)),
-            -1, dtype=np.int32)
+            -1, dtype=np.int64)
         # context 只覆盖 macro 的一部分时取交集；索引块只按窗口大小直接
         # 构造：block[i,j] = 行基址 + i*wm + j。本函数是每 state × 每 core
         # 的热路径，禁止为单个 core 分配 O(宏像素) 的全宏 arange 索引表。
@@ -151,8 +153,8 @@ class PixelMacroProblem:
             row_base = (row0 - mrow0) * wm + (col0 - mcol0)
             rows, cols = row1 - row0, col1 - col0
             block = (row_base
-                     + np.arange(rows, dtype=np.int32)[:, None] * wm
-                     + np.arange(cols, dtype=np.int32)[None, :])
+                     + np.arange(rows, dtype=np.int64)[:, None] * wm
+                     + np.arange(cols, dtype=np.int64)[None, :])
             low_y, _, low_x, _ = _center_padding(
                 r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
             canvas[low_y + row0 - r0:low_y + row1 - r0,

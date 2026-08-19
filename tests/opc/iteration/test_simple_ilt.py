@@ -188,7 +188,7 @@ def _float64_reference(problem, config, model):
             problem.target_canvas(core_index)).to(torch.float64) / 255.0
         ownership = torch.from_numpy(problem.ownership_canvas(core_index))
         trainable = torch.from_numpy(
-            problem.trainable_index_canvas(core_index).astype(np.int64))
+            problem.trainable_index_canvas(core_index))
         valid = torch.from_numpy(problem.context_valid_canvas(core_index))
         canvases.append((target, ownership, trainable, valid))
     parameters = torch.tensor(2.0 * t_own - 1.0, dtype=torch.float64)
@@ -745,3 +745,14 @@ class TestCallCountsAndProgress:
         model.config = _StubConfig(canvas=128)
         with pytest.raises(ValueError, match="画布"):
             optimize_simple_macro(problem, model, _config())
+
+    def test_curvature_requires_at_least_one_context_pixel(self):
+        """P2-1：curvature>0 且 context<1 像素时入口拒绝；关曲率则合法。"""
+        macro = _macro(context_dbu=0)  # 窗口恰等于 core（10px）
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 40)), macro=macro)
+        with pytest.raises(ValueError, match="context"):
+            optimize_simple_macro(problem, _DoseModel(),
+                                  _config(curvature_weight=1.0))
+        # 曲率关闭时 context=0 完全合法（不构造卷积）
+        result = optimize_simple_macro(problem, _DoseModel(), _config())
+        assert len(result.records) == 2

@@ -81,6 +81,14 @@ def optimize_simple_macro(
     beta = float(config.sigmoid_steepness)
     device = model.device
     pixel_dbu = int(problem.macro.pixel_dbu)
+    if (config.curvature_weight > 0.0
+            and int(problem.macro.context_dbu) < pixel_dbu):
+        # 3×3 valid 卷积的 ownership 边缘一圈不计曲率：context < 1 像素时
+        # 该边缘落在画布边界，曲率损失随 core 切分方式变化（网格切分不应
+        # 改变损失语义），在入口拒绝而不是静默给出切分相关结果。
+        raise ValueError(
+            "curvature_weight > 0 要求 context 不小于 1 像素"
+            "（context_dbu >= pixel_dbu），当前 context=0")
     query = problem.macro.query_box
     box = problem.macro.ownership_box
     hm, wm = problem.ownership_shape
@@ -134,8 +142,7 @@ def optimize_simple_macro(
             target_tensor = torch.from_numpy(targets).to(
                 device=device, dtype=torch.float32).div_(255.0)
             ownership_tensor = torch.from_numpy(ownerships).to(device=device)
-            index_tensor = torch.from_numpy(
-                trainable_flat.astype(np.int64)).to(device=device)
+            index_tensor = torch.from_numpy(trainable_flat).to(device=device)
             index3 = index_tensor.view(batch_count, canvas_pixels, canvas_pixels)
             # local 是叶子张量：forward 数值来自快照，backward 梯度经
             # scatter-add 汇入宏梯度——评价与更新职责分离的最小机制。

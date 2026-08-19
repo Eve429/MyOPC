@@ -285,3 +285,9 @@
   脚本/计划文档同步，20 份重生成（clear 几何等价恢复原字节），逐对
   XOR==0 验证 + 负板单遍管线消费性 smoke 通过；Region 惰性挂接陷阱
   记 findings。注释整改四批同日完成（见上）。
+
+- gradient 采样中点 P1 修复三批（ddf6a4a/04741d4/记录批）：
+  reconstruction 下沉产出实际中点（几何单测 4 例解析验证）→ gradient
+  消费已发布中点（spy 成员关系 + 非均匀 FD 回归测试；FD 不判别旧新
+  如实记录）→ findings 记录。gradient smoke 新基线 0.134467/
+  invalid_geometry（守卫按设计工作）；simple 逐位不变；452 passed。

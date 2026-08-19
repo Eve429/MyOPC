@@ -507,3 +507,39 @@
   实验须知情（文档已记）。
 - **巨型负板多边形**：bench_100um 补区单多边形含 6860 孔，GDS 记录超
   0x8000（klayout 可写读、读时告警，标准严格读端不兼容）。
+
+## gradient 采样中点一致性修复事实（2026-08-19，用户 P1）
+
+- **问题机理**：reconstruct_contours 在 corner 按相邻 offset 线交点重接
+  （junctions[corners]=intersections），相邻段位移不同时候选段端点含
+  切向调整；旧 backward 采样点 = 参考中点 + 法向×位移（刚体假设），
+  与 forward 几何脱钩。即使全边同位移，corner 邻段中点也偏移
+  邻边法向分量（矩形 +8 时偏差 8 DBU = 2 像素）。
+- **实现**：_reconstruct_geometry 在 two_points 后向量化产出
+  segment_midpoints（与拼接规则一一对应：two_points 边界前段终于
+  previous_end/后段始于 current_start、普通边界共享 junction、
+  same_position 内部取共线中点；float64 连续域不随 np.rint）；
+  gradient 以 reconstruct_region_with_midpoints 一次重构绑定发布
+  Region+中点，批内 gather 已发布中点（删两条常驻数组）。重构计数
+  契约不变（iterations=2 恰 3 次）。
+- **判别证据链**：几何单测（解析期望：corner 邻段刚体 [56,17] vs
+  实际 [55,17]、45° 角偏差 1.66 DBU）+ spy 成员关系测试（apply 实收
+  中点 ∈ 已发布重构换算集合，旧刚体值对不上任何发布行）。**如实
+  记录**：非均匀状态 FD 方向测试在 4 DBU 像素下不判别旧新（切向偏差
+  1~1.7 DBU 亚像素、STE 梯度带平滑，矩形与 45° 两种几何实测旧/新
+  surrogate 均与真实差分同号，仅幅值差 ~3%）——它是固定后语义的
+  回归守卫，不是旧代码捕捉器。
+- **数值行为变化（修复生效的证明）**：gradient smoke（gcd_30um [1,1]
+  iterations=10）旧 0.069138/iteration_limit/215s → 新 state1
+  0.134467（baseline 0.1498 的 −10.3%）后 state2 候选 zero_length_edge
+  被守卫拒绝、invalid_geometry 终止（两次复跑逐位一致，58s/CUDA
+  501MiB）——修正后 corner 梯度走不同微观轨迹，撞上密集小特征的
+  整数化退化；守卫按设计保留 best、留 stop_detail。这暴露一个后续
+  观察项：~1nm 级位移即可触发 zero_length_edge 拒绝（密集特征的
+  rint 脆弱性），若 invalid_geometry 早停频发需评估候选回退/步长
+  衰减策略（本次不做）。
+- 测试 4 → 452 passed；simple/单遍/验证管线零影响（simple smoke
+  逐位不变）。
+- **立案待办**：optimize_gradient_macro 结构拆分（prepare/evaluate/
+  step/orchestrate）——用户要求 midpoint 修复先行落地、数值变化
+  归因清晰后再拆，结构重构另开任务。

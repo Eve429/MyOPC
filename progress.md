@@ -291,3 +291,8 @@
   消费已发布中点（spy 成员关系 + 非均匀 FD 回归测试；FD 不判别旧新
   如实记录）→ findings 记录。gradient smoke 新基线 0.134467/
   invalid_geometry（守卫按设计工作）；simple 逐位不变；452 passed。
+
+- pyproject 落档 A（[tool.ruff] extend-exclude 固化 00_PAST 与
+  geometry/contour.py 豁免，刻意不配 format 段）；requirements 补
+  pytest 9.1.1/ruff 0.16.2 门禁工具并复核运行时版本零漂移。裸
+  ruff 门禁命令（无 --exclude）经配置直接通过；452 passed。

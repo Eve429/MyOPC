@@ -225,8 +225,9 @@ class TestGradientRunner:
         assert summary["method"] == "gradient_mbopc"  # 方法标识
         assert summary["macro_count"] == 1  # 恰一个 macro
         assert summary["device"].startswith("cpu")  # 测试固定 CPU
-        assert set(summary["loss_weights"]) == {  # 三权重
-            "nominal_l2", "process_l2", "pvband"}
+        assert set(summary["loss_weights"]) == {  # 四权重（EPE additive）
+            "nominal_l2", "process_l2", "pvband", "epe"}
+        assert "epe_steepness" in summary  # EPE 陡度顶层键
         for key in ("rss_start_bytes", "rss_after_prepare_bytes",  # 资源字段
                     "peak_rss_bytes", "cuda_peak_bytes",
                     "final_lithography_tiles", "merge_seconds",

@@ -133,12 +133,14 @@ class GradientConfig:
     weight_nominal_l2: float                      # nominal 连续 loss 权重
     weight_process_l2: float                      # max/min 对 target 权重
     weight_pvband: float                          # max-min 连续差权重
-    epe_distance_nm: Decimal                      # EPE 探针距离（仅诊断，nm）
+    epe_distance_nm: Decimal                      # EPE 探针距离（诊断+训练共用，nm）
     batch_size: int                               # 一次 forward 的 core 数
     target_cache_mb: int                          # target uint8 LRU 上限（MiB）
+    weight_epe: float = 0.0                       # 可微 EPE loss 权重（0=关闭）
+    epe_steepness: float = 4.0                    # EPE penalty sigmoid 陡度
 
     def __post_init__(self) -> None:
-        """迭代/学习率正数与三权重非负且至少一正。"""
+        """迭代/学习率正数与四权重非负且至少一正。"""
         if self.iterations < 1 or self.batch_size < 1:  # 迭代与批
             raise ValueError("iterations/batch_size 必须为正")  # 报
         if self.target_cache_mb < 0:  # 缓存
@@ -147,13 +149,15 @@ class GradientConfig:
             raise ValueError("learning_rate_nm 必须为正")  # 报
         # 三权重
         weights = (self.weight_nominal_l2, self.weight_process_l2,
-                   self.weight_pvband)
+                   self.weight_pvband, self.weight_epe)
         if any(weight < 0.0 for weight in weights):  # 负权重
             raise ValueError("loss 权重必须非负")  # 报
         if not any(weight > 0.0 for weight in weights):  # 全零
-            raise ValueError("三个 loss 权重至少一个为正")  # 报
+            raise ValueError("四个 loss 权重至少一个为正")  # 报
         if self.epe_distance_nm <= 0:  # 探针
             raise ValueError("epe_distance_nm 必须为正")  # 报
+        if self.epe_steepness <= 0.0:  # EPE 陡度
+            raise ValueError("epe_steepness 必须为正数")  # 报
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,6 +420,8 @@ def resolve_gradient_config(gradient: GradientConfig, partition: PartitionConfig
         weight_nominal_l2=gradient.weight_nominal_l2,
         weight_process_l2=gradient.weight_process_l2,
         weight_pvband=gradient.weight_pvband,
+        weight_epe=gradient.weight_epe,
+        epe_steepness=gradient.epe_steepness,
         epe_distance_dbu=float(exact_dbu(
             gradient.epe_distance_nm, dbu_nm, "epe_distance_nm")),
         batch_size=gradient.batch_size,

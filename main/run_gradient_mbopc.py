@@ -22,10 +22,11 @@ def main() -> int:
     print("梯度 MB-OPC 执行完成：")  # 摘要标题
     print(f"  device：{summary['device']}，迭代上限：{summary['iterations']}")  # 运行环境
     print(f"  macro 数：{summary['macro_count']}，core 数：{summary['core_count']}")  # 网格规模
-    weights = summary["loss_weights"]  # 三权重
+    weights = summary["loss_weights"]  # 四权重
     # 目标函数
     print(f"  loss 权重：nominal={weights['nominal_l2']} "
-          f"process={weights['process_l2']} pv={weights['pvband']}")
+          f"process={weights['process_l2']} pv={weights['pvband']} "
+          f"epe={weights['epe']}(γ={summary['epe_steepness']})")
     for macro in summary["macros"]:  # 逐 macro 摘要
         # 关键指标
         print(f"  {macro['macro_id']}：best_state={macro['best_state_index']} "

@@ -32,6 +32,8 @@ weight_pvband = 0.1
 epe_distance_nm = 16
 batch_size = 8
 target_cache_mb = 512
+weight_epe = 1.0                  # 可微 EPE loss（Rev 0.2：sum 聚合 + 长度加权）
+epe_steepness = 4.0
 
 [output]
 save_final_lithography = true

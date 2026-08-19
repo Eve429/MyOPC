@@ -64,7 +64,7 @@ def macro_summary(macro_id: str, macro_dir: Path, result: GradientMBOPCResult,
         "state_count": len(result.records),
         "best_total_loss": best_record.total_loss,
         "best_l2": best_record.l2, "best_pvband": best_record.pvband,
-        "best_epe": best_record.epe,
+        "best_epe": best_record.epe, "best_epe_loss": best_record.epe_loss,
         "best_gds": str(best_gds),
         "result_npz": str(macro_dir / "gradient_result.npz"),
         "metrics_json": str(macro_dir / "gradient_metrics.json"),
@@ -72,10 +72,12 @@ def macro_summary(macro_id: str, macro_dir: Path, result: GradientMBOPCResult,
 
 
 def summary_extras(solver_config: GradientMBOPCConfig) -> dict:
-    """顶层附加摘要键：三 loss 权重（方法标识等公共键由公共层写）。"""
+    """顶层附加摘要键：四 loss 权重与 EPE 陡度（公共键由公共层写）。"""
     return {"loss_weights": {"nominal_l2": solver_config.weight_nominal_l2,
                              "process_l2": solver_config.weight_process_l2,
-                             "pvband": solver_config.weight_pvband}}
+                             "pvband": solver_config.weight_pvband,
+                             "epe": solver_config.weight_epe},
+            "epe_steepness": solver_config.epe_steepness}
 
 
 # 梯度方法适配器实例（公共生命周期消费）

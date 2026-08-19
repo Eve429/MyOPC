@@ -19,6 +19,7 @@ from opc.input.edge import (
     MacroProblem,
     prepare_macro_problem,
     reconstruct_region,
+    reconstruct_region_with_midpoints,
 )
 from opc.input.edge.fragmentation import FragmentationConfig
 from opc.iteration.mbopc import (
@@ -501,7 +502,8 @@ class TestGeometryRejection:
             """模拟非几何领域的程序缺陷。"""
             raise RuntimeError("程序缺陷")
 
-        monkeypatch.setattr(gradient_module, "reconstruct_region", exploding)
+        monkeypatch.setattr(gradient_module, "reconstruct_region_with_midpoints",
+                            exploding)
         with pytest.raises(RuntimeError, match="程序缺陷"):
             _optimize(problem, _LinearModel(), _config())
 
@@ -673,21 +675,77 @@ class TestCallCounts:
         _optimize(problem, model, _config(batch_size=2))  # 3 状态 × 2 批
         assert model.calls == 6
 
-    def test_candidate_region_reconstructed_once_and_reused(
+    def test_candidate_geometry_reconstructed_once_and_reused(
             self, monkeypatch):
-        """候选每 state 恰重建一次并被下一状态栅格复用。"""
+        """候选几何每 state 恰重建一次并被下一状态栅格/采样复用。"""
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         counts = {"n": 0}
-        real = gradient_module.reconstruct_region
+        real = gradient_module.reconstruct_region_with_midpoints
 
         def spy(problem_, displacements):
             """计数重建调用。"""
             counts["n"] += 1
             return real(problem_, displacements)
 
-        monkeypatch.setattr(gradient_module, "reconstruct_region", spy)
+        monkeypatch.setattr(gradient_module,
+                            "reconstruct_region_with_midpoints", spy)
         _optimize(problem, _LinearModel(), _config(iterations=2))
         assert counts["n"] == 3  # 1 次 reference + 2 次候选（各发布一次）
+
+    def test_sampling_midpoints_come_from_published_reconstruction(
+            self, monkeypatch):
+        """apply 收到的采样中点逐行可在已发布重构的中点里找到。
+
+        刚体推算（参考中点+法向×位移）在 corner 邻段处对不上任何一次
+        发布值——本测试锁死采样坐标只来自已发布重构几何。
+        """
+        problem = _problem(kdb.Region(kdb.Box(10, 10, 70, 70)))
+        published = []  # 各次重构发布的段中点快照（DBU）
+        real_reconstruct = gradient_module.reconstruct_region_with_midpoints
+
+        def reconstruct_spy(problem_, displacements):
+            """记录每次重构发布的 (Region, 中点)。"""
+            region, midpoints = real_reconstruct(problem_, displacements)
+            published.append(midpoints.copy())
+            return region, midpoints
+
+        monkeypatch.setattr(gradient_module,
+                            "reconstruct_region_with_midpoints", reconstruct_spy)
+        captured = []  # apply 实收中点（canvas 坐标 float32）
+
+        class _CaptureMask(_EdgeGradientMask):
+            """捕获 apply 输入中点的代理（前向逻辑继承不变）。"""
+
+            @staticmethod
+            def forward(ctx, hard_masks, local_displacements, batch_indices,
+                        midpoints_xy):
+                captured.append(midpoints_xy.detach().clone())
+                return _EdgeGradientMask.forward(
+                    ctx, hard_masks, local_displacements, batch_indices,
+                    midpoints_xy)
+
+        monkeypatch.setattr(gradient_module, "_EdgeGradientMask", _CaptureMask)
+        _optimize(problem, _LinearModel(), _config(iterations=1))
+        assert len(published) >= 2  # reference + 至少一次候选
+        # 允许集合 = 每次发布中点经任一 core context 换算的 canvas 坐标
+        # （float32 精确比对：换算与类型转换都是确定性的）。
+        pixel_dbu = int(problem.macro.pixel_dbu)
+        canvas = int(problem.macro.canvas_pixels)
+        allowed = set()
+        for snapshot in published:
+            for core_index in range(problem.macro.core_count):
+                spec = problem.macro.core(core_index)
+                converted = points_to_canvas(
+                    snapshot, spec.context_box, pixel_dbu, canvas
+                ).astype(np.float32)
+                allowed.update((float(x), float(y)) for x, y in converted)
+        checked = 0
+        for tensor in captured:
+            rows = tensor.numpy()
+            checked += len(rows)
+            for row in rows:
+                assert (float(row[0]), float(row[1])) in allowed, row
+        assert checked > 0  # 确实捕获了采样条目
 
     def test_target_cache_hit_avoids_target_raster(self, monkeypatch):
         """target cache 命中时 target 不重栅格化。"""
@@ -712,12 +770,13 @@ class TestRealModel:
     """真实 ICCAD13 的方向一致性与 CPU/CUDA 集成（TEST-003/011）。"""
 
     @staticmethod
-    def _loss_numeric(problem, model, config, owner_index, delta):
-        """对单段 ±delta 位移独立复算加权连续 loss（数值路径）。"""
+    def _loss_numeric(problem, model, config, owner_index, delta, base=None):
+        """在给定状态（默认零位移）上对单段 ±delta 复算加权连续 loss。"""
         segments = problem.segments.segment_count
         owner_ids = np.flatnonzero(problem.owner_indices >= 0)
-        displacements = np.zeros(segments, dtype=np.float64)
-        displacements[owner_ids[owner_index]] = delta
+        displacements = (np.zeros(segments, dtype=np.float64)
+                         if base is None else np.array(base, dtype=np.float64))
+        displacements[owner_ids[owner_index]] += delta
         region = reconstruct_region(problem, displacements)
         reference = reconstruct_region(
             problem, np.zeros(segments, dtype=np.float64))
@@ -754,15 +813,17 @@ class TestRealModel:
         return weighted / total
 
     @staticmethod
-    def _surrogate_gradients(problem, model):
-        """直接经 _EdgeGradientMask 求 baseline 的 owner 梯度。"""
+    def _surrogate_gradients(problem, model, base=None):
+        """直接经 _EdgeGradientMask 求指定状态（默认零位移）的 owner 梯度。"""
         segments = problem.segments.segment_count
         owner_ids = np.flatnonzero(problem.owner_indices >= 0)
         segment_to_parameter = np.full(segments, -1, dtype=np.int32)
         segment_to_parameter[owner_ids] = np.arange(len(owner_ids))
-        reference = problem.segments.materialize()
-        midpoints = (reference.starts + reference.ends) * 0.5  # 零位移中点
-        region = reconstruct_region(
+        values = (np.zeros(segments, dtype=np.float64)
+                  if base is None else np.array(base, dtype=np.float64))
+        # 与求解器同源：mask 来自当前状态重构，采样中点来自同一次重构。
+        region, midpoints = reconstruct_region_with_midpoints(problem, values)
+        reference = reconstruct_region(
             problem, np.zeros(segments, dtype=np.float64))
         parameters = torch.zeros(len(owner_ids), requires_grad=True)
         pixel_dbu = int(problem.macro.pixel_dbu)
@@ -774,7 +835,7 @@ class TestRealModel:
             spec = problem.macro.core(core_index)
             mask = rasterize_mask_canvas(region, spec.context_box, pixel_dbu,
                                          canvas, polarity=problem.polarity)
-            target = rasterize_mask_canvas(region, spec.context_box,
+            target = rasterize_mask_canvas(reference, spec.context_box,
                                            pixel_dbu, canvas,
                                            polarity=problem.polarity)
             own = ownership_canvas(spec.ownership_box, spec.context_box,
@@ -840,6 +901,42 @@ class TestRealModel:
                 f"段 {owner_index}：surrogate {gradients[owner_index]:.3e} "
                 f"与有限差分 {difference:.3e} 方向相反")
         assert checked >= 2  # 至少两段完成了方向验证
+
+    def test_surrogate_direction_matches_difference_at_nonuniform_state(
+            self, cpu_model):
+        """非均匀位移状态：corner 邻段 surrogate 与 ±1 DBU 差分仍同号。
+
+        baseline 全零位移时 corner 邻段无切向失配，掩盖刚体推算中点的
+        缺陷；先构造 横 +3/竖 −2 状态，再对 corner 邻段做数值差分。
+        """
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
+        config = _config()
+        geometry = problem.segments.materialize(None)
+        base = np.zeros(problem.segments.segment_count, dtype=np.float64)
+        bottom = ((geometry.starts[:, 1] == 20)
+                  & (geometry.ends[:, 1] == 20))
+        right = ((geometry.starts[:, 0] == 60)
+                 & (geometry.ends[:, 0] == 60))
+        base[bottom] = 3.0
+        base[right] = -2.0
+        owner_ids, gradients = self._surrogate_gradients(problem, cpu_model,
+                                                          base)
+        owner_set = set(owner_ids.tolist())
+        # 底边上最靠近右下角 (60,20) 的 owner fragment：corner 邻段。
+        candidates = np.flatnonzero(
+            bottom & (np.maximum(geometry.starts[:, 0],
+                                 geometry.ends[:, 0]) == 60))
+        corner_frag = int(next(i for i in candidates if i in owner_set))
+        owner_index = int(np.flatnonzero(owner_ids == corner_frag)[0])
+        plus = self._loss_numeric(problem, cpu_model, config, owner_index,
+                                  1.0, base)
+        minus = self._loss_numeric(problem, cpu_model, config, owner_index,
+                                   -1.0, base)
+        difference = (plus - minus) / 2.0
+        assert abs(difference) > 1e-9  # corner 邻段在非均匀状态下有实差分
+        assert gradients[owner_index] * difference > 0.0, (
+            f"corner 邻段 {corner_frag}：surrogate "
+            f"{gradients[owner_index]:.3e} 与有限差分 {difference:.3e} 方向相反")
 
     def test_real_iccad13_cpu_runs_nonzero_update_and_valid_best(
             self, cpu_model):

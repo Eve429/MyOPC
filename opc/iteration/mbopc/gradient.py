@@ -19,7 +19,7 @@ from evaluation import (
 from lithography import LithographyModel
 from opc.errors import ReconstructionError
 from opc.input import ownership_canvas, points_to_canvas, rasterize_mask_canvas
-from opc.input.edge import MacroProblem, reconstruct_region
+from opc.input.edge import MacroProblem, reconstruct_region_with_midpoints
 from opc.input.edge.sampling import edge_probe_points
 
 from ._cache import TargetCanvasCache
@@ -110,7 +110,7 @@ class _EdgeGradientMask(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        """按段当前中点双线性采样 dL/dMask，梯度为 2·g_mid。
+        """按当前已发布重构几何的段中点双线性采样 dL/dMask，梯度为 2·g_mid。
 
         2 倍来源：论文对两个 endpoint 各采样一次 g_mid；本项目标量位移
         同时驱动两端点，中点随位移移动同一单位法向，两端链式求和恰为
@@ -190,14 +190,12 @@ def optimize_gradient_macro(
     # [-1,0,1,-1,-1]，其中 0、1 即两个可训练参数的下标）。
     segment_to_parameter = np.full(segment_count, -1, dtype=np.int32)
     segment_to_parameter[owner_ids] = np.arange(len(owner_ids), dtype=np.int32)
-    reference = problem.segments.materialize()  # 参考几何唯一物化
-    # 段中点 [S,2]（全局 DBU）
-    reference_midpoints = np.ascontiguousarray(
-        (reference.starts + reference.ends) * 0.5)
-    segment_normals = np.ascontiguousarray(reference.normals)  # [S,2]
-    # 零位移参考几何（target/EPE 基准）
-    reference_region = reconstruct_region(
-        problem, np.zeros(segment_count, dtype=np.float64))
+    reference = problem.segments.materialize()  # 参考几何唯一物化（探针用）
+    # 零位移参考几何与段采样中点：target/EPE 基准与 state0 采样共用一次
+    # 重构；中点由重构几何提供（含 corner miter 切向调整），非刚体推算。
+    reference_region, current_segment_midpoints = (
+        reconstruct_region_with_midpoints(
+            problem, np.zeros(segment_count, dtype=np.float64)))
     core_owner_members = []  # 每 core 的 owner 段号（EPE 探针专用，语义不变）
     core_sampling_members = []  # 每 core 全部可见段中的 owner 段（梯度采样）
     probe_inner_xy = []  # 每 core 的参考探针 canvas 坐标（None=无 owner 段）
@@ -227,7 +225,7 @@ def optimize_gradient_macro(
         else:
             probe_inner_xy.append(None)
             probe_outer_xy.append(None)
-    del reference  # 中点/法向/探针已提取，释放三份全量段几何数组
+    del reference  # 探针已提取，释放全量段几何数组
     if total_pixels == 0:
         # 有 owner 段却算不出任何计分像素，属于数据损坏，不能静默除零。
         raise ValueError("存在 owner 段但 ownership 计分像素为 0（数据不一致）")
@@ -297,14 +295,9 @@ def optimize_gradient_macro(
                     canvas_pixels)
                 sampling_members = core_sampling_members[core_index]
                 if len(sampling_members):  # 梯度采样：全部 membership 中 owner 段
-                    # 段当前位移 [n]
-                    displacement = current_owner[
-                        segment_to_parameter[sampling_members]]
-                    # 当前中点 = 参考中点 + 法向×位移
-                    midpoints_dbu = (
-                        reference_midpoints[sampling_members]
-                        + segment_normals[sampling_members]
-                        * displacement[:, None])
+                    # 采样中点由当前已发布的重构几何提供（corner miter 后含
+                    # 切向调整），与栅格化用 Region 恒来自同一次合法重构。
+                    midpoints_dbu = current_segment_midpoints[sampling_members]
                     # DBU→canvas 唯一换算
                     member_mids.append(points_to_canvas(
                         midpoints_dbu, spec.context_box, pixel_dbu,
@@ -442,7 +435,8 @@ def optimize_gradient_macro(
         candidate_full[owner_ids] = parameters.detach().cpu().numpy().astype(
             np.float64)
         try:  # 候选必须先通过方向/hole/有效性守卫才可发布
-            candidate_region = reconstruct_region(problem, candidate_full)
+            candidate_region, candidate_midpoints = (
+                reconstruct_region_with_midpoints(problem, candidate_full))
         except (ValueError, ReconstructionError) as exc:
             # 宽捕获有实测依据：几何退化（如位移共线使 ring 顶点不足）会以
             # ValueError 从 KLayout 冒出而非 ReconstructionError（simple.py
@@ -450,7 +444,10 @@ def optimize_gradient_macro(
             stop_reason = "invalid_geometry"
             stop_detail = f"state {state_index + 1} 候选重建失败：{exc}"
             break
-        current_region = candidate_region  # 发布为下一评价状态
+        # Region 与采样中点绑定发布：下一状态的栅格化与梯度采样恒来自
+        # 同一次合法候选重构（失败时两者都不更新）。
+        current_region = candidate_region
+        current_segment_midpoints = candidate_midpoints
     if stop_reason is None:  # 防御兜底（iterations>=1 时循环内必设）
         stop_reason = "iteration_limit"
     best_full = np.zeros(segment_count, dtype=np.float64)

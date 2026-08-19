@@ -157,8 +157,11 @@ def _binary_canvas(problem: PixelMacroProblem, binary_mask: np.ndarray,
     trainable = problem.trainable_index_canvas(core_index)
     values = binary_mask.reshape(-1)[np.maximum(trainable, 0)]
     context_soft = 1.0 / (1.0 + np.exp(-beta * (2.0 * target - 1.0)))
+    # 与训练同款三值语义：真实 context 用初始 soft，数值 padding 恒 0
+    context = np.where(problem.context_valid_canvas(core_index),
+                       context_soft, 0.0)
     return np.where(trainable >= 0, values,
-                    context_soft).astype(np.float32)
+                    context).astype(np.float32)
 
 
 def _evaluate_best_binary(problem: PixelMacroProblem, result,

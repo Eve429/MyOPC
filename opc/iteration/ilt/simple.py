@@ -123,9 +123,11 @@ def optimize_simple_macro(
                 [problem.ownership_canvas(c) for c in core_indices])
             trainables = np.stack(
                 [problem.trainable_index_canvas(c) for c in core_indices])
+            valid_canvases = np.stack(
+                [problem.context_valid_canvas(c) for c in core_indices])
             trainable_flat = trainables.reshape(batch_count, -1)  # [B,P]
-            valid = trainable_flat >= 0
-            safe = np.where(valid, trainable_flat, 0)
+            owned = trainable_flat >= 0  # trainable 槽位（区别于窗口掩码）
+            safe = np.where(owned, trainable_flat, 0)
             # 同一 state 全部 batch 读同一宏参数快照：numpy 取值即快照，
             # 无 autograd 直通；梯度经 local 叶子张量回散（见下）。
             local_values = flat_parameters[safe]
@@ -149,7 +151,12 @@ def optimize_simple_macro(
             # 在本宏画布中的初始值恰为其自身 state0（监督目标仍是 raw T）。
             context_soft = torch.sigmoid(
                 beta * (target_tensor * 2.0 - 1.0)).detach()
-            mask = torch.where(index3 >= 0, soft, context_soft)
+            # 三值语义：window 外的数值 padding 不是物理 T=0 像素，必须恒 0
+            # ——对整个画布 sigmoid 会人为加一圈 σ(−β)≈1.8% 透光环。
+            valid_tensor = torch.from_numpy(valid_canvases).to(device=device)
+            context = torch.where(
+                valid_tensor, context_soft, torch.zeros_like(context_soft))
+            mask = torch.where(index3 >= 0, soft, context)
             printed = model.forward_many(mask, conditions)  # 一次共享 FFT
             nominal_l2, process_l2, pvband_loss = owned_continuous_losses(
                 printed["nominal"], printed["dose_max"],
@@ -171,10 +178,11 @@ def optimize_simple_macro(
                 grad_np = local.grad.detach().cpu().numpy()
                 # scatter-add 求和：同一像素出现在多个 core context 时
                 # 梯度相加，绝不按出现次数平均。
-                np.add.at(macro_gradient, trainable_flat[valid],
-                          grad_np[valid])
+                np.add.at(macro_gradient, trainable_flat[owned],
+                          grad_np[owned])
             # 释放：批结束只保留标量与宏梯度，画布与 autograd 图失去引用
-            del printed, mask, soft, local, target_tensor, ownership_tensor
+            del printed, mask, soft, local, context, valid_tensor
+            del target_tensor, ownership_tensor
             del index_tensor, index3, nominal_l2, process_l2, pvband_loss
             if use_curvature:
                 del curvature_value

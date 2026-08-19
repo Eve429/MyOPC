@@ -189,7 +189,8 @@ def _float64_reference(problem, config, model):
         ownership = torch.from_numpy(problem.ownership_canvas(core_index))
         trainable = torch.from_numpy(
             problem.trainable_index_canvas(core_index).astype(np.int64))
-        canvases.append((target, ownership, trainable))
+        valid = torch.from_numpy(problem.context_valid_canvas(core_index))
+        canvases.append((target, ownership, trainable, valid))
     parameters = torch.tensor(2.0 * t_own - 1.0, dtype=torch.float64)
     best_loss = float("inf")
     best = parameters.detach().clone()
@@ -201,14 +202,17 @@ def _float64_reference(problem, config, model):
             parameters = parameters.detach().requires_grad_(True)
         total = torch.zeros((), dtype=torch.float64)
         parts = {"nominal": 0.0, "process": 0.0, "pvband": 0.0}
-        for target, ownership, trainable in canvases:
+        for target, ownership, trainable, valid in canvases:
             flat = parameters.reshape(-1)
             safe = trainable.clamp_min(0)
             local = flat[safe]
             soft = torch.sigmoid(beta * local)
-            # 与实现同款固定 context：初始 state0 transmission σ(β(2T−1))
+            # 与实现同款三值语义：物理 context 初始 soft σ(β(2T−1))，
+            # 数值 padding 恒 0
             context_soft = torch.sigmoid(beta * (target * 2.0 - 1.0))
-            mask = torch.where(trainable >= 0, soft, context_soft)
+            context = torch.where(valid, context_soft,
+                                  torch.zeros_like(context_soft))
+            mask = torch.where(trainable >= 0, soft, context)
             printed = model.forward_many(mask, (
                 model.condition("nominal"), model.condition("dose_max"),
                 model.condition("defocus_min")))
@@ -601,6 +605,35 @@ class TestMacroSeamConsistency:
         expected = 1.0 / (1.0 + np.exp(-beta * (2.0 * target - 1.0)))
         assert np.allclose(seen_b, expected.astype(np.float32), atol=1e-6)
         assert float(seen_b.max()) < 1.0
+
+
+class TestCanvasPaddingSemantics:
+    """数值 padding 与物理 context 的三值画布语义（P1-1 Rev 1.2）。"""
+
+    def test_padding_strictly_zero_and_context_soft(self):
+        """window 显著小于 256：padding 严格 0；物理 T=0 context 格为 σ(−β)。"""
+        # core 40 + context 4 → window (40+8)/4=12px << 256，padding 占绝大多数
+        macro = _macro(context_dbu=4)
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 40)), macro=macro)
+        model = _MaskCaptureModel()
+        optimize_simple_macro(
+            problem, model,
+            _config(iterations=1, batch_size=problem.macro.core_count))
+        beta = float(_DEFAULTS["sigmoid_steepness"])
+        soft_of = 1.0 / (1.0 + np.exp(-beta * (2.0 * 0.0 - 1.0)))  # σ(−β)
+        for core_index in range(problem.macro.core_count):
+            canvas = model.captured[0][core_index].numpy()
+            valid = problem.context_valid_canvas(core_index)
+            trainable = problem.trainable_index_canvas(core_index)
+            # 数值 padding：必须严格 0（曾被误 sigmoid 成 σ(−β)≈0.018）
+            assert float(np.abs(canvas[~valid]).max()) == 0.0
+            # 真实 context 中物理 T=0 格：初始 soft σ(−β)（不是 0）
+            physical_zero = valid & (trainable < 0)
+            target = problem.target_canvas(core_index).astype(
+                np.float64) / 255.0
+            cells = canvas[physical_zero & (target == 0.0)]
+            assert cells.size > 0  # 判别性：该 core 确有此类格
+            assert np.allclose(cells, soft_of, atol=1e-6)
 
 
 class TestRealModel:

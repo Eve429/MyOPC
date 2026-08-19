@@ -159,6 +159,23 @@ class PixelMacroProblem:
                    low_x + col0 - c0:low_x + col1 - c0] = block
         return canvas
 
+    def context_valid_canvas(self, core_index: int) -> NDArray[np.bool_]:
+        """返回真实 context window 掩码：window 内 True，数值 padding False。
+
+        target_canvas 的 window 外恒 0 是填满固定画布的数值 padding，不是
+        物理 T=0 mask pixel；消费方对两者必须区别对待（物理 context 用初始
+        soft、padding 恒 0），本掩码是区分两者的唯一判据。
+        """
+        _, r0, r1, c0, c1 = self._context_window(core_index)
+        low_y, _, low_x, _ = _center_padding(
+            r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
+        canvas = np.zeros(
+            (int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)),
+            dtype=np.bool_)
+        canvas[low_y:low_y + (r1 - r0),
+               low_x:low_x + (c1 - c0)] = True
+        return canvas
+
     def _arrays(self) -> dict[str, np.ndarray]:
         """按格式版本 1 的键名打包全部待持久化数组。"""
         macro = self.macro

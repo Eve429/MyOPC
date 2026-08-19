@@ -7,7 +7,7 @@ import warnings  # 学习率超限的风险提示（resolve_gradient_config）
 from dataclasses import MISSING, dataclass, fields  # 字段元数据驱动解析
 from decimal import Decimal, InvalidOperation  # nm 参数的十进制精确载体
 from pathlib import Path  # 全部路径统一使用 Path 对象
-from typing import Literal, get_args, get_origin  # Literal 与联合类型解包
+from typing import Literal, get_args, get_origin, get_type_hints  # 注解解包
 
 from tomllib import loads as toml_loads  # Python 3.12 标准库 TOML 解析
 
@@ -21,6 +21,7 @@ from opc.input import MaskPolarity  # 极性枚举（合法值集的唯一事实
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
 # 求解器 DBU 输入包（resolve 构造目标）
+from opc.iteration.ilt import SimpleILTConfig
 from opc.iteration.mbopc import (
     GradientMBOPCConfig,
     SimpleMBOPCConfig,
@@ -196,6 +197,7 @@ CONFIG_SECTIONS: dict[type, str] = {
     EdgeConfig: "edge",
     MBOPCConfig: "mbopc",
     GradientConfig: "gradient",
+    SimpleILTConfig: "simple_ilt",
     SinglePassConfig: "single_pass",
     ValidationConfig: "iteration",
     OutputConfig: "output",
@@ -269,12 +271,16 @@ def _parse_config(raw: dict, config_path: Path, config_type: type) -> object:
     unknown = set(section) - known  # 段内未知键
     if unknown:  # 拼写错误必须在加载期暴露
         raise ValueError(f"[{section_name}] 含未知键：{sorted(unknown)}")  # 报键
+    # 经 get_type_hints 解析真实注解：外部 dataclass（如 ILT 求解器 Config）
+    # 启用 postponed annotations 时 field.type 只是字符串，直接交给
+    # _parse_scalar 会落到"不受支持"兜底；解析失败的原异常必须传播。
+    hints = get_type_hints(config_type)
     kwargs = {}  # 构造参数
     for field in fields(config_type):  # 逐字段
         if field.name in section:  # TOML 显式给出
             # 类型解析
             kwargs[field.name] = _parse_scalar(
-                field.type, section[field.name],
+                hints[field.name], section[field.name],
                 f"[{section_name}].{field.name}", base_dir)
         # 无默认值
         elif (field.default is MISSING

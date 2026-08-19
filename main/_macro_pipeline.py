@@ -22,7 +22,12 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from common.io import atomic_write_json  # JSON 原子写出
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
-from layout import DbuBox, LayerSpec, LayoutDB  # 版图打开、层规格与坐标框
+from layout import (  # 版图打开、层规格与坐标框
+    DbuBox,
+    LayerNotFoundError,
+    LayerSpec,
+    LayoutDB,
+)
 
 # 统一配置体系（含 nm→DBU 解析集中）
 from main.configuration import (
@@ -201,13 +206,20 @@ def merge_macro_results(
         if not gds_path.is_file():  # 缺失 macro GDS
             raise FileNotFoundError(f"缺失 macro GDS：{gds_path}")  # 明确失败
         with LayoutDB.open(gds_path) as database:  # 回读完整候选
-            layer_bounds = database.layer_bbox(layer)  # 候选层真实包络
-            if layer_bounds is None:  # 候选 GDS 目标层为空
-                raise RuntimeError(f"{macro_id} 候选 GDS 目标层为空")
-            # 层包络内查询物化（不用魔法框：
-            batch = database.query(
-                [layer], layer_bounds).materialize()
-        region = batch.region(layer)  # 候选 Region
+            # 空 macro 候选是合法形态（如像素 ILT 的无材料区域或全暗
+            # 优化结果）：GDS 不保存空层，层缺失等价于零覆盖 Region，
+            # 不按损坏拒绝；真正的文件损坏仍由读盘/校验路径暴露。
+            try:
+                layer_bounds = database.layer_bbox(layer)  # 候选层真实包络
+            except LayerNotFoundError:
+                layer_bounds = None
+            if layer_bounds is None:  # 候选无任何图形
+                region = kdb.Region()  # 空覆盖直接构造，不查询
+            else:
+                # 层包络内查询物化（不用魔法框：
+                batch = database.query(
+                    [layer], layer_bounds).materialize()
+                region = batch.region(layer)  # 候选 Region
         if not region.has_valid_polygons():  # 无效 polygon
             raise RuntimeError(f"{macro_id} 候选 Region 含无效 polygon")  # 明确失败
         ownership = DbuBox(*entry["ownership_box"])  # macro ownership 框
@@ -228,13 +240,17 @@ def merge_macro_results(
     with LayoutDB.open(written) as database:  # 回读最终版图
         for entry in plan["macros"]:  # 逐 macro 窗口
             ownership = DbuBox(*entry["ownership_box"])  # 该 macro 计分框
-            # 窗口查询
-            window = (database.query([layer], ownership)
-                      .materialize_intersecting())
-            # 完整相交会带入跨界 polygon 伸出窗口的部分，必须显式裁回
-            # ownership（与主路径 clipped 同款），否则相邻窗口重复计数。
-            region = (window.region(layer)
-                      & kdb.Region(ownership.to_native()))
+            # 与候选回读同款容忍：全部 macro 均空时最终 GDS 不含目标层，
+            # 该窗口面积按 0 计（与 merge 前空覆盖守恒）。
+            try:
+                window = (database.query([layer], ownership)
+                          .materialize_intersecting())
+                # 完整相交会带入跨界 polygon 伸出窗口的部分，必须显式裁回
+                # ownership（与主路径 clipped 同款），否则相邻窗口重复计数。
+                region = (window.region(layer)
+                          & kdb.Region(ownership.to_native()))
+            except LayerNotFoundError:
+                region = kdb.Region()
             if not region.has_valid_polygons():  # 无效 polygon
                 # 明确失败并定位 macro
                 raise RuntimeError(

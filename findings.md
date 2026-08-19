@@ -1,5 +1,266 @@
 # MyOPC 迁移研究发现
 
+## 2026-08-19 Gradient MB-OPC EPE loss 更新设计（进行中）
+
+- 当前生产 `gradient.py` 已采用 DiffOPC Algorithm 4 midpoint STE：硬几何栅格作为
+  forward，`grad_output` 在当前已发布重构段中点双线性采样，单个 DBU 法向位移参数的
+  梯度为 `2*g_mid/pixel_dbu`。同一 owner 参数会从所有包含该段的 core membership
+  累加贡献；loss 仍只在各 core ownership 像素计分。
+- 当前训练目标只有按全 macro ownership 像素数 P 归一的 nominal L2、两 process-corner
+  L2 与 PVBand；`epe_distance_dbu`、参考 inner/outer probes 和离散 `epe` 仅用于同状态
+  diagnostics，best 由连续 `total_loss` 严格更小决定，末状态纯评价。
+- 当前已有关键保护：参数是唯一 owner 段连续 DBU 位移；跨 core 梯度 SUM 而非平均；采样
+  中点来自与 forward Region 同一次合法重构；所有 core batch 同参数快照、屏障后一次 Adam；
+  macro 之间仍独立。因此 EPE loss 设计必须接入现有 `_evaluate_state` 的同一 backward，
+  不能另建 per-core 参数、单独 step 或回退到参考中点刚体近似。
+- 项目内存在只读归档 `00_PAST/opc/iteration/diffopc/`、旧 DiffOPC 报告和配置，可用于
+  核对公式；当前完成规格的 DEC-003 明确首版不加入 EPE training loss，理由是官方可选
+  分支偏 H/V 且尚无任意斜边契约。本次设计必须正面解决斜边、符号、归一化和无效探针，
+  不能简单把现有离散 EPE 计数当可导 loss。
+- 归档 DiffOPC 的连续 EPE 公式是在固定参考段的 inner/outer probe 上采 nominal wafer：仅当
+  target 最近邻采样满足 `target_inner>=threshold` 且 `target_outer<threshold` 且两点均在画布内
+  时有效；每段 penalty 为
+  `ReLU(threshold-wafer_inner)^2 + ReLU(wafer_outer-threshold)^2`。它只惩罚
+  “inner 未印上”和“outer 错印上”，恰对应现有离散 EPE 两种违规，ambiguous 不单独入 loss。
+- 归档实现用 owner core 唯一计算每个物理 segment 的 EPE，halo membership 只贡献光学/L2/PV
+  上下文；分母固定为 `2*segment_count`。该分母把无 owner/context 段也计入，且使用全段数而非
+  有效 owner probe 数，不能未经复核直接搬到当前 MacroProblem（存在 context 段、无效 probe、
+  多 macro owner 语义）。更合理的候选分母应从“唯一有效 owner probe slot”定义并固定于 macro。
+- 当前生产 loss 梯度最终都通过同一个 hard-mask STE 的 `grad_output` 在所有 core membership 中点
+  回到 owner 位移。若 EPE loss 在 owner probe 所在 core 的 nominal wafer 上构造，它对 mask 的
+  空间梯度仍会经光刻反向传播，并由现有 membership midpoint SUM 汇入唯一参数；EPE 自身不能按
+  membership 重复计分，否则一个物理段会因 halo 数量改变权重。
+- 官方一手来源已定位：NVlabs/DiffOPC 仓库与 ICCAD 2024 论文
+  “Differentiable Edge-based OPC”（DOI 10.1145/3676536.3676764，arXiv 2408.08969）。
+  论文问题定义把 EPE、L2、PVB、shot count 组成加权目标，并明确 DiffOPC 集成 EPE loss；但公开
+  摘要/论文当前已读片段尚不足以确定代码中的具体 EPE surrogate，必须继续精读官方源码。
+- 官方仓库已浅克隆到 `/tmp/myopc-diffopc-reference`，固定核对 commit
+  `bdc6e72ce6d7f8b1092e4177fadc670a5207bf42`。官方 `edgeilt.py::cal_epe_loss`
+  与旧归档公式不同：先令 `D=(target-printedNom)^2`；对每个 H 段中点取竖直
+  `[y-15:y+15,x]`，对 V 段取水平 `[y,x-15:x+15]`，求和后计算
+  `sigmoid(SigmoidSteepness*sum(D_line))`，再跨段求和。配置 debug 使用
+  `EPELoss=True, WeightEPE=100, SigmoidSteepness=4`，default 则关闭 EPELoss。
+- 官方 EPE 实现仅接受精确 `seg_type == "H"/"V"`；`CH/CV` corner 段和其他方向直接
+  continue。法向半径 15 是硬编码像素数，没有使用评价侧 `EPE_CONSTRAINT=15` 的公共
+  显式接口，也没有边界裁剪/有效点归一化。它是“沿参考边法向带聚焦 target-wafer 误差”的
+  surrogate，不等同于 inner/outer 阈值违规，也不能直接覆盖当前项目已支持的斜边。
+- 官方公式每个零误差段仍贡献 `sigmoid(0)=0.5` 常数；常数不改变局部梯度或同一段集合下的
+  best 排序，但让 loss 数值不以 0 为收敛点，且总量随参与段数变化。官方 notes 原文还记录
+  “EPE loss is not good”及后续消融待办，说明公开实现本身不足以成为无需裁决的生产契约。
+- 因此本次不应原样复制官方 H/V Python 循环。可保留其核心思想：以每个唯一 owner 段的参考
+  中点为中心，沿单位法向采样一条固定物理宽度的连续 target/nominal squared-error profile；
+  对斜边用向量化双线性采样，把固定像素 15 改为由现有 `epe_distance_dbu`/pixel_dbu 定义的
+  对称物理采样范围，并让 corner/斜边遵守同一法向公式。
+- 官方论文 §3 的 eq. (6)-(8) 与源码一致：对 target boundary 的 H/V measure point，沿法向
+  `[-th_epe,+th_epe]` 累加 `D=(Z_nom-T)^2` 得到 `D_sum`，再定义
+  `L_epe=sum(sigmoid(gamma*D_sum))`，总目标为 `w1*L2+w2*L_pvb+w3*L_epe`。
+  eq. (9)-(16) 明确 EPE 对 mask 的梯度与 L2/PVB 一起经 lithography 和 midpoint edge
+  Jacobian 回传；这支持把 EPE 作为现有同次 `batch_loss.backward()` 的第四分量。
+- 论文和官方代码的适用域是 Manhattan H/V target pattern；当前 MyOPC 测试与分段契约包含
+  45° 斜边。设计若宣称“参考 DiffOPC”而非“逐值复现”，应把 H/V 法向行/列推广成任意单位
+  法向的双线性 profile，同时用 H/V 用例证明推广在轴对齐时退化到相同采样几何。
+- pypdf 提取确认论文没有给跨 core ownership、无效画布点、batch 归一化或 partial profile
+  的工程规则；这些必须由 MyOPC 自己冻结，不能冒充论文事实。
+- MyOPC 兼容语义候选已收敛：EPE measurement 仍固定在 reference target segment，而不是随
+  current mask 移动；每个 owner segment 只在 owner core 生成一条法向 profile，因此 loss
+  唯一计分。profile 可穿过 core ownership 进入 simulation context，这是 EPE 测量所需，不是
+  重复 pixel loss；其光学梯度再由现有所有 core membership midpoint STE 汇入唯一 owner 参数。
+- 为兼顾官方 2R 点 profile 与当前面积像素坐标，候选采样采用 target boundary 两侧各 R 个
+  pixel-center slot：要求 `epe_distance_dbu = R*pixel_dbu`，offset 为
+  `(-R+0.5,...,-0.5,0.5,...,R-0.5)*pixel_dbu`。这在 H/V 边上形成对称 2R 像素法向线，
+  对斜边用同一单位法向和双线性采样；避免采到 context 几何边界本身。
+- 候选连续项：在 nominal error map `D=(Z_nom-T)^2` 上采 `[E,2R]` profile，逐段取
+  `D_mean`，再用 `penalty=2*(sigmoid(gamma*D_mean)-0.5)`，最后对 macro 的 E 个唯一
+  owner segment 求平均。相对论文的必要工程修正是：减去 0.5 使完美匹配为 0、乘 2 归一到
+  `[0,1)`、profile mean 与 owner mean 消除 pixel 分辨率/segment 数/batch 划分的权重漂移。
+- EPE loss 必须成为现有 `batch_loss.backward()` 的第四分量，记录独立 `epe_loss`，并参与
+  `total_loss`/macro best；离散 EPE、valid/ambiguous diagnostics 保持原接口与数值，用于判断
+  surrogate 是否真正改善最终阈值轮廓，但不单独打破 total-loss 平局。
+- 实现不应调用 evaluation 的离散 `evaluate_edge_probes` 来构图：该 API 面向二值诊断且当前在
+  `no_grad` 中消费。连续 profile 采样应留在 `opc.iteration.mbopc.gradient`，对批内变长 owner
+  profile 做一次向量化四邻域 gather，CPU 常驻静态坐标，GPU 只转移当前 batch。
+- `main/configuration.py` 的 dataclass 解析会使用字段默认值，因此在
+  `GradientMBOPCConfig`/`GradientConfig` 尾部增加默认关闭的 `weight_epe=0.0` 与
+  `epe_steepness=4.0` 可让旧 TOML 继续加载；关闭时必须跳过 profile 构造与采样，才能保证旧
+  数值路径逐值不变。项目示例 `config/gradient_mbopc.toml` 则可显式启用该功能。
+- 当前 `resolve_gradient_config()` 不接收 lithography 配置；EPE profile 的
+  `epe_distance_dbu % pixel_dbu == 0` 应在 `optimize_gradient_macro()` 入口、任何 GPU 分配前
+  校验，避免为这一个约束扩大公共配置调用链。
+- metrics record 当前只含三项连续 loss，summary/控制台只展示三项权重。更新必须把
+  `epe_loss` 作为 additive record 字段，并同步 summary 的 `loss_weights.epe` 与 runner 输出；
+  gradient result NPZ 的位移/状态契约不需要改版。
+- 外部 DiffOPC 仓库许可证限制非商业研究/评估使用。本设计只采用论文公开公式及行为证据，
+  不复制外部源码，也不增加外部依赖。
+- 最终设计已写入
+  `doc/changes/active/CHG-20260819-gradient-mbopc-epe-loss/implementation_spec.md`：默认
+  `weight_epe=0` 保持旧数值路径，示例配置显式用 1.0；采用 fixed reference、任意方向
+  2R pixel-center profile、zero-based normalized sigmoid、全 macro owner 分母和同次 backward。
+- 设计审计补齐了两个容易遗漏的契约：四个 loss 权重至少一项为正（允许 EPE-only 回归），以及
+  canvas 最外侧整数 pixel center 的邻居可退化为同一 pixel，真正越界才失败。公开 iteration
+  record 的新增字段放在末尾且默认 0，保留旧构造方式；summary 额外公开 best EPE loss。
+- 当前仓库不存在 `doc/opc/`；本 change 完成时应随目录从 active 移到 completed，并把专项
+  `development_report.md`/`test_report.md` 放在同一 completed change 内，不改旧 archive reports。
+- 规格没有 blocking open question，但状态保持 draft 等待用户批准；实现尚未开始。
+
+
+## 2026-08-19 Simple ILT 规格语义修订（完成）
+
+- 用户指出的主问题与草案原文完全对应：REQ-005/008/009、INV-002/004、
+  §7.3/7.4/7.5、`ILTBatchResult`、IF-004、§10.2/10.3、§11、PERF-002/003、
+  TEST-007/008/010、DEC-001/004、§20/21/24 都把 core 定义成独立优化问题。
+- 该语义会让一个 core ownership loss 无法把梯度传到其 simulation context 内
+  属于同 macro 的可训练像素，并允许拼接不同 core 的不同 best state；用户提出
+  的 macro 唯一 parameter snapshot、跨 core gradient sum、全 core 屏障后统一
+  SGD step 和 macro 级 best，在算法与状态一致性上成立。
+- coverage 初始化问题也成立：草案同时要求 `target_u8` 保存 0..255 面积覆盖率，
+  又用 `p0=2*T-1` 后套 sigmoid，只有少数 T 能碰巧保持原值。应改为
+  `p0=logit(clamp(T, eps, 1-eps))/beta`，并以 state0 soft mask 对 transmission
+  raster 的容差一致作为测试契约；严格 0/1 仅受 epsilon 近似影响。
+- 规格必须继续保留两级唯一性：core ownership 只决定 loss 统计；macro
+  trainable domain 决定参数/梯度/最终写回；simulation context 决定 forward
+  读取范围。不得使用 overlap loss averaging，也不得为同一物理 pixel 建多个参数。
+- core/pixel 整除限制是否已由当前 `plan_macros` 强制，尚待源码与测试核对；
+  在确认前不把用户建议写成当前能力事实。
+- 网格源码核对结果：`plan_macros` 已拒绝名义 `core_size_dbu` 或
+  `context_dbu` 不是 `pixel_dbu` 整数倍，且有
+  `test_core_or_context_not_pixel_multiple_fails` 回归；但 `_core_cuts` 会把
+  最外侧实际 core 强制截到版图 bbox 终点，因此当 bounds 宽/高不是 pixel
+  整数倍时，末端实际 `CoreSpec.ownership_box` 仍可能含 partial pixel。
+- 用户的第 4 点因此“部分已满足、边缘情形仍成立”。Simple ILT 规格应在其
+  pixel problem/workflow 边界要求每个实际 macro/core ownership box 的宽高
+  都是 `pixel_dbu` 整数倍，并在 KLayout/raster 分配前失败；无需改共享 raster
+  的通用 partial-coverage 能力，也不应继续定义“末端 partial pixel 归属/回写”。
+- 为避免无关地改变现有 edge MB-OPC 对任意 bbox 的兼容性，最小规格改法是让
+  ILT 的 `prepare_pixel_problems` 对 `plan_macros` 结果做实际 cuts 对齐校验；
+  不要求修改 `opc/input/grid.py`，除非实施核对发现多个当前调用方共同需要该
+  新限制并经用户另行扩大范围。
+- 当前 architecture/contracts 不定义 ILT 实现，因而不阻碍 macro 同步语义；
+  现有 MB-OPC 已提供可类比的“所有 core 读取同一状态、跨 batch 累积、屏障后
+  发布下一状态”模式。Simple ILT 可沿用该状态纪律而无需改变基础层依赖方向。
+- LevelSet、CurvMulti、Multilevel 三份后续草案大量继承了 `optimize_*_batch`、
+  per-sample best、fixed context 与 tile-independent seam 语义。用户本次只授权
+  更新 Simple 规格，因此不联动修改它们；Simple 修订完成后，这三份草案都将
+  成为已知不一致的依赖文档，必须在各自批准/实施前单独修订。
+- 规格接口需要随语义最小调整：optimizer 单位从 core batch 提升为 macro，
+  `ILTBatchResult` 改为 macro 结果，best state 从 `[B]` 变为单个 macro state；
+  core batch 仍是 solver 内部 GPU 分块，不新增 registry/base class 或三套概念对象。
+- 第一轮残留搜索未发现仍具约束力的 per-core best、`ILTBatchResult`、
+  `optimize_simple_batch`、`place_owned_canvas` 或 partial-pixel 处理；命中项仅有
+  OpenILT/Revision 0.1 历史事实和对被拒方案的说明，均应保留。
+- 审读修改后正文发现两处小型清理项：Scope 仍写“batch optimizer”，应改为
+  macro optimizer；PERF-004 有空格排版问题。其余数据流、状态、接口和产物
+  已围绕一个 `ILTMacroResult` 收敛。
+- 第二轮残留扫描仅命中 Revision 0.1 的历史 per-sample 记录；当前约束区零旧
+  语义命中，`git diff --check` 通过。
+- 草案 front matter/§2.1 仍指向旧 `2fa75ea` 和已不存在的 grid.py dirty
+  状态。当前 HEAD 是 `540a0121eb06904bdc44ae7fe3bd491aeff22fb5`，生产
+  代码相对 HEAD 干净；本轮仅规格、规划与 `.learnings` 记录未提交。为了让
+  实现 AI 能按 Document Contract 核对，应同步刷新 baseline，并保留 draft
+  与未勾选 approval gate。
+- 终审确认 state N 应只评价而不构建无效 backward；§10.2/10.5 与
+  TEST-006/010 已同步收紧。core batch 的固定外部 context 明确按
+  `target_u8/255` 进入光刻，避免把 uint8 0..255 误传模型。
+- 修订完成后的已知问题：跨 macro 光学耦合仍未纳入梯度和 best 评价；非整像素
+  layer bbox 现在会在 ILT prepare 前置拒绝；三份后续 ILT 草案仍引用旧
+  `ILTBatchResult/optimize_*_batch/per-sample best/fixed context`，必须在各自
+  批准前修订；规格仍为 draft 且 approval gate 未确认，当前不得实施。
+
+## 2026-08-19 项目现状复核（完成）
+
+- 当前分支为 `migration`，复核开始时与 `origin/migration` 同步且工作树干净；
+  本轮仅因持续规划要求修改根目录三份工作记录。
+- 当前生产模块为 `layout`、`geometry`、`opc.input`、`opc.input.edge`、
+  `lithography`、`evaluation`、`opc.iteration.mbopc` 与应用编排 `main`。
+  `opc.iteration.ilt` 尚不存在；四份 ILT 文档位于 `doc/changes/active/`，属于
+  待评审目标，不能当作已实现能力。
+- 当前合法依赖拓扑由 `doc/architecture/system.md` 明确为
+  `layout -> geometry -> opc.input -> opc.input.edge`，方法层可依赖输入层、
+  `lithography`、`evaluation`，`main` 只负责编排。
+- 当前主数据流是：版图读取与局部物化 → Macro/Core 两级网格 →
+  `MacroProblem` NPZ → 逐 macro 求解 → ownership 裁剪合并 → final GDS 与
+  JSON 摘要。参考数组只读，唯一迭代态是一维 `float64[S]` 位移。
+- 已实现运行路径包括验证管线、单遍偏置、simple MB-OPC 和 gradient
+  MB-OPC；文档总入口要求以源码/测试确认当前事实，以 active spec 描述目标。
+- 外部依赖基线：KLayout、NumPy、PyTorch、Pillow、psutil、tqdm；测试门禁为
+  pytest/ruff/compileall；本轮已在 Linux `myopc312` 环境完成 CPU 门禁实测。
+- 配置已集中在 `main/configuration.py`：版图、分区、光刻、边、simple、
+  gradient、单遍、验证与输出均使用 dataclass 声明式解析；五份 TOML 分别覆盖
+  simple 单/多 macro、gradient、±2nm 验证管线和单遍偏置。
+- 对外执行入口为 `main/run_mbopc.py`、`main/run_gradient_mbopc.py`、
+  `main/run_macro_pipeline.py`、`main/run_single_pass.py`；`main_test_*` 是教学演示。
+- 当前源码同时存在 simple 与 gradient 两个 MB-OPC 算法；gradient 使用自定义
+  autograd 边缘掩膜并在最新提交中拆成 prepare/evaluate/step 三段。架构文档的
+  模块表把该包简称为“最简 MB-OPC 求解器”，阅读时须结合源码和 dataflow，
+  不能据此漏掉 gradient 能力。
+- `doc/test_manual.md` 宣称全量 458 用例；本轮 pytest 实际收集数与之吻合。
+- ILT 有四份 `draft` 规格，依赖顺序为 Simple（同时建立 pixel problem 与公共
+  workflow）→ LevelSet；Simple → CurvMulti → Multilevel。四份规格均无 blocking
+  open question，但 approval gate 全未勾选，且 baseline 仍停在旧提交
+  `2fa75ea`，明显早于当前 `540a012`；因此任何实施前都必须先做基线漂移复核并
+  获得用户批准，不能直接按草案编码。
+- 四条候选算法路线边界：Simple=像素 sigmoid+SGD；LevelSet=硬二值水平集+
+  SDF+Adam；CurvMulti=平滑 sigmoid 控制场+粗到细 SGD；Multilevel=逐级不同
+  Adam 参数和 stage-grid 监督。共同约束是完整 256×256 物理光刻、ownership
+  唯一回写、context 固定、逐样本 best，以及不依赖 edge/SegmentBatch。
+- 本轮 Linux 环境全量实测：`450 passed, 8 skipped in 87.86s`；总收集数确为
+  458。8 项全部因当前 Linux 环境无 CUDA 而按测试声明跳过，CPU 覆盖范围零
+  失败。可用解释器是 `/home/wzh/miniconda3/envs/myopc312/bin/python`。
+- 同一 Linux 环境的显式范围门禁通过：ruff `All checks passed!`；compileall
+  零错误。当前依赖足以执行全部 CPU 测试，但 CUDA 路径仍只能引用既有测试/
+  报告证据，不能声称本轮 GPU 复验。
+- 文档有一处表述需谨慎：`doc/development_manual.md` 的依赖清单同时写了
+  `layout -> geometry` 与 `geometry -> layout`，而实际源码是 geometry import
+  layout、layout 不 import geometry；架构文档中的 `layout -> geometry` 更像
+  数据流方向。后续做依赖设计时应以源码 import 和禁止反向依赖规则为准，
+  必要时单独修正文档，不能把该两行解释为允许循环依赖。
+- 源码交叉核对确认共享生命周期：`prepare_problems` 在一个 LayoutDB 会话中
+  逐 macro 局部物化并原子保存 NPZ，全部成功后才发布 plan；workflow 稳定顺序
+  逐 macro 加载/求解/写 best GDS，任何异常不进入最终 merge；全部成功后恰一次
+  ownership 裁剪合并，回读按窗口验证覆盖面积守恒。最终光刻 PNG 也是独立规则
+  tile 网格流式生成，不保留整 reticle tensor。
+- simple 算法是同步 Jacobi 式离散更新：每个已评价状态在三工艺角上计算
+  EPE/L2/PVBand，只有 owner 段按参考边探针方向生成下一状态；全批完成后发布
+  位移，context 恒零并裁到上限。best 只按严格更低 EPE 更新；停止原因明确区分
+  `zero_epe`、`no_update`、`insufficient_probes`、`invalid_geometry` 与
+  `iteration_limit`，末轮只评价、不产生无用提案。
+- gradient 算法的唯一参数是 owner 段的连续 DBU 法向位移；每个 state 在同一
+  参数快照上跨 core batch 累积三项连续 loss 梯度，屏障后恰做一次 Adam step。
+  硬几何前向通过 midpoint STE 回传 `2*g_mid/pixel_dbu`；梯度采样使用
+  membership（让跨 core 可见贡献聚合到同一 owner 参数），EPE 诊断仍用唯一
+  owner 段。每次候选重建同时发布 Region 与实际重构中点，非法几何保留最近
+  已评价 best；best 按严格更低 total loss 选择，末状态纯评价。
+- 两种 MB-OPC 均是“独立 macro 求解 + 最后合并”，macro 之间不交换优化态；
+  这是当前架构事实与精度/并行边界，后续方案若要求跨 macro 全局耦合，属于
+  明确的新设计而非参数调整。
+- AST import 图复核：`common/evaluation/layout/lithography` 无第一方跨包依赖，
+  geometry 仅依赖 layout，opc 依赖 common/evaluation/geometry/layout/
+  lithography，main 依赖全部应用所需层；未发现基础层反向 import main 或
+  iteration。`doc/development_manual.md` 的双向箭头确属文字歧义，不是代码循环。
+- 当前 HEAD 最近三批聚焦 gradient 正确性与结构：重构函数拆分（声明无数值
+  变化）、STE 补 DBU 链式换算、重构中点按需计算；本轮全量回归覆盖这些提交。
+- 历史 `findings.md` 不能整体当作当前事实：其中仍记录
+  `mbopc_single_macro.toml context_nm=1024` 导致配置损坏，但当前文件已是
+  512，恰好满足 1024nm core + 两侧 context = 2048nm canvas；这是已过期的
+  历史发现，当前配置不再有该损坏。
+- 当前仍需保留的设计局限：现有和候选 ILT 都按 core/macro 独立优化，邻块不
+  交换优化后 context；像素 ILT 还会产生 stair-step GDS，且草案明确不覆盖
+  MRC、shot、checkpoint/distributed。方案评估时这些必须作为精度/工程取舍，
+  不能只比较 loss 公式。
+- 两项历史待办从当前源码看仍未形成闭环测试：① 空 macro 的 solver 可合法
+  返回空 best，但 `merge_macro_results` 要求每个候选 GDS 的目标层非空，历史
+  sparse smoke 已在此复现 LayerNotFoundError；② 通用配置解析和 Config
+  `__post_init__` 没有统一的 Decimal/float 非有限值守卫。用户此前明确裁决
+  暂不修，本轮只记录，不擅自改动。
+- 非有限配置的当前精确表现：`MBOPCConfig(initial_step_nm=NaN)` 在
+  `__post_init__` 泄漏 `decimal.InvalidOperation`；gradient 全 NaN/零权重会以
+  “至少一个为正”的 ValueError 拒绝，但非有限值没有在统一解析边界用明确原因
+  处理；`exact_dbu(NaN)` 自身会以不可精确换算 ValueError 失败。问题是异常
+  边界/原因不统一，并非静默接受所有 NaN。
+- 发现一处当前 contract 漂移：源码 `evaluate_edge_probes` 默认阈值已由提交
+  `61b6a63` 改为 0.5，simple/gradient 还显式传模型 PrintThresh；但
+  `doc/contracts/evaluation.md` 仍写默认 0.499 和“保留默认”。当前行为应以
+  源码与测试为准，后续触及 evaluation 文档时需修正；本轮不顺带改文档。
+
 ## API 变更记录（旧 → 新，评审后续迁移代码的对照基准）
 
 | 旧（00_PAST） | 新（migration） | 备注 |
@@ -598,3 +859,31 @@
   CPU A/B 逐项对比验收（重构前后各跑一次 gradient_mbopc，逐 state
   loss/诊断指标/best/stop 排除计时字段后全等，best_displacements
   npz 逐位一致）。
+
+
+## Simple ILT 迁移事实（2026-08-19，CHG-20260818-simple-ilt）
+
+- **像素输入层**（`opc/input/pixel`）：每宏一次 `rasterize_region_window`
+  存 uint8 transmission（NPZ v1，不存每 core 重复画布）；core 画布按需
+  切片 + `_center_padding` 居中（包内私有复用保证与模型 padding 逐位一致）；
+  trainable 索引定义在 macro 网格（跨 core 恒同值）。**实际 box 整像素契约**：
+  等价于 bbox 宽高 pixel 整数倍——像素管线比 edge 严，smoke GDS 选型必须
+  核对（corners_unit 1900² 是 4 的倍数而非 8）。
+- **宏同步语义**（Rev 0.2 演进）：同一 state 全批读同一 CPU 宏参数快照
+  （numpy 取值即快照、无 autograd 直通）；梯度经每批 leaf 张量 backward
+  后 `np.add.at` scatter-add 求和（avgpool 耦合 stub + batch1/2 对照锁定，
+  逐点 stub 无空间耦合、测不出跨 core 和）；屏障后单次 SGD；macro best
+  严格更低（4-core 常数数值表使 macro 最优 ≠ 材料核局部最优）。
+- **logit 饱和性质**：严格 0/1 像素 sigmoid 斜率 ~β·eps（≈5e-7），有效梯度
+  经分数覆盖格进入；纯对齐几何一轮更新低于 float64 记录精度——测试几何
+  必须含非整像素边界。OpenILT ±1 初始化不满足 1e-6 恢复契约，规格有意
+  取 coverage-preserving；全域活跃梯度需求另立 change。
+- **共享层必要修复**：空 macro 候选（无材料区域）GDS 无目标层 →
+  `merge_macro_results` 两处回读（候选 + 面积守恒验证）改为层缺失按零覆盖；
+  稀疏版图正常形态，端到端 mr1c1 全空宏为回归。
+- **配置直注册**（DEC-007）：`_parse_config` 经 `get_type_hints` 后
+  SimpleILTConfig（postponed annotations）直接挂 `[simple_ilt]`，无第二份
+  用户配置；runner 内函数级 dataclass 探针锁定 int/float/Path/tuple 解析。
+- 全量 458 → 525 passed；阶段 A 单遍 smoke XOR==0（GridRuntime/writer 迁移
+  零回归）；smoke：corners_unit 16 core / 225,625 像素 / CUDA 1.90s /
+  best_state=1。

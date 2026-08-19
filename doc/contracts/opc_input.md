@@ -63,3 +63,31 @@ def rasterize_region_window(region, box, pixel_dbu) -> np.float32[H, W]  # 无 p
 
 `tests/opc/input/test_grid.py`（TestMacroPlanning/TestCenteredCanvas/
 TestPointsToCanvas）；`opc/input/raster.py` 注释内的映射公式。
+
+## 像素宏问题（opc/input/pixel，2026-08-19 随 Simple ILT 迁移）
+
+```python
+def prepare_pixel_macro_problem(batch, layer, polarity, macro) -> PixelMacroProblem
+class PixelMacroProblem:                             # frozen；NPZ v1
+    macro / layer / polarity
+    target_u8: np.uint8[Hq, Wq]                      # query box transmission 0..255
+    def save(path) / load(path)                      # allow_pickle=False
+    def target_canvas(core_index) -> np.uint8[256, 256]
+    def ownership_canvas(core_index) -> np.bool_[256, 256]
+    def trainable_index_canvas(core_index) -> np.int32[256, 256]  # macro 外 -1
+def reconstruct_pixel_region(problem, binary_ownership) -> kdb.Region
+```
+
+- **一次栅格化**：prepare 对每个 macro 恰一次 `rasterize_region_window`
+  （query box 整除 pixel）；NPZ 不存每 core 重复画布，core canvas 按需切片
+  并经 `_center_padding` 居中（与 mask/ownership 画布同布局）。
+- **实际 box 整像素契约**：macro 与全部 core 的 ownership 宽高必须是
+  pixel_dbu 整数倍（等价于 layer bbox 宽高整像素）；否则栅格化前
+  ValueError，不产 partial ownership pixel。这是像素管线比 edge 管线
+  更严的输入对齐要求。
+- **trainable 索引**：非负值是 [Hm,Wm] macro 参数行主序扁平下标；同一
+  物理像素在任何 core 画布中同值（索引定义在 macro 网格）。
+- **回写**：binary transmission 按行游程合并 Box 后每宏恰一次 merge；
+  极性逆变换只在回写边界（clear 输出透光像素，opaque 输出不透光像素）。
+
+事实核对锚点：`tests/opc/input/test_pixel_problem.py`。

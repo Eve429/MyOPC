@@ -1019,3 +1019,4 @@ None.
 | 0.1 | 2026-08-18 | draft | 首版；选择 tile 独立大版图执行，冻结 pixel problem、N+1 状态、per-sample best 与最终 GDS | 待用户审核 |
 | 0.2 | 2026-08-19 | draft | 修正为 macro 唯一参数、跨 core 梯度累加、同步 N+1、macro best、coverage-preserving 初始化与实际 core 整像素限制 | 待用户审核 |
 | 0.3 | 2026-08-19 | approved | §14 补录 `main/run_single_pass.py`（PrepareRuntime 字段消费方，IF-001 迁移牵连，事实核对发现）；ILTStateRecord 的 stage/scale 字段经用户裁定保留；ilt_plan.json 须携带 merge/final-litho 兼容键记入实施约束 | 用户批准开发计划 |
+| 1.0 | 2026-08-19 | completed | 五阶段实施完成（5ad8ac0/54ab866/1539b6f/fefaea8/bdf86ac + 本报告批）；偏差与裁决见 development_report.md（含 merge 空 macro 候选容忍修复）；525 passed；smoke 基线见 test_report.md | 开发/测试报告 |

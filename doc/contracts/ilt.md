@@ -1,19 +1,73 @@
 # Contract — ilt
 
-**当前无实现**。`opc/iteration/ilt/` 目录尚未创建，ILT 求解器未迁移，
-本文件不定义任何当前接口、数据结构或算法行为（不得当作契约事实引用）。
+像素型 ILT：优化变量是宏 ownership 像素参数（不经过 SegmentBatch/owner/
+边段重建）。当前实现为 Simple ILT；共享问题/结果/workflow 契约供后续
+LevelSet、CurvMulti、Multilevel 复用。
 
-## 状态
+## 输入与数据契约
 
-- 旧库参考实现归档于 `00_PAST/opc/iteration/ilt/`（只读参照，含
-  simple ILT 与 level-set 变体）；
-- 基础层可复用面见 `architecture/system.md` 与其他 contracts（网格、
-  光刻、评价、进度、最终合并生命周期）；
-- ILT 的优化变量是像素/水平集，**不经过** SegmentBatch/owner/EPE 重建
-  （与边段型方法的边界，见 mbopc 变更的设计文档 §22）。
+- 问题：`opc/input/pixel.py::PixelMacroProblem`（见
+  `doc/contracts/opc_input.md` 像素宏问题节）——query box 一次栅格化的
+  uint8 transmission、core 画布/参数索引映射、像素→Region 回写。
+- 记录：`opc/iteration/ilt/_common.py::ILTStateRecord`
+  （state_index/stage_index/stage_state_index/scale + 四项损失 + 耗时；
+  Simple 恒写 0/state_index/state_index/1）。
+- 结果：`ILTMacroResult(best_parameters/soft_mask/binary_mask/
+  best_state_index/records)`；workflow 只读消费。
+- 损失：`owned_continuous_losses`（nominal/process/pvband，ownership 求和）
+  + `curvature_loss`（3×3 零和核 valid 卷积）+ `weighted_macro_loss`
+  （nominal 权重恒 1）。
 
-## 新 ILT 工作的入口
+## Simple 求解器（`opc/iteration/ilt/simple.py`）
 
-按 `implementation_spec_template.md` 创建
-`changes/active/CHG-xxx-ilt-<name>/implementation_spec.md`；批准后实施。
-在此之前，任何文档不得声称系统具备 ILT 能力。
+```python
+class SimpleILTConfig:  # [simple_ilt] 段直接注册（8 字段，无派生换算）
+    iterations / step_size / sigmoid_steepness / weight_process_l2 /
+    weight_pvband / curvature_weight / mask_threshold / batch_size
+
+def optimize_simple_macro(problem, model, config, *,
+                          on_tiles_completed=None) -> ILTMacroResult
+```
+
+语义保证：
+
+- **初始化**：`logit(clamp(T, float32 eps, 1-eps))/β`；state0 soft mask 在
+  1e-6 内恢复 T（含分数覆盖率）。已知性质：严格 0/1 像素 sigmoid 饱和
+  （斜率 ~β·eps），有效梯度经分数覆盖格进入优化。
+- **宏同步状态**：同一 state 全部 core/batch 读同一宏参数快照；core 只限制
+  loss ownership，不截断 context 内可训练像素的梯度；梯度 scatter-add
+  求和（绝不平均）；全部 core 完成后恰一次同步 SGD step；N 次更新对应
+  N+1 个已评价状态（末状态纯评价）。
+- **macro best**：只按完整宏总损失严格更低选择，batch 切分/顺序不变。
+- **异常**：非有限 loss/梯度/参数 → FloatingPointError，不发布当前宏。
+
+## 公共 workflow（`main/_ilt_workflow.py`）
+
+`ILTMethod(method_name/config_type/optimize_macro/evaluated_states)` 四字段
+注入；`run_ilt_workflow` 负责 prepare（ilt_plan.json 键集兼容
+merge/final-litho）、逐宏求解（进度 total = core×states、双层 try/finally）、
+best binary 终评（ownership 二值 L2/PVBand）、产物（best.gds +
+`<method>_result.npz` + metrics.json）、merge 恰一次（空宏候选按零覆盖
+容忍）、可选最终光刻与 summary（`seam_strategy=macro_independent_fixed_
+context` 显式入档）。
+
+入口：`python main/run_simple_ilt.py [config.toml]`（默认
+`config/simple_ilt.toml`）。
+
+## 已知限制
+
+- macro 间不交换优化后参数；macro seam 仍可能存在（独立宏 + 固定 context）。
+- 输出是 pixel-grid stair-step 几何；无 MRC/shot/最小线宽约束。
+- 目标层 bbox 宽高必须整像素（比 edge 管线严），否则 prepare 前置失败。
+- EPE/shot 不属于 ILT 评价指标（本 change 明确不迁）。
+
+## 后续方法入口
+
+LevelSet/CurvMulti/Multilevel 规格见
+`doc/changes/active/CHG-20260818-{levelset,curvmulti,multilevel}-ilt/`；
+实施须以本契约为基础零修改或向后兼容扩展共享层。
+
+## 事实核对锚点
+
+`tests/opc/input/test_pixel_problem.py`、`tests/opc/iteration/test_simple_ilt.py`、
+`tests/main/test_simple_ilt_runner.py`；smoke `config/simple_ilt.toml`。

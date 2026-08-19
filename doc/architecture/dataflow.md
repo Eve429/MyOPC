@@ -71,3 +71,30 @@ load_macro_config + load_validation_deltas（[iteration] 冻结 [+2,-2]nm）
   模型 device；方向/掩码张量整批一次搬运。
 - 文件边界：NPZ（problem/result，allow_pickle=False）、GDS（KLayout 原子
   写）、JSON（plan/metrics/summary/manifest，临时文件替换）。
+
+
+## Simple ILT 流（main/_ilt_workflow.py::run_ilt_workflow + 方法适配器）
+
+```text
+load_config（[layout][partition][lithography][simple_ilt][output]，不读 [edge]）
+  -> prepare_pixel_problems    LayoutDB 单次 open；resolve_grid_config（无 edge）
+     -> 逐 macro：query(query_box).materialize_intersecting
+        -> prepare_pixel_macro_problem（实际 box 整像素校验 → normalize_mask
+           → 一次 rasterize_region_window → uint8 transmission）
+        -> pixel_problems/<macro>.npz
+     -> ilt_plan.json（键集兼容 merge/final-litho）
+  -> ICCAD13Lithography(device)
+  -> 逐 macro（独立；外层条 try/finally）：
+       PixelMacroProblem.load
+       -> optimize_simple_macro：N+1 个宏状态 × core 批（同一宏参数快照；
+          scatter-add 梯度求和；屏障后单次 SGD step；macro best 严格更低）
+       -> best binary 终评（每批一次 forward_many；ownership 二值 L2/PVBand）
+       -> reconstruct_pixel_region → write_macro_gds(best.gds)
+       -> simple_ilt_result.npz + metrics.json
+  -> merge_macro_results（恰一次；空 macro 候选按零覆盖容忍）
+  -> save_final_lithography（可选）
+  -> summary.json（seam_strategy 显式入档）
+```
+
+跨界标注补充：像素 ILT 的 KLayout 边界只在 prepare、pixel→Region、GDS
+写/merge；宏参数/梯度/best 常驻 CPU，GPU 每批一图 backward 后释放。

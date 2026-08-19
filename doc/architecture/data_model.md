@@ -14,6 +14,9 @@
 | target uint8 画布 | `TargetCanvasCache` | 跨状态复用 | macro 内多轮 | CPU | 只读 |
 | 批张量 | `evaluate_and_propose` 局部 | 单批 | 批结束即释放 | GPU | 临时 |
 | `SimpleMBOPCStep/Record/Result` | `mbopc/simple.py` | 求解器→workflow | 迭代结束落盘 | CPU | frozen |
+| `PixelMacroProblem` | `opc/input/pixel/problem.py` | NPZ ↔ 内存 | 持久化（format v1） | CPU | 构造后只读 |
+| macro 像素参数/梯度/best | `ilt/simple.py` 求解器局部 | 同步 SGD step / scatter-add | 单 macro 优化 | CPU float32 | 唯一可写迭代态 |
+| `ILTStateRecord/ILTMacroResult` | `opc/iteration/ilt/_common.py` | 求解器→workflow | 迭代结束落盘 | CPU | frozen |
 | plan/metrics/summary JSON | `main/_macro_pipeline.py` 等 | 文件 | 持久化 | 磁盘 | 原子写 |
 
 ## 关键规则
@@ -43,6 +46,6 @@
 | `macros/<id>/result.npz`、`gradient_result.npz` | `_simple/_gradient_mbopc_workflow` 适配器 | best_round/best_state_index、best_displacements、stop_reason |
 | `macros/<id>/metrics.json`、`gradient_metrics.json` | 同上 | 逐轮/逐状态标量 + stop_detail |
 | `round_*/results/*.npz` | `run_round` | 累计位移 + 每核 transmission（验证管线） |
-| `final.gds` | `merge_macro_results` | ownership 权威覆盖，single_cell/macro_cells |
+| `final.gds` | `merge_macro_results` | ownership 权威覆盖，single_cell/macro_cells；空 macro 候选按零覆盖容忍 |
 | `final_lithography/` | `save_final_lithography` | 逐 tile nominal/binary PNG + manifest |
 | `plan.json`/`summary.json` | `atomic_write_json` | 网格契约 / 全流程摘要 |

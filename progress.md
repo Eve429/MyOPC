@@ -1,5 +1,88 @@
 # MyOPC 迁移进度日志
 
+## 2026-08-19（会话：Gradient MB-OPC EPE loss 更新设计）
+
+- 用户要求参考 DiffOPC，为现有 gradient MB-OPC 设计新增 EPE loss 的更新方案。
+- 本轮先做源码、测试、现有报告与 DiffOPC 证据核对，只更新设计文档和必要工作记录，
+  不修改 gradient 算法实现。
+- 已启用 planning-with-files 维护设计证据与阶段状态，并按 self-improvement 复核已有
+  midpoint、DBU 单位和跨 core membership 梯度经验。
+- 已定位当前梯度求解器、测试、配置和只读 DiffOPC 归档；确认现有 EPE 是参考边
+  inner/outer 二值探针诊断，训练梯度则走当前重构中点的 midpoint STE。
+- 已提取归档连续 EPE：有效参考段的 inner 欠曝、outer 过曝分别用 squared ReLU；
+  owner 唯一计分、与其他 batch loss 同次 backward。归档分母和 H/V/斜边适用性仍需对照
+  官方 DiffOPC 主源确认，不能直接采用。
+- 已定位 NVlabs/DiffOPC 官方仓库与 ICCAD 2024 论文；开始以一手源码核对 EPE surrogate，
+  不把旧归档适配报告当官方契约。
+- 官方仓库浅克隆完成（commit `bdc6e72`）；确认官方 EPE 是 H/V 中点法向线上的
+  squared target-wafer error 经 sigmoid 聚合，corner/非 H/V 被忽略，半径 15 pixel 硬编码。
+  该实现只作为设计来源，不原样复制。
+- 已从作者主页论文 PDF 提取 eq. (6)-(16)，确认官方 loss/梯度链路；由于系统缺
+  `pdftotext`，在 `/tmp` 安装独立 `pypdf` 后完成只读提取，没有改项目依赖。
+- 已完成与当前 owner/membership/macro 屏障的语义映射：设计采用唯一 owner 段的
+  reference 法向 profile、任意角度向量化采样、归一化零基线 penalty，并复用同次 backward。
+- 已核对配置解析、metrics/summary、runner 与结果持久化调用点：新增字段可用 dataclass 默认值
+  保持旧 TOML 兼容，NPZ 无需改版；EPE 对齐约束应在求解器入口校验，避免扩大配置层依赖。
+- 已新增独立 draft 规格
+  `doc/changes/active/CHG-20260819-gradient-mbopc-epe-loss/implementation_spec.md`，完整冻结
+  EPE 公式、profile 坐标、owner/membership 梯度、归一化、状态/best、接口、异常、性能、文件
+  计划、测试矩阵、分阶段本地提交和 approval gate。
+- 终审按当前模板补齐 architecture/data ownership/persisted artifact/verification/delivery 章节；修正
+  四权重 EPE-only 校验、边界 pixel center、公开 record 默认兼容及真实 completed report 路径。
+- `git diff --check` 与新规格独立 whitespace check 通过。本轮只设计、未修改生产代码和测试，
+  因此未重复运行 pytest；沿用本日 `450 passed, 8 skipped` 的生产基线。未提交、未推送。
+
+## 2026-08-19（会话：Simple ILT 规格语义修订）
+
+- 用户指出草案把 core 错当独立优化问题，并要求改为 macro 唯一 pixel 参数、
+  ownership 唯一计 loss、simulation context 内同 macro 参数全可微、跨 core
+  梯度累加、macro 同步 step 与 macro 级 best。
+- 同时要求修正 fractional coverage 的 sigmoid 反函数初始化，并确认/冻结
+  core 尺寸必须为 pixel 整数倍，删除 partial-core-pixel 处理语义。
+- 本轮只更新 Simple ILT 规格及必要工作记录，不修改生产实现。
+- 已完成规格前半部最小修订：补当前网格边缘事实；REQ-005..009 改为三域
+  语义、logit coverage 初始化、macro 同步梯度屏障、macro best 与 CPU/GPU
+  分块状态；INV-001/002/004 同步改写。
+- 已同步 Architecture/Data Contracts/Interface：数据流和 call graph 改为
+  `optimize_simple_macro` 内按 state 遍历 core batch；`ILTBatchResult` 改为
+  CPU `ILTMacroResult`，best state 为 macro 标量；PixelMacroProblem 改提供
+  macro trainable index canvas，不再逐 core place best。
+- 已重写 §10.2 的状态伪码但保留章节结构：state0 用 logit 恢复 coverage；
+  每个 macro state 遍历全部 core batch、scatter-add 梯度、屏障后一次 CPU
+  SGD；§10.3/§11/§12/§13 同步到 macro best、实际 cuts 整除和批量显存上界。
+- 已同步文件计划、TEST-002/005..010、测试矩阵、traceability、AC、兼容性、
+  DEC-001/004、开放问题、实施自由度、限制与 approval gate；Revision 增至
+  0.2 draft，保留 0.1 历史记录。
+- 第一轮差异审读后补齐 fractional transmission 文字、trainable index 的
+  row-major 同像素同索引契约，并修正 Scope/PERF 排版残留。
+- 已刷新规格 baseline 为当前 `540a012` 和 Linux CPU 回归
+  `450 passed, 8 skipped`；生产源码与测试相对 HEAD 无差异。
+- 终审补充 state N 只 forward/loss/best、不 backward/step，明确 core canvas
+  使用 `target_u8/255`；旧语义残留仅存在于 0.1 历史或 rejected 说明。
+- `git diff --check` 通过；本轮未运行新测试，因为只修改规格与工作记录，沿用本日
+  已完成的全量 CPU 基线。未修改生产代码、`layout/`、`geometry/`、`00_PAST/`，
+  未提交、未推送。
+
+## 2026-08-19（会话：项目现状复核）
+
+- 用户要求先理解当前项目，为后续方案设计或开发建立基线。
+- 已确认工作树开始时无未提交改动；现有规划记录显示迁移主线已完成至
+  simple/gradient MB-OPC，下一规划阶段为 ILT 独立设计评审。
+- 本轮只读检查当前实现、测试、配置与文档，不修改 `00_PAST/`、`layout/`、
+  `geometry/` 或生产代码。
+- 直接执行 `pytest -q` 因 WSL PATH 无 pytest 失败；这不是用例失败。已按项目
+  手册定位 `/mnt/d/app/miniforge/envs/myopc/python.exe`，后续改用该解释器。
+- 指定 Windows 解释器在当前 Linux 执行器报 `Exec format error`，说明工具环境
+  无 PE 互操作；正在查找可用的 Linux 项目环境。
+- 找到 `/home/wzh/miniconda3/envs/myopc312/bin/python` 并完成全量 pytest：
+  **450 passed, 8 skipped in 87.86s**；跳过项均为当前环境无 CUDA。
+- ruff 显式范围检查与 compileall 均通过；当前 CPU 基线已建立。
+- 已精读共享 macro/MB-OPC workflow 与 simple/gradient 求解器，并用 AST
+  import 图核对依赖方向；实现与核心架构文档总体一致。
+- 项目基线复核完成：已确认现有能力、运行入口、关键数据/状态不变量、ILT
+  草案依赖顺序、已知局限与两处文档/契约漂移；本轮未改生产代码、测试、
+  `layout/`、`geometry/`、`00_PAST/` 或用户 GDS，未提交、未推送。
+
 ## 会话记录
 
 ### 2026-08-16（会话 8：MB-OPC 审查问题修复）
@@ -311,3 +394,13 @@
   iterations=6、870 core）重构前后逐 state loss/l2/pv/epe/disp 精确相等
   （loss 0.149844393→0.120088223）、best_state=6、stop=iteration_limit、
   best_displacements npz 逐位一致。
+
+
+- Simple ILT 全量实施（CHG-20260818-simple-ilt，规格 Rev 0.2→0.3→1.0）：
+  事实核对发现 §14 漏 run_single_pass（Rev 0.3 补录）；五阶段 commit
+  5ad8ac0/54ab866/1539b6f/fefaea8/bdf86ac + 文档报告批；共享层修复 merge
+  空 macro 候选容忍；测试 67 新增（pixel 20 + ilt 30 + runner 12 +
+  GridRuntime 5），全量 525 passed；smoke corners_unit CUDA 1.90s
+  best_state=1。全部在 WSL myopc312 自跑（CUDA 可见）；push 因会话网络/
+  凭据不可用延后（本地 6 commit 待推）。开发/测试报告见
+  doc/changes/completed/CHG-20260818-simple-ilt/。

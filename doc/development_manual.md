@@ -193,7 +193,26 @@ D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradien
 - **simple 兼容**：`TargetCanvasCache` 移至 `_cache.py`（两方法共享），包级与
   simple 模块级导入路径不变。
 
-## 9. 迁移状态
+
+## 9. Simple ILT（opc/iteration/ilt，2026-08-19 迁移）
+
+像素型 ILT 基础管线 + 首个方法。输入层 `opc/input/pixel`（query box 一次
+栅格化的 PixelMacroProblem、core 画布/参数索引映射、像素→Region 回写）；
+求解器 `simple.py`（logit 覆盖保持初始化、core 批梯度 scatter-add 求和、
+屏障后同步 SGD、macro best 严格更低、N+1 已评价状态）；共享
+`main/_ilt_workflow.py`（ILTMethod 四字段注入、best binary 终评、merge 恰
+一次）。
+
+```bash
+# corners_unit smoke（默认参数即此配置；也可省略参数）
+D:/app/miniforge/envs/myopc/python.exe main/run_simple_ilt.py config/simple_ilt.toml
+```
+
+关键约束：目标层 bbox 宽高必须是 pixel 整数倍（比 edge 管线严）；空 macro
+候选（无材料/全暗区域）合法，merge 按零覆盖容忍。LevelSet/CurvMulti/
+Multilevel 复用本管线（见 doc/contracts/ilt.md 与四份规格）。
+
+## 10. 迁移状态
 
 layout / geometry / opc.input(+edge) / lithography / evaluation / opc.iteration.mbopc
 （simple + gradient）已完成；ilt 与 main 旧入口待评审。历史架构参照

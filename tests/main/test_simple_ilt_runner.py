@@ -18,8 +18,6 @@ from layout import DbuBox, LayerSpec, LayoutDB
 from main import configuration
 from main.configuration import load_config
 
-_TARGET_LAYER = LayerSpec(1, 0)  # 生成式版图唯一目标层
-
 
 def _write_gds(tmp_path):
     """生成矩形 + hole + 斜边三角形的混合 GDS 并返回路径。

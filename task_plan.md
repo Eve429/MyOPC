@@ -7,8 +7,31 @@
 
 ## Next Step
 
-**Phase 6 剩余（ilt）**：simple 与 gradient MB-OPC 均已完成。ILT 须独立设计
-评审后实施；随后 Phase 7（旧 main 入口评审 + 收尾审计）。
+**Phase 6 剩余（ilt 后三方法）**：Simple ILT 与像素管线已完成；
+LevelSet/CurvMulti/Multilevel 各自规格已就绪待批。随后 Phase 7
+（旧 main 入口评审 + 收尾审计）。
+
+## 当前会话：项目现状复核（2026-08-19）
+
+- [completed] 复核仓库结构、入口、配置、依赖与测试组织。
+- [completed] 对照开发手册、专项报告和当前实现，区分已确认能力与待确认事项。
+- [completed] 形成后续方案设计与开发可直接使用的项目基线摘要。
+
+## 当前会话：Simple ILT 规格语义修订（2026-08-19）
+
+- [completed] 全文核对现有规格与用户指出的 core/context、coverage 初始化、
+  macro 同步迭代、macro best 和像素整除问题。
+- [completed] 核实现有 grid/raster 对 core 与 pixel 对齐的真实约束。
+- [completed] 最小范围更新 Simple ILT implementation spec 的关联章节。
+- [completed] 搜索旧语义残留并完成文档差异审计。
+
+## 当前会话：Gradient MB-OPC EPE loss 更新设计（2026-08-19）
+
+- [completed] 核对当前 gradient MB-OPC 的参数、采样、loss、梯度、状态和测试契约。
+- [completed] 定位并精读 DiffOPC 的 EPE loss 参考实现与论文/文档证据。
+- [completed] 评估 EPE loss 与现有 midpoint STE、membership、ownership、单位和批处理的兼容语义。
+- [completed] 编写最小更新规格，明确配置、公式、接口、性能、异常和回归测试。
+- [completed] 完成差异、依赖、旧契约残留和未决问题审计，提交设计结论供用户评审。
 
 ## Phases
 
@@ -89,8 +112,12 @@
 - 全量 341 → **410 passed**；state0 EPE 与 simple baseline 逐位一致。
 - 偏差与裁决记录：`doc/opc/gradient_mbopc_{development,test}_report.md`。
 
-### Phase 6B: opc.iteration 剩余（ilt）— Status: pending
-- 梯度 MB-OPC 与 ILT 属未来方法；须各自独立设计评审，本轮明确不建空目录。
+### Phase 6B: opc.iteration 剩余（ilt）— Status: in_progress
+- **Simple ILT + 像素管线完成（2026-08-19，CHG-20260818-simple-ilt）**：
+  五阶段实施（GridRuntime/writer 解耦 → opc/input/pixel → ilt/_common+simple
+  → _ilt_workflow/入口/配置 → 文档报告）；525 passed；新增共享层修复
+  （merge 空 macro 候选容忍）。LevelSet/CurvMulti/Multilevel 规格已在
+  changes/active 待续。
 
 ### Phase 7: main 入口 + 收尾审计 — Status: pending
 - 旧 3357 行接线层已被 `main/run_macro_pipeline.py` + MB-OPC 两入口取代大半；
@@ -113,6 +140,8 @@
 
 | Error | 尝试 | 解决 |
 |---|---|---|
+| 当前 WSL `PATH` 无 `pytest` | 3 | 找到 Linux conda 环境 `myopc312`，全量 450 passed、8 CUDA skipped |
+| 更新记录的补丁上下文不匹配 | 1 | 读取实际中文原文后使用精确补丁更新 |
 | 断言脚本「关闭守卫未抛 ClosedLayoutError」 | 反复调试 | 根因：lambda 漏调用括号（`db.cell_hierarchy` 非 `db.cell_hierarchy()`）；已随重写消除 |
 | read_glp 收到 tuple 层映射 AttributeError | 1 | 测试违反契约；tuple 规范化只在 LayoutDB.open 入口做，修正测试传 LayerSpec |
 | 切线分裂后 SegmentBatch 校验失败（非一维） | 逐层 spy 定位 | 新批次 edge_ids 误传原始段号而非数学边号；修正为 `segments.edge_ids[boundary_seg[~last]]`（回归用例：test_grid/problem 系列） |

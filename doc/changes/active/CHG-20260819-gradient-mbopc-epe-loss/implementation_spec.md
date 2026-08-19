@@ -53,10 +53,10 @@ supersedes: []
 
 ### 2.1 Baseline
 
-- Commit：`540a0121eb06904bdc44ae7fe3bd491aeff22fb5`
-- Worktree：dirty；未提交项如 front matter 所列，均须保留，不得覆盖或夹带提交。
+- Commit：`08f4866`（Simple ILT 全部交付后）
+- Worktree：dirty；仅本规格与规划记录的修订差异，须保留，不得覆盖或夹带提交。
 - 生产源码与测试相对 baseline 无修改。
-- Linux CPU 基线：`450 passed, 8 skipped`；8 项均因当前环境无 CUDA 跳过。
+- Linux 基线（WSL myopc312，CUDA 可见）：`529 passed, 0 skipped`。
 
 ### 2.2 Confirmed Facts
 
@@ -447,7 +447,7 @@ sampler 必须保留 `D` 的 autograd，profile coordinates 为固定常量，�
 | `weight_epe == 0` | 完全关闭新计算，记录 0，旧数值逐值兼容 |
 | `weight_epe > 0`, distance 非 pixel 整数倍或 R<1 | optimizer 入口 `ValueError` |
 | 合法 config 且 O == 0 | 保持现有 `no_owned_segments` 空结果，EPE 为 0 |
-| 某 core/batch 的 owner profile 数为 0 | EPE contribution 为 0，不调用 sampler，不改变全局分母 O |
+| 某 core/batch 的 owner profile 数为 0 | EPE contribution 为 0，不调用 sampler，不改变全局分母 `L_sum` |
 | profile 穿过 core ownership 边界 | 合法；从该 core 的完整 simulation canvas 采样 |
 | profile 越过 simulation canvas | `ValueError`，不得裁剪或忽略 |
 | 斜边、hole、corner 相邻段 | 每个固定 segment 按自身单位法向统一采样 |
@@ -536,7 +536,7 @@ stub differentiable lithography 下，EPE-only loss 必须对 hard mask 和 owne
 ### TEST-005 — Batch invariance
 
 相同 state 在不同 `gradient_batch_size` 下，四项 loss、total 与 displacement update 在规定容差内
-一致；分母使用全 macro O。
+一致；分母使用全 macro 长度总和 `L_sum`。
 
 ### TEST-006 — Disabled compatibility
 
@@ -555,10 +555,13 @@ stub differentiable lithography 下，EPE-only loss 必须对 hard mask 和 owne
 
 ### TEST-013 — Profile-width invariance（Rev 0.2）
 
-固定 1 pixel 边缘偏移的确定性成像（stub model、小 gamma 保证未饱和），仅改变 Q
-（R=2/4/8，即 `epe_distance_nm` 变化）：各段 `d_s`（pre-sigmoid）不得因除以 Q 而下降
-——sum 聚合下同偏移的 `d_s` 在 profile 覆盖误差区的前提下保持同量级；mean 版本在此
-用例上必然随 Q 线性衰减，构成对旧裁决的判别。
+固定 1 pixel 边缘偏移的确定性成像，仅改变 Q（R=2/4/8，即 `epe_distance_nm` 变化）：
+各段 pre-sigmoid 的 `d_s` 不得因除以 Q 而下降——sum 聚合下同偏移的 `d_s` 保持同量级，
+mean 版本在此用例上必然随 Q 线性衰减，构成对旧裁决的判别。**构造性覆盖前提**：stub
+的误差支撑区必须落在最小 R 的 profile 内（如理想阶跃 wafer 恰偏移 1 pixel，D 仅 2 个
+槽位非零，一切 R≥2 均覆盖）；断言对象是 pre-sigmoid 的 `d_s`，不涉及 gamma。真实
+ICCAD13 的过渡区可达数 pixel，Q 不变性只在其 `R` 覆盖支撑区时近似成立——覆盖不足时
+d_s 随 R 增长属 sum/mean 共有的合法截断行为，不是缺陷。
 
 ### TEST-014 — Segmentation invariance（Rev 0.2）
 
@@ -758,6 +761,9 @@ None. 本文处于 draft 是因为尚待用户批准，不表示存在未定义�
 - 固定 reference profile 不追踪大位移后的 current contour；
 - sigmoid 在大误差处会饱和，steepness 需要按 workload 验证；sum 聚合（Rev 0.2）使
   `gamma*d_s` 更快进入饱和区，默认 `epe_steepness=4.0` 的适配性属实施 smoke 待验证项；
+  γ=4 + sum 下梯度活性窗口约 ±1–2 pixel（2px 以上偏移进入深饱和），EPE 项的实际定位
+  是 L2 先把边拉到位后的**局部精修 loss**，实施 smoke 应对照记录各 state 的 EPE 梯度
+  量级；
 - 长度加权是参考段 midpoint 采样下的一阶积分近似，切段不变性在容差内成立而非逐位相等；
 - 独立 macro context 不随邻 macro 更新；
 - 不处理 MRC、SRAF、shot count、曲率或拓扑变化；
@@ -778,4 +784,4 @@ None. 本文处于 draft 是因为尚待用户批准，不表示存在未定义�
 | Revision | Date | Status | Summary |
 |---|---|---|---|
 | 0.1 | 2026-08-19 | draft | 新增任意方向、唯一 owner、归一化且默认关闭的 Gradient EPE loss 设计 |
-| 0.2 | 2026-08-20 | draft | 用户修正：profile 聚合 mean→sum（Q 不变性，TEST-013）与 segment 归约等权→参考长度加权（切段不变性，TEST-014）；DEC-002 反转、新增 DEC-007、INV-005/REQ-003/§8.3/§10 同步；基线刷新至 08f4866 |
+| 0.2 | 2026-08-20 | draft | 用户修正：profile 聚合 mean→sum（Q 不变性，TEST-013）与 segment 归约等权→参考长度加权（切段不变性，TEST-014）；DEC-002 反转、新增 DEC-007、INV-005/REQ-003/§8.3/§10 同步；基线刷新至 08f4866 | 二次自审：§2.1/TEST-005/§11.1 残留 O 措辞清理；TEST-013 补构造性覆盖前提（断 pre-sigmoid d_s）；§24 补梯度活性窗口与 EPE 精修定位 |

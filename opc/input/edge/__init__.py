@@ -7,7 +7,11 @@ from .fragmentation import (
     fragment_edges,
 )
 from .problem import MacroProblem, prepare_macro_problem
-from .reconstruction import reconstruct_contours, reconstruct_region
+from .reconstruction import (
+    reconstruct_contours,
+    reconstruct_region,
+    reconstruct_region_with_midpoints,
+)
 from .sampling import edge_probe_points
 
 __all__ = [
@@ -20,4 +24,5 @@ __all__ = [
     "prepare_macro_problem",
     "reconstruct_contours",
     "reconstruct_region",
+    "reconstruct_region_with_midpoints",
 ]

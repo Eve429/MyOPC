@@ -13,6 +13,7 @@ from opc.input.edge import (
     MacroProblem,
     prepare_macro_problem,
     reconstruct_region,
+    reconstruct_region_with_midpoints,
 )
 from opc.input.edge.fragmentation import FragmentationConfig
 
@@ -298,6 +299,146 @@ class TestGeometryMatrix:
             owned = problem.owner_indices[problem.owner_indices >= 0]
             columns |= {(macro.macro_id, int(o) % macro.column_count) for o in owned}
         assert len(columns) >= 3
+
+
+class TestReconstructionMidpoints:
+    """reconstruct_region_with_midpoints 的段实际中点几何契约。
+
+    全部期望值用测试内解析公式独立计算（角点 junction = 两条 offset 线
+    交点、jog/bevel 边界取各自 offset 端点），不复用被测实现的中间量。
+    """
+
+    # 共享矩形：底边 y=10、右边 x=70；右下角点 (70,10)。
+    RECT = kdb.Region(kdb.Box(10, 10, 70, 70))
+
+    @staticmethod
+    def _midpoints_and_rigid(problem, displacements):
+        """返回 (API 中点, 旧刚体公式中点) 与参考几何，供对照断言。"""
+        geometry = problem.segments.materialize(None)
+        _, midpoints = reconstruct_region_with_midpoints(problem, displacements)
+        rigid = ((geometry.starts + geometry.ends) * 0.5
+                 + geometry.normals * displacements[:, None])
+        return midpoints, rigid, geometry
+
+    @staticmethod
+    def _edge_mask(geometry, axis, value):
+        """选出参考几何中整条落在某坐标线上的段（如底边全部 fragment）。"""
+        return ((geometry.starts[:, axis] == value)
+                & (geometry.ends[:, axis] == value))
+
+    def test_zero_displacement_matches_fragment_midpoints(self):
+        """零位移：各段实际中点与参考 fragment 中点逐位一致。"""
+        problem = _problem(self.RECT, _macros()[0])
+        geometry = problem.segments.materialize(None)
+        zeros = np.zeros(problem.segments.segment_count)
+        _, midpoints = reconstruct_region_with_midpoints(problem, zeros)
+        assert midpoints.shape == (problem.segments.segment_count, 2)
+        assert midpoints.dtype == np.float64
+        assert np.all(np.isfinite(midpoints))
+        np.testing.assert_allclose(midpoints,
+                                   (geometry.starts + geometry.ends) * 0.5,
+                                   atol=1e-12)
+
+    def test_corner_adjacent_midpoint_follows_miter_junction(self):
+        """相邻边异位移：corner 邻段中点随 miter 交点切向移动，不再是刚体平移。"""
+        problem = _problem(self.RECT, _macros()[0])
+        displacements = np.zeros(problem.segments.segment_count)
+        geometry = problem.segments.materialize(None)
+        bottom_ids = self._edge_mask(geometry, 1, 10)
+        right_ids = self._edge_mask(geometry, 0, 70)
+        displacements[bottom_ids] = 3.0   # 底边 +3
+        displacements[right_ids] = -2.0   # 右边 −2
+        midpoints, rigid, _ = self._midpoints_and_rigid(problem,
+                                                        displacements)
+        # 底边上最靠近右下角的 fragment（corner 段，x 上界触 70）。
+        corner_frag = int(np.flatnonzero(
+            bottom_ids & (np.maximum(geometry.starts[:, 0],
+                                     geometry.ends[:, 0]) == 70))[0])
+        # 90° 角的 miter 交点 = 两条 offset 线的交点，且落在底边 offset 线
+        # 上（x 随邻边位移切向移动，y 仍是本边法向平移）——解析可得。
+        n_bottom = geometry.normals[corner_frag]  # (0, ±1)
+        right_row = np.flatnonzero(right_ids)[0]
+        n_right = geometry.normals[right_row]     # (±1, 0)
+        junction_x = 70.0 + n_right[0] * -2.0
+        offset_y = 10.0 + n_bottom[1] * 3.0
+        split_x = float(np.minimum(geometry.starts[corner_frag, 0],
+                                   geometry.ends[corner_frag, 0]))
+        expected = np.array([(split_x + junction_x) * 0.5, offset_y])
+        np.testing.assert_allclose(midpoints[corner_frag], expected, atol=1e-9)
+        # 旧刚体公式在切向分量上背离（x 不随邻边位移移动）。
+        assert not np.allclose(midpoints[corner_frag], rigid[corner_frag],
+                               atol=1e-9)
+        # 远离改动角的底边中段：两边界均为同位移内部切分，仍与刚体一致。
+        middle = int(np.flatnonzero(
+            bottom_ids & (np.minimum(geometry.starts[:, 0],
+                                     geometry.ends[:, 0]) > 10)
+            & (np.maximum(geometry.starts[:, 0],
+                          geometry.ends[:, 0]) < 70))[0])
+        np.testing.assert_allclose(midpoints[middle], rigid[middle],
+                                   atol=1e-12)
+
+    def test_jog_boundary_uses_own_offset_ends(self):
+        """同一数学边异位移（jog）：两 fragment 各取自己一侧的 offset 端点。"""
+        problem = _problem(self.RECT, _macros()[0])
+        displacements = np.zeros(problem.segments.segment_count)
+        geometry = problem.segments.materialize(None)
+        bottom_ids = self._edge_mask(geometry, 1, 10)
+        corner_frag = int(np.flatnonzero(
+            bottom_ids & (np.maximum(geometry.starts[:, 0],
+                                     geometry.ends[:, 0]) == 70))[0])
+        n_bottom = geometry.normals[corner_frag]  # 底边法向 (0, ±1)
+        # corner 段 +3、紧邻中段 −2：两者边界输出 previous_end/current_start。
+        displacements[corner_frag] = 3.0
+        neighbours = np.flatnonzero(bottom_ids)
+        lo_x = np.minimum(geometry.starts[neighbours, 0],
+                          geometry.ends[neighbours, 0])
+        second = int(neighbours[np.argsort(lo_x)[-2]])  # x 次大的紧邻中段
+        displacements[second] = -2.0
+        midpoints, _, _ = self._midpoints_and_rigid(problem, displacements)
+        split_x = float(np.minimum(geometry.starts[corner_frag, 0],
+                                   geometry.ends[corner_frag, 0]))
+        second_lo = float(np.minimum(geometry.starts[second, 0],
+                                     geometry.ends[second, 0]))
+        # corner 段实际区间 = [自身 offset 起点, 右角 junction]（右边未动，
+        # 交点 = (70, 10 + 3·n_y)）。
+        np.testing.assert_allclose(
+            midpoints[corner_frag],
+            [split_x * 0.5 + 35.0, 10.0 + n_bottom[1] * 3.0], atol=1e-9)
+        # 紧邻中段两侧都是 jog 边界：两端均为自身 offset 端点（纯法向平移）。
+        np.testing.assert_allclose(
+            midpoints[second],
+            [(second_lo + split_x) * 0.5, 10.0 + n_bottom[1] * -2.0],
+            atol=1e-9)
+
+    def test_bevel_boundary_uses_offset_ends(self):
+        """miter 超限时 bevel：corner 邻段取自身 offset 端点而非交点。"""
+        cfg = FragmentationConfig(corner_length_dbu=8.0,
+                                   max_segment_length_dbu=16.0,
+                                   max_displacement_dbu=10.0,
+                                   miter_limit=1.0)  # 最小合法阈值强制 bevel
+        macro = _macros()[0]
+        batch = RegionBatch({LAYER: self.RECT}, macro.query_box)
+        problem = prepare_macro_problem(batch, LAYER, "clear", cfg, macro)
+        displacements = np.zeros(problem.segments.segment_count)
+        geometry = problem.segments.materialize(None)
+        bottom_ids = self._edge_mask(geometry, 1, 10)
+        right_ids = self._edge_mask(geometry, 0, 70)
+        displacements[bottom_ids] = 3.0
+        displacements[right_ids] = -2.0
+        _, midpoints = reconstruct_region_with_midpoints(problem,
+                                                         displacements)
+        corner_frag = int(np.flatnonzero(
+            bottom_ids & (np.maximum(geometry.starts[:, 0],
+                                     geometry.ends[:, 0]) == 70))[0])
+        n_bottom = geometry.normals[corner_frag]
+        split_x = float(np.minimum(geometry.starts[corner_frag, 0],
+                                   geometry.ends[corner_frag, 0]))
+        # bevel 边界：corner 段终于自身 offset 端点 (70, 10+3·n_y)。
+        np.testing.assert_allclose(
+            midpoints[corner_frag],
+            [(split_x + 70.0) * 0.5, 10.0 + n_bottom[1] * 3.0], atol=1e-9)
+        assert midpoints.shape == (problem.segments.segment_count, 2)
+        assert np.all(np.isfinite(midpoints))
 
 
 class TestTopologyPreservation:

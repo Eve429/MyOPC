@@ -121,7 +121,9 @@ LevelSet/CurvMulti/Multilevel 各自规格已就绪待批。随后 Phase 7
   0.0707），smoke 重调 step_size=1.0；Rev 1.1 收尾：固定 context 统一
   σ(β(2T−1))（跨宏 seam 一致性测试）、trainable_index_canvas 窗口化
   （P1-3）、历史文档【已取代】标注；Rev 1.2：数值 padding 三值语义
-  （context_valid_canvas，padding 恒 0），终基线 6162.66，528 passed。LevelSet/CurvMulti/
+  （context_valid_canvas，padding 恒 0）；Rev 1.3：索引域 int64（P1-4）
+  + curvature×context 联合约束（P2-1）+ REQ-B 阈值措辞限定。终基线
+  6162.66，529 passed。LevelSet/CurvMulti/
   Multilevel 规格已在 changes/active 待续。
 
 ### Phase 7: main 入口 + 收尾审计 — Status: pending

@@ -5,7 +5,8 @@
 WSL2 / `~/miniconda3/envs/myopc312/bin/python`（3.12.0，CUDA 可见）。
 基线 14ab3e8（525 passed）→ 实施 **526 passed**（+1：对齐几何 P1-1 回归）
 → Rev 1.1 **527 passed**（+1：跨宏 seam 初始 transmission 一致性）
-→ Rev 1.2 **528 passed**（+1：数值 padding 严格 0 / 物理 T=0 context 为 σ(−β)）。
+→ Rev 1.2 **528 passed**（+1：数值 padding 严格 0 / 物理 T=0 context 为 σ(−β)）
+→ Rev 1.3 **529 passed**（+1：curvature>0 且 context=0 入口拒绝、关曲率合法；索引 dtype int64 断言并入一致性用例）。
 
 ## 命令与结果
 

@@ -74,7 +74,7 @@ class PixelMacroProblem:                             # frozen；NPZ v1
     def save(path) / load(path)                      # allow_pickle=False
     def target_canvas(core_index) -> np.uint8[256, 256]
     def ownership_canvas(core_index) -> np.bool_[256, 256]
-    def trainable_index_canvas(core_index) -> np.int32[256, 256]  # macro 外 -1
+    def trainable_index_canvas(core_index) -> np.int64[256, 256]  # macro 外 -1（int64：2^31 宏像素防溢出）
 def reconstruct_pixel_region(problem, binary_ownership) -> kdb.Region
 ```
 

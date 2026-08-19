@@ -50,8 +50,9 @@ supersedes:
 - **REQ-A**：macro 参数初值 = `2·T − 1`（T = ownership target_u8/255 的
   float32，含分数覆盖率格，连续取值；无 clamp）。
 - **REQ-B**：废除"state0 soft 1e-6 内恢复 T"契约。新契约：
-  state0 soft = `σ(β·(2T−1))`；在 `mask_threshold` 下二值化与
-  `T ≥ 0.5` 逐格一致（`σ(β(2T−1)) ≥ 0.5 ⟺ T ≥ 0.5`）。
+  state0 soft = `σ(β·(2T−1))`；**当且仅当 mask_threshold = 0.5 时**
+  state0 二值化与 `T ≥ 0.5` 逐格一致（`σ(β(2T−1)) ≥ 0.5 ⟺ T ≥ 0.5`；
+  其他阈值是参数的自身语义，不构成与 T≥0.5 的对齐不变量）。
 - **REQ-C**（P1-1 回归）：纯对齐几何（无分数格）+ 真实 ICCAD13 一轮
   更新可观测：records[1].total_loss ≠ records[0]，且 best_parameters
   相对初值 max|Δp| > 1e-5（实测 ≈3.9e-4；饱和初始化 <1e-6）。
@@ -62,6 +63,10 @@ supersedes:
   ~1.8% 的人为跳变。**三值语义**：trainable→当前 soft；真实 context
   window 内（含物理 T=0 像素）→初始 soft；context window 外的数值
   padding→恒 0（`context_valid_canvas` 掩码判据，padding 判别测试锁定）。
+- **REQ-E**（2026-08-20 Rev 1.3）：trainable 索引域恒 int64（宏总像素
+  超 2^31 时 int32 在 CPU 构造期溢出、负值被误判为 context）；
+  `curvature_weight > 0` 要求 `context_dbu ≥ pixel_dbu`（求解器入口拒绝：
+  context=0 时 3×3 valid 卷积的 ownership 边缘曲率随 core 切分变化）。
 
 ## 4. Scope
 
@@ -110,3 +115,4 @@ Out：初始化策略配置开关；context 直通 target 的固定区设计；�
 | 1.0 | 2026-08-19 | completed | 实施完成（ebce389）：526 passed；REQ-C 阈值定 1e-5、smoke step_size 重调 1.0（偏差见 development_report）；smoke 新基线 7952→6233 | 开发/测试报告 |
 | 1.1 | 2026-08-19 | completed | REQ-D：固定 context 统一 σ(β(2T−1))（4c5f5f1），跨宏 seam 测试锁定；顺带 P1-3 性能修复（aa583a5，索引块窗口化）；527 passed；smoke 基线 7880.69→6162.49 | 用户 P1/P2 审查 |
 | 1.2 | 2026-08-20 | completed | REQ-D 补三值语义：数值 padding 不得 sigmoid（新 context_valid_canvas 掩码 + padding 判别测试）；Decisions 旧 context 直通条目标注已修订；smoke 新基线 6162.66（缩短 core 的 padding 环消除为语义变化） | 用户边界审查 |
+| 1.3 | 2026-08-20 | completed | REQ-E：索引域 int64（P1-4，删除 solver 冗余 int64 转换）；curvature×context≥1px 联合约束（P2-1，入口拒绝）；REQ-B 措辞限定 mask_threshold=0.5（原表述把 0.5 专属性质写成通用不变量） | 用户算法审查 |

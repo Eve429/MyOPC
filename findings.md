@@ -911,3 +911,21 @@
   binaryL2 2893（优于旧基线 2896）、0.99s/CUDA 503MiB。教训：初始
   化方案与步长尺度耦合，后续方法换参数化时 smoke 步长须同步评估。
 - 全量 525 → 526 passed。
+
+
+## Simple ILT P1-4/P2-1 修复事实（2026-08-20，用户算法审查）
+
+- **P1-4**：trainable 全局扁平索引原 int32，宏总像素 >2^31（4nm pixel 约
+  185µm² 见方）在 CPU 构造期溢出——负值经 `>=0` 判据误判为 macro 外
+  context、正值错位；GPU 前的 int64 转换无效。全链改 int64（返回/canvas/
+  两个 arange），删 solver 冗余转换；256² 画布 +0.5MB 可忽略。教训：索引
+  dtype 是值域契约，与 numpy 弱提升（python int 不升位数）叠加时溢出点在
+  构造侧而非消费侧。
+- **P2-1**：context=0 合法 + curvature valid 卷积 → ownership 边缘一圈
+  曲率按 core 切分丢失（同宏 2×2 vs 4×4 core 损失不同，网格切分不应改变
+  损失语义）。裁决：不改编卷积，入口联合约束 curvature_weight>0 ⟹
+  context ≥ 1 像素；关曲率时 context=0 仍合法。
+- **契约措辞**：REQ-B 的 σ(β(2T−1))≥0.5 ⟺ T≥0.5 仅在 mask_threshold=0.5
+  成立；原表述把它写成任意阈值的通用不变量。修正为限定 0.5；threshold
+  可调性保留。OBS：监督目标是 u8 量化 T（≤1/510）为规格契约。
+- 全量 528 → 529 passed。

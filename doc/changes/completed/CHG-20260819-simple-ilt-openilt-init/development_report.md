@@ -74,3 +74,18 @@ binary L2 = 2893（旧基线 2896）；总 0.99s；RSS 936 MiB；CUDA peak 503 M
    CHG-20260818 §10.2/TEST-008 的 context/padding 直通描述加取代标注。
 4. 命名澄清：solver 内 trainable 槽位掩码更名 owned（与窗口掩码
    valid_canvases 区分）。全量 528 passed。
+
+## Rev 1.3 追加（2026-08-20，用户算法审查：P1-4 / P2-1 / 契约措辞）
+
+1. **P1-4（int64 索引域）**：trainable 索引 canvas/aranges 由 int32 全链改
+   int64——宏总像素 >2^31（4nm pixel 下约 185µm² 见方宏）时 int32 在 CPU
+   构造期溢出，负值会被 `>=0` 判据误判为 macro 外 context；送 GPU 前的
+   int64 转换救不回。solver 内冗余 `.astype(np.int64)` 删除；镜像同步；
+   dtype 断言入索引一致性测试。256² 画布多 ~0.5MB，可忽略。
+2. **P2-1（curvature×context 联合约束）**：context=0 合法但 3×3 valid
+   卷积会按 core 切分丢弃 ownership 边缘曲率（同宏 2×2 与 4×4 core 的
+   曲率损失不同）。不改编卷积，在求解器入口拒绝：curvature_weight>0
+   要求 context_dbu ≥ pixel_dbu；关曲率时 context=0 仍合法（新用例锁定）。
+3. **契约措辞**：REQ-B 的 state0 二值一致性限定 mask_threshold=0.5
+   （原表述把 0.5 专属数学性质写成通用不变量；contracts/ilt.md 同步；
+   threshold 本身仍可调）。

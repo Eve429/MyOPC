@@ -34,7 +34,8 @@ def optimize_simple_macro(problem, model, config, *,
 - **初始化**：`params = 2·T − 1`（OpenILT 同式；P1-1 修复，取代早期
   logit+eps 方案）。0/1 像素 sigmoid 斜率 = β·σ(β)σ(−β)（β=4 时 0.0707），
   内部像素保持可优化（拓扑/开孔/SRAF 前提）。性质：
-  σ(β(2T−1)) ≥ 0.5 ⟺ T ≥ 0.5——state0 二值掩膜与 T 二值化一致；
+  σ(β(2T−1)) ≥ 0.5 ⟺ T ≥ 0.5——mask_threshold=0.5 时 state0 二值掩膜
+  与 T 二值化一致（其他阈值不构成该对齐不变量）；
   state0 soft = σ(β(2T−1)) 不精确等于 T（1e-6 恢复契约已废除，
   见 CHG-20260819-simple-ilt-openilt-init）。
 - **宏同步状态**：同一 state 全部 core/batch 读同一宏参数快照；core 只限制
@@ -47,6 +48,8 @@ def optimize_simple_macro(problem, model, config, *,
   （`context_valid_canvas` 判据）。监督/指标目标是 raw T。同一物理
   像素在不同宏画布中的初始值一致（跨宏 seam 测试锁定）。
 - **macro best**：只按完整宏总损失严格更低选择，batch 切分/顺序不变。
+- **联合约束**：curvature_weight > 0 要求 context ≥ 1 像素（入口拒绝；
+  否则 valid 卷积的 ownership 边缘曲率随 core 切分变化）。
 - **异常**：非有限 loss/梯度/参数 → FloatingPointError，不发布当前宏。
 
 ## 公共 workflow（`main/_ilt_workflow.py`）

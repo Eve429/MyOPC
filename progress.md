@@ -429,3 +429,9 @@
   core 环消除的语义变化；双真源文档清理（Decisions 旧条目 +
   CHG-20260818 §10.2/TEST-008 标注）。全量 528 passed；fix + docs 两
   commit。P1-3 按用户复核结论关闭。
+
+
+- Simple ILT P1-4/P2-1/契约措辞（用户算法审查三项）：索引域全链 int64
+  （P1-4，防 2^31 构造期溢出）+ curvature×context≥1px 入口联合约束（P2-1）
+  + REQ-B 二值一致性限定 threshold=0.5；测试 +1（约束双向）+ dtype 断言；
+  全量 529 passed；fix + docs 两 commit。

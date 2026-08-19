@@ -543,3 +543,11 @@
 - **立案待办**：optimize_gradient_macro 结构拆分（prepare/evaluate/
   step/orchestrate）——用户要求 midpoint 修复先行落地、数值变化
   归因清晰后再拆，结构重构另开任务。
+
+- **中点按需计算（用户 P2）**：_reconstruct_geometry 增 with_midpoints
+  旗标（默认 False），simple/验证/单遍等 reconstruct_region 热路径不再
+  付中点四个数组（约 56S 字节临时内存）的成本；仅
+  reconstruct_region_with_midpoints 传 True。ReconstructionResult.
+  segment_midpoints 类型放宽为 | None；新增旗标契约测试（默认 None、
+  请求才产出、两种请求轮廓逐位一致）。双 smoke 基线逐位不变，
+  453 passed。

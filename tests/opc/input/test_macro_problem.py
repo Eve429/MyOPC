@@ -16,6 +16,7 @@ from opc.input.edge import (
     reconstruct_region_with_midpoints,
 )
 from opc.input.edge.fragmentation import FragmentationConfig
+from opc.input.edge.reconstruction import _reconstruct_geometry
 
 LAYER = LayerSpec(1, 0)
 # 廉价网格契约：160² 版图、2×2 macro、core 40、context 20、pixel 4。
@@ -409,6 +410,22 @@ class TestReconstructionMidpoints:
             midpoints[second],
             [(second_lo + split_x) * 0.5, 10.0 + n_bottom[1] * -2.0],
             atol=1e-9)
+
+    def test_midpoints_only_computed_when_requested(self):
+        """with_midpoints=False（热路径默认）不产出中点，轮廓不受影响。"""
+        problem = _problem(self.RECT, _macros()[0])
+        zeros = np.zeros(problem.segments.segment_count)
+        plain = _reconstruct_geometry(problem, zeros)
+        full = _reconstruct_geometry(problem, zeros, with_midpoints=True)
+        assert plain.segment_midpoints is None  # simple 等热路径零额外成本
+        assert full.segment_midpoints is not None
+        assert full.segment_midpoints.shape == (
+            problem.segments.segment_count, 2)
+        # 两种请求下的整数轮廓完全一致（中点是纯附加产物）。
+        np.testing.assert_array_equal(plain.contours.vertices,
+                                      full.contours.vertices)
+        np.testing.assert_array_equal(plain.contours.ring_offsets,
+                                      full.contours.ring_offsets)
 
     def test_bevel_boundary_uses_offset_ends(self):
         """miter 超限时 bevel：corner 邻段取自身 offset 端点而非交点。"""

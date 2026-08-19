@@ -80,15 +80,19 @@ def _validated_displacements(segments: SegmentBatch, displacements: object,
 
 @dataclass(frozen=True, slots=True)
 class ReconstructionResult:
-    """保存一次重构的轻量产物：整数轮廓与各段连续域采样中点。"""
+    """保存一次重构的轻量产物：整数轮廓与可选的各段采样中点。"""
 
-    contours: ContourBatch          # np.rint 取整与去重后的整数轮廓
-    segment_midpoints: np.ndarray   # [S,2] float64 DBU，未取整的实际中点
+    contours: ContourBatch                # np.rint 取整与去重后的整数轮廓
+    segment_midpoints: np.ndarray | None  # [S,2] float64；未请求时 None
 
 
-def _reconstruct_geometry(problem: MacroProblem,
-                           displacements: object) -> ReconstructionResult:
-    """核心重构：junction/bevel 拼装整数轮廓，并给出各段实际采样中点。"""
+def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
+                          with_midpoints: bool = False) -> ReconstructionResult:
+    """核心重构：junction/bevel 拼装整数轮廓；按需附带各段采样中点。
+
+    中点需要 following 与三个 [S,2] 数组（约 56S 字节临时内存）——仅
+    梯度路径请求；simple 等热路径调用方默认不承担该成本。
+    """
     segments, config = problem.segments, problem.fragmentation
     # 检查 displacements 有效性
     values = _validated_displacements(segments, displacements, config)
@@ -96,8 +100,9 @@ def _reconstruct_geometry(problem: MacroProblem,
     geometry = segments.materialize(values)
     count = segments.segment_count
     if not count:
-        return ReconstructionResult(segments.contours,
-                                    np.empty((0, 2), dtype=np.float64))
+        return ReconstructionResult(
+            segments.contours,
+            np.empty((0, 2), dtype=np.float64) if with_midpoints else None)
     # 构造previous，让每条边段知道自己前一条是什么
     previous = np.arange(count, dtype=np.int64) - 1
     previous[segments.ring_segment_offsets[:-1]] = segments.ring_segment_offsets[1:] - 1
@@ -158,18 +163,23 @@ def _reconstruct_geometry(problem: MacroProblem,
     # 原直线并产生细小 XOR 毛刺。位移不同时输出两个端点形成 jog；原始拐角只有
     # miter 失控或平行时才使用两个 bevel 点，其余 junction 保存一个解析交点。
     two_points = (same_edge & ~same_position) | bevel
-    # 各段实际采样中点：与轮廓拼接规则一一对应——two_points 边界（jog/
-    # bevel）前段终于 previous_end、后段始于 current_start；普通边界共享
-    # 一个 junction；same_position 无输出点，内部细分点取共线中点（落在
-    # 合并直线上，各 fragment 采样等价）。保持 float64 连续域，不随下方
-    # np.rint 整数化——梯度采样需要追踪 fragment 身份而非最终轮廓顶点。
-    following = np.arange(count, dtype=np.int64) + 1  # 环内下一段
-    following[segments.ring_segment_offsets[1:] - 1] = (
-        segments.ring_segment_offsets[:-1])  # 各环尾段回卷到首段
-    segment_starts = np.where(two_points[:, None], current_starts, junctions)
-    segment_ends = np.where(two_points[following, None],
-                            previous_ends[following], junctions[following])
-    segment_midpoints = (segment_starts + segment_ends) * 0.5
+    segment_midpoints = None  # 默认不计算；仅 with_midpoints=True 的梯度路径填充
+    if with_midpoints:
+        # 各段实际采样中点：与轮廓拼接规则一一对应——two_points 边界
+        # （jog/bevel）前段终于 previous_end、后段始于 current_start；
+        # 普通边界共享一个 junction；same_position 无输出点，内部细分点
+        # 取共线中点（落在合并直线上，各 fragment 采样等价）。保持
+        # float64 连续域，不随下方 np.rint 整数化——梯度采样需要追踪
+        # fragment 身份而非最终轮廓顶点。
+        following = np.arange(count, dtype=np.int64) + 1  # 环内下一段
+        following[segments.ring_segment_offsets[1:] - 1] = (
+            segments.ring_segment_offsets[:-1])  # 各环尾段回卷到首段
+        segment_starts = np.where(two_points[:, None], current_starts,
+                                  junctions)
+        segment_ends = np.where(two_points[following, None],
+                                previous_ends[following],
+                                junctions[following])
+        segment_midpoints = (segment_starts + segment_ends) * 0.5
     output_counts = np.where(same_position, 0, np.where(two_points, 2, 1)).astype(np.int64)
     output_offsets = np.empty(count + 1, dtype=np.int64)
     output_offsets[0] = 0
@@ -228,7 +238,7 @@ def reconstruct_region_with_midpoints(
     两产物来自同一次几何计算：Region 供栅格化与评价、中点供梯度采样，
     保证 forward 几何与 backward 采样点永不来自不同次重构。
     """
-    result = _reconstruct_geometry(problem, displacements)
+    result = _reconstruct_geometry(problem, displacements, with_midpoints=True)
     region = contours_to_region(result.contours)
     if not region.has_valid_polygons():
         raise ReconstructionError("reconstructed region contains invalid polygons")

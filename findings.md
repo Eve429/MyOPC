@@ -887,3 +887,27 @@
 - 全量 458 → 525 passed；阶段 A 单遍 smoke XOR==0（GridRuntime/writer 迁移
   零回归）；smoke：corners_unit 16 core / 225,625 像素 / CUDA 1.90s /
   best_state=1。
+
+
+## Simple ILT P1-1 修复事实（2026-08-19，CHG-20260819-simple-ilt-openilt-init）
+
+- **问题定性（用户裁决）**：logit+float32-eps 初始化把 0/1 像素参数推到
+  ±logit(1.2e-7)/β，sigmoid 斜率仅 β·eps≈4.8e-7（β=4）——内部像素几乎
+  不可优化，而 ILT 的拓扑变化/开孔/SRAF 恰需这些区域可激活。这不是
+  "观察性质"而是缺陷；纯对齐几何一轮更新低于记录精度即为实证。
+- **修复**：`params = 2·T − 1`（00_PAST/OpenILT 同式），斜率
+  β·σ(β)σ(−β)≈0.0707（约 1.5×10⁵ 倍）。保持性质
+  σ(β(2T−1)) ≥ 0.5 ⟺ T ≥ 0.5（state0 二值掩膜与 T 二值化一致）；
+  废除 1e-6 恢复契约（新 change supersedes REQ-006 初始化子句，不回改
+  历史 CHG 文档）。
+- **回归证据**：新增纯对齐几何真模型用例——loss₁≠loss₀ 且 max|Δp|≈
+  3.9e-4（阈值 1e-5；饱和方案 <1e-6）。阈值依据：真实光刻链路的
+  dprinted/dmask 低于线性 stub 估计，位移量级 1e-4 而非 1e-2。
+- **测试改写要点**：常数/逐调用模型的损失监督是 T 而非 mask——其期望值
+  与初始化无关（曾误改为 soft₀ 监督，已纠正）；曲率参考的卷积输入是
+  state0 soft（随初始化变化）；float64 镜像 init 同步。
+- **smoke 重调**：梯度尺度随初始化增大 ~10⁵，step_size 10 严重过冲
+  （state1 损失反升至 43400）；定格 1.0：records 7952→6233（−21.6%）、
+  binaryL2 2893（优于旧基线 2896）、0.99s/CUDA 503MiB。教训：初始
+  化方案与步长尺度耦合，后续方法换参数化时 smoke 步长须同步评估。
+- 全量 525 → 526 passed。

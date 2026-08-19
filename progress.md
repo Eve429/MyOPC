@@ -404,3 +404,11 @@
   best_state=1。全部在 WSL myopc312 自跑（CUDA 可见）；push 因会话网络/
   凭据不可用延后（本地 6 commit 待推）。开发/测试报告见
   doc/changes/completed/CHG-20260818-simple-ilt/。
+
+
+- Simple ILT P1-1 修复（用户裁决：OpenILT 2T−1 初始化取代 logit+eps）：
+  新 change CHG-20260819-simple-ilt-openilt-init（supersedes REQ-006 初始化
+  子句）；simple.py init 块替换 + 六处测试同步 + 纯对齐几何真模型回归
+  （max|Δp|≈3.9e-4）；smoke 重调 step_size=1.0（7952→6233，−21.6%）；
+  全量 526 passed；commit ebce389 + 记录批。WSL myopc312 自跑；push 仍
+  待网络可用（累计 8 commit 待推）。

@@ -98,3 +98,4 @@ Out：初始化策略配置开关；context 直通 target 的固定区设计；�
 | Revision | Date | Status | Change | Reviewer |
 |---|---|---|---|---|
 | 0.1 | 2026-08-19 | approved | 首版（用户 P1-1 裁决 + 批准开发计划） | 用户 |
+| 1.0 | 2026-08-19 | completed | 实施完成（ebce389）：526 passed；REQ-C 阈值定 1e-5、smoke step_size 重调 1.0（偏差见 development_report）；smoke 新基线 7952→6233 | 开发/测试报告 |

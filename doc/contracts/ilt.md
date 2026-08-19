@@ -31,9 +31,12 @@ def optimize_simple_macro(problem, model, config, *,
 
 语义保证：
 
-- **初始化**：`logit(clamp(T, float32 eps, 1-eps))/β`；state0 soft mask 在
-  1e-6 内恢复 T（含分数覆盖率）。已知性质：严格 0/1 像素 sigmoid 饱和
-  （斜率 ~β·eps），有效梯度经分数覆盖格进入优化。
+- **初始化**：`params = 2·T − 1`（OpenILT 同式；P1-1 修复，取代早期
+  logit+eps 方案）。0/1 像素 sigmoid 斜率 = β·σ(β)σ(−β)（β=4 时 0.0707），
+  内部像素保持可优化（拓扑/开孔/SRAF 前提）。性质：
+  σ(β(2T−1)) ≥ 0.5 ⟺ T ≥ 0.5——state0 二值掩膜与 T 二值化一致；
+  state0 soft = σ(β(2T−1)) 不精确等于 T（1e-6 恢复契约已废除，
+  见 CHG-20260819-simple-ilt-openilt-init）。
 - **宏同步状态**：同一 state 全部 core/batch 读同一宏参数快照；core 只限制
   loss ownership，不截断 context 内可训练像素的梯度；梯度 scatter-add
   求和（绝不平均）；全部 core 完成后恰一次同步 SGD step；N 次更新对应

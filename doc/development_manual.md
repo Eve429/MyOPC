@@ -198,7 +198,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradien
 
 像素型 ILT 基础管线 + 首个方法。输入层 `opc/input/pixel`（query box 一次
 栅格化的 PixelMacroProblem、core 画布/参数索引映射、像素→Region 回写）；
-求解器 `simple.py`（logit 覆盖保持初始化、core 批梯度 scatter-add 求和、
+求解器 `simple.py`（OpenILT 2T−1 初始化（P1-1，2026-08-19 取代 logit+eps）、core 批梯度 scatter-add 求和、
 屏障后同步 SGD、macro best 严格更低、N+1 已评价状态）；共享
 `main/_ilt_workflow.py`（ILTMethod 四字段注入、best binary 终评、merge 恰
 一次）。

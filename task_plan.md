@@ -116,8 +116,10 @@ LevelSet/CurvMulti/Multilevel 各自规格已就绪待批。随后 Phase 7
 - **Simple ILT + 像素管线完成（2026-08-19，CHG-20260818-simple-ilt）**：
   五阶段实施（GridRuntime/writer 解耦 → opc/input/pixel → ilt/_common+simple
   → _ilt_workflow/入口/配置 → 文档报告）；525 passed；新增共享层修复
-  （merge 空 macro 候选容忍）。LevelSet/CurvMulti/Multilevel 规格已在
-  changes/active 待续。
+  （merge 空 macro 候选容忍）；**P1-1 修复（2026-08-19，ebce389）**：初始
+  化切换 OpenILT 2T−1 方案，恢复内部 0/1 像素可优化性（斜率 4.8e-7 →
+  0.0707），smoke 重调 step_size=1.0（7952→6233）。LevelSet/CurvMulti/
+  Multilevel 规格已在 changes/active 待续。
 
 ### Phase 7: main 入口 + 收尾审计 — Status: pending
 - 旧 3357 行接线层已被 `main/run_macro_pipeline.py` + MB-OPC 两入口取代大半；

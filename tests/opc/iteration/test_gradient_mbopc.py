@@ -198,9 +198,9 @@ class TestThresholdPropagation:
 class TestEdgeGradientMask:
     """_EdgeGradientMask 的前向直通与 Algorithm 4 反向公式。"""
 
-    def _apply(self, hard, local, slots, mids):
-        """在 CPU 上执行一次 apply 并返回输出。"""
-        return _EdgeGradientMask.apply(hard, local, slots, mids)
+    def _apply(self, hard, local, slots, mids, pixel_dbu=1):
+        """在 CPU 上执行一次 apply 并返回输出（pixel_dbu 默认 1）。"""
+        return _EdgeGradientMask.apply(hard, local, slots, mids, pixel_dbu)
 
     def test_forward_preserves_exact_raster(self):
         """输出与输入逐位相同、dtype/shape/device 不变（REQ-003）。"""
@@ -216,8 +216,9 @@ class TestEdgeGradientMask:
         assert torch.equal(out, hard)  # 数值逐位直通
 
     def test_backward_is_two_times_bilinear_midpoint(self):
-        """单条目梯度恰为 2×双线性值；越界为 0；重复索引求和（REQ-004）。"""
+        """单条目梯度恰为 2×双线性/pixel_dbu；越界为 0；重复索引求和。"""
         size = 8  # 8×8 图
+        pixel_dbu = 4  # 非平凡换算尺度，锁定 DBU 单位契约
         grad_output = torch.arange(2 * size * size, dtype=torch.float32)
         grad_output = grad_output.reshape(2, size, size)  # 图 1 基址 64
         local = torch.zeros(4, requires_grad=True)  # 四条独立 membership
@@ -225,21 +226,50 @@ class TestEdgeGradientMask:
         mids = torch.tensor([[1.5, 2.5], [7.0, 7.0], [-3.0, 4.0], [2.0, 2.0]],
                             dtype=torch.float32)
         hard = torch.zeros(2, size, size)  # 数值不参与反向
-        out = self._apply(hard, local, slots, mids)
+        out = self._apply(hard, local, slots, mids, pixel_dbu)
         (out * grad_output).sum().backward()  # 直接以已知梯度图反传
         # 半像素点双线性四角均值：(17+18+25+26)/4 = 21.5；
         # 边界整点 (7,7)→127；越界点恒 0；内部整点 (2,2)→82。
-        expect = torch.tensor([2 * 21.5, 2 * 127.0, 0.0, 2 * 82.0])
-        assert torch.allclose(local.grad, expect)  # 2·g_mid 精确公式
+        expect = torch.tensor([2 * 21.5, 2 * 127.0, 0.0, 2 * 82.0]) / pixel_dbu
+        assert torch.allclose(local.grad, expect)  # 2·g_mid/pixel_dbu 公式
         # 同一参数被两条 membership 引用时由 autograd 求和（图 0 整点）。
         shared = torch.zeros(1, requires_grad=True)
         gathered = shared[torch.tensor([0, 0])]  # 重复索引
         out2 = self._apply(
             torch.zeros(1, size, size), gathered,
             torch.tensor([0, 0], dtype=torch.int64),
-            torch.tensor([[1.0, 1.0], [2.0, 2.0]], dtype=torch.float32))
+            torch.tensor([[1.0, 1.0], [2.0, 2.0]], dtype=torch.float32),
+            pixel_dbu)
         (out2 * grad_output[:1]).sum().backward()
-        assert torch.allclose(shared.grad, torch.tensor([2 * (9.0 + 18.0)]))
+        assert torch.allclose(
+            shared.grad, torch.tensor([2 * (9.0 + 18.0)]) / pixel_dbu)
+
+    def test_backward_scales_inverse_with_pixel_dbu(self):
+        """pixel_dbu=1/2/4 下位移梯度方向一致、幅值按 g、g/2、g/4 缩放。
+
+        直接锁定单位契约（位移参数为 DBU，采样在 pixel 域），不受
+        栅格化、光刻或 Adam 干扰。
+        """
+        size = 8
+        # 单图、三条 membership：半像素点、内部整点、另一内部整点。
+        grad_output = torch.arange(size * size, dtype=torch.float32)
+        grad_output = grad_output.reshape(1, size, size)
+        slots = torch.zeros(3, dtype=torch.int64)
+        mids = torch.tensor([[1.5, 2.5], [6.0, 3.0], [2.0, 2.0]],
+                            dtype=torch.float32)
+        hard = torch.zeros(1, size, size)
+        grads = {}
+        for pixel_dbu in (1, 2, 4):
+            local = torch.zeros(3, requires_grad=True)
+            out = self._apply(hard, local, slots, mids, pixel_dbu)
+            (out * grad_output).sum().backward()
+            grads[pixel_dbu] = local.grad.clone()
+        base = grads[1]
+        assert torch.all(base != 0)  # 采样点非零，缩放可观测
+        for factor, pixel_dbu in ((2.0, 2), (4.0, 4)):
+            scaled = grads[pixel_dbu]
+            assert torch.allclose(scaled, base / factor, atol=1e-7)  # 幅值
+            assert torch.all(scaled * base > 0)  # 方向完全一致
 
     def test_backward_source_has_no_python_loop_or_item(self):
         """反向实现不含逐段 Python 循环与 .item() 同步（PERF-004）。"""
@@ -585,11 +615,11 @@ class TestGeometryMatrix:
 
             @staticmethod
             def forward(ctx, hard_masks, local_displacements, batch_indices,
-                        midpoints_xy):
+                        midpoints_xy, pixel_dbu):
                 counts.append(int(midpoints_xy.shape[0]))  # 采样条目计数
                 return _EdgeGradientMask.forward(
                     ctx, hard_masks, local_displacements, batch_indices,
-                    midpoints_xy)
+                    midpoints_xy, pixel_dbu)
 
         monkeypatch.setattr(gradient_module, "_EdgeGradientMask", _CountingMask)
         result = _optimize(problem, _LinearModel(), _config(batch_size=1))
@@ -718,11 +748,11 @@ class TestCallCounts:
 
             @staticmethod
             def forward(ctx, hard_masks, local_displacements, batch_indices,
-                        midpoints_xy):
+                        midpoints_xy, pixel_dbu):
                 captured.append(midpoints_xy.detach().clone())
                 return _EdgeGradientMask.forward(
                     ctx, hard_masks, local_displacements, batch_indices,
-                    midpoints_xy)
+                    midpoints_xy, pixel_dbu)
 
         monkeypatch.setattr(gradient_module, "_EdgeGradientMask", _CaptureMask)
         _optimize(problem, _LinearModel(), _config(iterations=1))
@@ -853,7 +883,7 @@ class TestRealModel:
                     midpoints[members], spec.context_box, pixel_dbu,
                     canvas)).to(dtype=torch.float32)
                 mask_tensor = _EdgeGradientMask.apply(hard, local, slots,
-                                                      mids)
+                                                      mids, pixel_dbu)
             else:
                 mask_tensor = hard
             printed = model.forward_many(mask_tensor, conditions)

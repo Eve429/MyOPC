@@ -99,22 +99,26 @@ class _EdgeGradientMask(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, hard_masks, local_displacements, batch_indices,
-                midpoints_xy):
-        """前向不改 mask 数值，只保存反向采样需要的批号与中点坐标。
+                midpoints_xy, pixel_dbu):
+        """前向不改 mask 数值，只保存反向采样需要的批号、中点与像素。
 
         local_displacements 只用于建立 autograd 边（STE 硬几何直通），
-        不参与 forward 计算。
+        不参与 forward 计算；pixel_dbu 为 DBU→pixel 的换算尺度（非张量，
+        存普通 ctx 属性），backward 用它把采样梯度换算回 DBU 参数。
         """
+        ctx.pixel_dbu = pixel_dbu
         ctx.save_for_backward(batch_indices, midpoints_xy)
         return hard_masks
 
     @staticmethod
     def backward(ctx, grad_output):
-        """按当前已发布重构几何的段中点双线性采样 dL/dMask，梯度为 2·g_mid。
+        """按段中点双线性采样，返回给 DBU 位移参数的梯度为 2·g_mid/pixel_dbu。
 
-        2 倍来源：论文对两个 endpoint 各采样一次 g_mid；本项目标量位移
-        同时驱动两端点，中点随位移移动同一单位法向，两端链式求和恰为
-        2·g_mid。
+        单位契约：g_mid 是 canvas/pixel 坐标下的 STE 边梯度，
+        local_displacements 的单位是 DBU——x_canvas ≈ x_dbu/pixel_dbu，
+        故 dx_canvas/dd_dbu = 1/pixel_dbu，链式换算后除以 pixel_dbu。
+        2 倍来源与单位换算相互独立：论文对两个 endpoint 各采样一次
+        g_mid，本项目标量位移同时驱动两端点，两端链式求和恰为 2·g_mid。
         """
         batch_indices, midpoints_xy = ctx.saved_tensors
         # 布局契约：图像 [B,H,W]、像素索引 [y,x]、坐标 (x,y) 连续；行 0 是
@@ -147,7 +151,9 @@ class _EdgeGradientMask(torch.autograd.Function):
         g_mid = (v00 * (1.0 - wx) * (1.0 - wy) + v01 * wx * (1.0 - wy)
                  + v10 * (1.0 - wx) * wy + v11 * wx * wy)
         g_mid = torch.where(inside, g_mid, torch.zeros_like(g_mid))
-        return None, 2.0 * g_mid, None, None
+        # 末位 None 对应 forward 的 pixel_dbu（无梯度）；除以 pixel_dbu
+        # 把 pixel 域采样梯度换算回 DBU 位移参数。
+        return None, 2.0 * g_mid / ctx.pixel_dbu, None, None, None
 
 
 def optimize_gradient_macro(
@@ -329,7 +335,9 @@ def optimize_gradient_macro(
                     np.concatenate(member_mids)).to(device=device,
                                                      dtype=torch.float32)
                 local = parameters[owned]  # gather 出 [M]，autograd 边
-                mask_tensor = _EdgeGradientMask.apply(hard, local, slots, mids)
+                # pixel_dbu 随批传入：backward 把采样梯度换算回 DBU 单位。
+                mask_tensor = _EdgeGradientMask.apply(hard, local, slots, mids,
+                                                      pixel_dbu)
             else:
                 mask_tensor = hard  # 无梯度路径直通
             printed = model.forward_many(mask_tensor, conditions)  # 一次 FFT

@@ -551,3 +551,18 @@
   segment_midpoints 类型放宽为 | None；新增旗标契约测试（默认 None、
   请求才产出、两种请求轮廓逐位一致）。双 smoke 基线逐位不变，
   453 passed。
+
+- **梯度单位契约（用户审查）**：sampling midpoint 在 canvas/pixel 域而
+  位移参数是 DBU——∂x_canvas/∂d_dbu=1/pixel_dbu，旧 backward 返回
+  2·g_mid 等价把参数当 pixel 位移。修复：apply 增末位 pixel_dbu（ctx
+  普通属性），backward 返回 2·g_mid/pixel_dbu（2 与单位换算两件独立
+  事）；无 lr 补偿、参数/几何层保持 DBU。新增 pixel-size invariance
+  测试（pixel_dbu 1/2/4 → 方向一致、幅值 g、g/2、g/4）；公式测试改
+  pixel_dbu=4 非平凡值锁定 ÷4。两个子类化 forward 的测试代理同步签名。
+- **三个 gradient 基线**（gcd_30um [1,1]×10，同 config）：刚体中点
+  0.069138/iteration_limit（采样位置错误）→ 真实中点 0.134467/
+  invalid_geometry（state2 候选撞 zero_length_edge）→ 真实中点+单位
+  修正 0.106994/iteration_limit（两次复跑逐位；÷4 缩放经 Adam eps/
+  偏差校正瞬态改变早期微观轨迹，避开了退化候选）。Adam 对统一缩放
+  仅近似不变（eps=1e-8 非零、偏差校正期敏感）——印证用户"实际优化
+  影响往往不大但非零"的判断。454 passed；simple 逐位不变。

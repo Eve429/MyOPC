@@ -3,7 +3,8 @@
 ## 环境
 
 WSL2 / `~/miniconda3/envs/myopc312/bin/python`（3.12.0，CUDA 可见）。
-基线 14ab3e8（525 passed）→ 实施后 **526 passed**（+1：对齐几何 P1-1 回归）。
+基线 14ab3e8（525 passed）→ 实施 **526 passed**（+1：对齐几何 P1-1 回归）
+→ Rev 1.1 **527 passed**（+1：跨宏 seam 初始 transmission 一致性）。
 
 ## 命令与结果
 
@@ -26,6 +27,7 @@ git diff --check
 | REQ-B（二值一致性） | 同上内联 probe（[0, 64/255, 128/255, 1] → [F,F,T,T]） |
 | REQ-C（P1-1 对齐几何回归） | TestRealModel::test_real_cpu_updates_aligned_geometry（loss₁≠loss₀ 且 max\|Δp\|≈3.9e-4 > 1e-5；旧方案 <1e-6） |
 | 镜像/屏障/常数/曲率/patchwork 跟随 | _float64_reference init 换 2T−1；常数模型期望回归 T 监督（监督与初始化无关，纠正过一次误改）；曲率参考卷积输入换 soft₀ |
+| REQ-D（Rev 1.1，context 统一） | TestMacroSeamConsistency::test_context_matches_neighbor_state0（A context 的 B 区像素与 B 自身 state0 逐位相等，且值为 σ(β(2T−1))≠raw T）；P1-3 重构回归 = test_pixel_problem 全部 20 例一致性用例 |
 | 既有语义零回归 | batch 不变/跨 core 梯度和/计数/runner 12 例零改动通过 |
 
 ## 已知口径

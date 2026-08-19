@@ -412,3 +412,12 @@
   （max|Δp|≈3.9e-4）；smoke 重调 step_size=1.0（7952→6233，−21.6%）；
   全量 526 passed；commit ebce389 + 记录批。WSL myopc312 自跑；push 仍
   待网络可用（累计 8 commit 待推）。
+
+
+- Simple ILT P1-1 关闭三件套（用户审查结论）：① context 统一修复（4c5f5f1，
+  固定 context = σ(β(2T−1))，跨宏 seam 测试锁定，smoke 7880.69→6162.49/
+  binaryL2 2875）；② P1-3 性能修复（aa583a5，trainable_index_canvas 索引块
+  窗口化，O(宏像素)/调用 → O(core 窗口)）；③ 文档同步（CHG-20260818 规格/
+  测试报告加【已取代】标注、CHG-20260819 Rev 1.1 补 REQ-D 与两报告、
+  contracts/ilt.md transmission 单一定义、测试旧注释清理）。全量 527
+  passed；三个独立 commit。

@@ -32,7 +32,7 @@ git diff --check
 | TEST-002 | ::TestCoreMapping（计分恰一次、trainable 索引跨 core 一致 + target 对齐、公共栅格对照）+ ::TestPixelAlignment（整像素缩短合法 / 非整像素栅格前拒绝） |
 | TEST-003 | ::TestReconstruct（clear/opaque × 矩形/孔/凹/斜/多岛/全 0/全 1 回环、形状拒绝） |
 | TEST-004 | ::TestCorruption（格式名/版本/dtype/shape/切线损坏拒绝） |
-| TEST-005 | test_simple_ilt.py::TestParameterizationAndLoss（state0 恢复 <1e-8、常数模型手算、曲率 numpy 参考、0/1 有限、ownership 限定）+ ::TestConfigValidation |
+| TEST-005 | test_simple_ilt.py::TestParameterizationAndLoss（~~state0 恢复 <1e-8~~【2026-08-19 起为 state0 公式复算，见 CHG-20260819】、常数模型手算、曲率 numpy 参考、0/1 有限、ownership 限定）+ ::TestConfigValidation |
 | TEST-006 | ::TestStateAndBarrier（N+1/调用计数、float64 镜像逐 state、屏障无中途 step） |
 | TEST-007 | ::TestMacroBestAndBatch（4-core 数值表 macro-best ≠ 材料核局部最优、batch 1/2/4 不变） |
 | TEST-008 | ::TestCrossCoreGradient（avgpool 耦合模型 batch1/2 一致 + np.add.at spy、参数域形状） |
@@ -51,3 +51,5 @@ git diff --check
   跨 core 梯度）；batch1/2 结果一致 + spy 求和共同锁定语义。
 - logit 饱和性质：纯对齐几何一轮更新的参数变化低于记录精度，TEST-009
   采用非对齐几何（含分数覆盖格）作梯度入口。
+  【2026-08-19 已取代：OpenILT 2T−1 初始化后饱和消失，纯对齐几何一轮更新
+  可见（max|Δp|≈3.9e-4），该口径仅存历史；见 CHG-20260819。】

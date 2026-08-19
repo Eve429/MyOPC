@@ -118,7 +118,9 @@ LevelSet/CurvMulti/Multilevel 各自规格已就绪待批。随后 Phase 7
   → _ilt_workflow/入口/配置 → 文档报告）；525 passed；新增共享层修复
   （merge 空 macro 候选容忍）；**P1-1 修复（2026-08-19，ebce389）**：初始
   化切换 OpenILT 2T−1 方案，恢复内部 0/1 像素可优化性（斜率 4.8e-7 →
-  0.0707），smoke 重调 step_size=1.0（7952→6233）。LevelSet/CurvMulti/
+  0.0707），smoke 重调 step_size=1.0；Rev 1.1 收尾：固定 context 统一
+  σ(β(2T−1))（跨宏 seam 一致性测试）、trainable_index_canvas 窗口化
+  （P1-3）、历史文档【已取代】标注；终基线 7880.69→6162.49，527 passed。LevelSet/CurvMulti/
   Multilevel 规格已在 changes/active 待续。
 
 ### Phase 7: main 入口 + 收尾审计 — Status: pending

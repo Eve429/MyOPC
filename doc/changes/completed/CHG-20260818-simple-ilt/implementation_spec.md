@@ -147,6 +147,8 @@ ILT prepare 还 MUST 在栅格化前确认每个实际 macro/core ownership box 
 
 ### REQ-006
 
+> 【2026-08-19 已取代】本条初始化契约已被 `CHG-20260819-simple-ilt-openilt-init` 修订：现行为 `params = 2·T − 1`，state0 soft = σ(β(2T−1))，不再要求 1e-6 恢复；固定 context 同为 σ(β(2T−1))（监督目标仍 raw T）。本节以下文字为当时历史记录。
+
 Simple ILT MUST 保留 `target_u8/255` 的 fractional transmission coverage。设 `T=target_u8/255`，
 macro 参数初值 MUST 为 `logit(clamp(T, eps, 1-eps))/beta`，其中 `eps` 是仅用于避免严格 0/1
 产生无穷值的固定 float32 小量，不增加配置项；state 0 的 soft mask MUST 在绝对误差 `1e-6`
@@ -582,7 +584,7 @@ write ilt_plan only after all macros succeed
 T = macro ownership target_u8 / 255
 T_clamped = clamp(T, float32_eps, 1-float32_eps)
 macro_parameters = log(T_clamped/(1-T_clamped)) / beta
-assert abs(sigmoid(beta*macro_parameters)-T) <= 1e-6
+assert abs(sigmoid(beta*macro_parameters)-T) <= 1e-6  # 【已取代：见 REQ-006 标记】
 best_macro_loss = +inf
 
 for state in 0..N:
@@ -785,7 +787,7 @@ total、RSS/CUDA peak；本 change 只记录基线，不设硬阈值。
 ### TEST-005：Simple 参数化与 loss 精确公式
 
 - Given：由 0/0.25/0.5/0.75/1 coverage 量化得到的 `target_u8`、identity differentiable model 与手算小图。
-- Then：logit 初始化使 state0 soft 在 `1e-6` 内恢复 `target_u8/255`；四项 loss、ownership 选择、
+- Then：~~logit 初始化使 state0 soft 在 `1e-6` 内恢复 `target_u8/255`~~【已取代：state0 soft = σ(β(2T−1))，公式复算锁定】；四项 loss、ownership 选择、
   curvature on/off 逐值一致，严格 0/1 参数有限。
 - Covers：REQ-006。
 
@@ -916,7 +918,7 @@ CUDA 测试仅在 `torch.cuda.is_available()` 为 false 时 skip；CPU 核心 co
 - Data：新增 pixel problem/result v1；不读取 `00_PAST` NPZ，无旧数据兼容要求。
 - Archive：`00_PAST` 只读。
 - CLI：新增 `run_simple_ilt.py`，不恢复旧 `run_simpleilt.py` 参数兼容。
-- Numerical：Simple 核心 loss 与 OpenILT/PAST 同源；coverage-preserving logit 初始化、macro 同步
+- Numerical：Simple 核心 loss 与 OpenILT/PAST 同源；~~coverage-preserving logit 初始化~~【已取代：OpenILT 2T−1 初始化，见 CHG-20260819】、macro 同步
   N+1 状态、macro best、ownership-only loss 统计与 context gradient、具名条件是明确工程修正，
   不承诺与 OpenILT benchmark 逐值相同。
 
@@ -1020,3 +1022,4 @@ None.
 | 0.2 | 2026-08-19 | draft | 修正为 macro 唯一参数、跨 core 梯度累加、同步 N+1、macro best、coverage-preserving 初始化与实际 core 整像素限制 | 待用户审核 |
 | 0.3 | 2026-08-19 | approved | §14 补录 `main/run_single_pass.py`（PrepareRuntime 字段消费方，IF-001 迁移牵连，事实核对发现）；ILTStateRecord 的 stage/scale 字段经用户裁定保留；ilt_plan.json 须携带 merge/final-litho 兼容键记入实施约束 | 用户批准开发计划 |
 | 1.0 | 2026-08-19 | completed | 五阶段实施完成（5ad8ac0/54ab866/1539b6f/fefaea8/bdf86ac + 本报告批）；偏差与裁决见 development_report.md（含 merge 空 macro 候选容忍修复）；525 passed；smoke 基线见 test_report.md | 开发/测试报告 |
+| 1.1 | 2026-08-19 | completed | 标注 REQ-006/§10.2/TEST-005/COMP-001 的初始化描述已被 CHG-20260819 取代（正文保留历史） | 用户文档同步指令 |

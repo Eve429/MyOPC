@@ -9,6 +9,7 @@ from torch.nn import functional
 from layout import DbuBox, LayerSpec, RegionBatch
 from lithography import ICCAD13Lithography, ProcessCondition
 from opc.input.pixel import prepare_pixel_macro_problem
+from opc.input.raster import _center_padding
 from opc.iteration.ilt import (
     SimpleILTConfig,
     optimize_simple_macro,
@@ -92,7 +93,7 @@ class _DoseModel:
 
 
 class _IdentityModel(_DoseModel):
-    """恒等假光刻：printed = mask（state0 恢复检验用）。"""
+    """恒等假光刻：printed = mask（state0 公式检验用）。"""
 
     def __init__(self):
         super().__init__({"nominal": 1.0, "dose_max": 1.0, "defocus_min": 1.0})
@@ -205,7 +206,9 @@ def _float64_reference(problem, config, model):
             safe = trainable.clamp_min(0)
             local = flat[safe]
             soft = torch.sigmoid(beta * local)
-            mask = torch.where(trainable >= 0, soft, target)
+            # 与实现同款固定 context：初始 state0 transmission σ(β(2T−1))
+            context_soft = torch.sigmoid(beta * (target * 2.0 - 1.0))
+            mask = torch.where(trainable >= 0, soft, context_soft)
             printed = model.forward_many(mask, (
                 model.condition("nominal"), model.condition("dose_max"),
                 model.condition("defocus_min")))
@@ -261,7 +264,7 @@ class TestConfigValidation:
 
 
 class TestParameterizationAndLoss:
-    """logit 初始化与四项损失公式（TEST-005）。"""
+    """OpenILT 2T−1 初始化与四项损失公式（TEST-005）。"""
 
     def test_state0_soft_matches_openilt_initialization(self):
         """state0 soft = σ(β(2T−1))：恒等模型损失与 numpy 复算一致。"""
@@ -333,7 +336,7 @@ class TestParameterizationAndLoss:
             rel=1e-3, abs=1e-6)
 
     def test_strict_zero_one_parameters_finite(self):
-        """严格 0/1 target 的初始化经 eps 截断后参数有限。"""
+        """严格 0/1 target 的初值 ±1 参数有限。"""
         problem = _problem(kdb.Region(kdb.Box(4, 4, 76, 76)))  # 纯 0/1
         result = optimize_simple_macro(problem, _DoseModel(), _config())
         assert np.all(np.isfinite(result.best_parameters))
@@ -525,6 +528,79 @@ class TestCrossCoreGradient:
 def cpu_model():
     """共享一个真实 CPU ICCAD13 模型（资产加载昂贵）。"""
     return ICCAD13Lithography(device="cpu")
+
+
+class _MaskCaptureModel(_IdentityModel):
+    """记录每次 forward 输入 mask 的恒等模型（state0 画布捕获）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.captured = []
+
+    def forward_many(self, mask, conditions):
+        """克隆记录输入画布后透传恒等前向。"""
+        self.captured.append(mask.detach().clone())
+        return super().forward_many(mask, conditions)
+
+
+class TestMacroSeamConsistency:
+    """macro seam 初始 transmission 一致性（P1-1 后续修复）。"""
+
+    @staticmethod
+    def _state0_raster(problem):
+        """运行一轮优化并返回 state0 mask 在 query 栅格上的重组数组。"""
+        model = _MaskCaptureModel()
+        optimize_simple_macro(
+            problem, model,
+            _config(iterations=1, batch_size=problem.macro.core_count))
+        grid = np.full(problem.query_shape, np.nan, dtype=np.float32)
+        for core_index in range(problem.macro.core_count):
+            _, r0, r1, c0, c1 = problem._context_window(core_index)
+            low_y, _, low_x, _ = _center_padding(r1 - r0, c1 - c0, 256)
+            canvas = model.captured[0][core_index].numpy()  # state0 该 core
+            grid[r0:r1, c0:c1] = canvas[
+                low_y:low_y + (r1 - r0), low_x:low_x + (c1 - c0)]
+        assert not np.isnan(grid).any()  # query 全部像素恰被 core 窗口覆盖
+        return grid
+
+    def test_context_matches_neighbor_state0(self):
+        """A 的 context 中属于 B 的像素与 B 自身 state0 逐位一致。"""
+        # 2×1 macro，矩形横跨 x=80 切线：B 区像素在 A 画布中是固定 context
+        macros = plan_macros_local(
+            DbuBox(0, 0, 160, 80), macro_grid=(2, 1), core_size_dbu=40,
+            context_dbu=20, pixel_dbu=4, canvas_pixels=256)
+        problems = []
+        for macro in macros:  # 相邻两宏各自独立 problem（独立 macro 语义）
+            batch = RegionBatch(
+                {LAYER: kdb.Region(kdb.Box(20, 20, 140, 60))},
+                macro.query_box)
+            problems.append(prepare_pixel_macro_problem(
+                batch, LAYER, "clear", macro))
+        grid_a = self._state0_raster(problems[0])
+        grid_b = self._state0_raster(problems[1])
+        pixel = 4
+        beta = float(_DEFAULTS["sigmoid_steepness"])
+        box = problems[1].macro.ownership_box  # B 的 ownership
+        b_query = problems[1].macro.query_box
+        b_r0 = (box.bottom - b_query.bottom) // pixel
+        b_c0 = (box.left - b_query.left) // pixel
+        # A 的 query 只覆盖 B 靠 seam 的一侧：比较 B∩A-query 的重叠带
+        a_query = problems[0].macro.query_box
+        a_r0 = max((box.bottom - a_query.bottom) // pixel, 0)
+        a_c0 = max((box.left - a_query.left) // pixel, 0)
+        rows = min((box.top - a_query.bottom) // pixel, grid_a.shape[0]) - a_r0
+        cols = min((box.right - a_query.left) // pixel, grid_a.shape[1]) - a_c0
+        assert rows > 0 and cols > 0  # 重叠带非空（context 覆盖 seam）
+        seen_a = grid_a[a_r0:a_r0 + rows, a_c0:a_c0 + cols]
+        seen_b = grid_b[b_r0:b_r0 + rows, b_c0:b_c0 + cols]
+        # 核心断言：A 的固定 context 值 == B 自身 trainable 的 state0 值
+        assert np.array_equal(seen_a, seen_b)
+        # 判别性：一致值是 σ(β(2T−1)) 而非原始 T（T=1 格为 ≈0.982 而非 1.0）
+        target = (problems[1].target_u8[b_r0:b_r0 + rows, b_c0:b_c0 + cols]
+                  .astype(np.float64) / 255.0)
+        expected = 1.0 / (1.0 + np.exp(-beta * (2.0 * target - 1.0)))
+        assert np.allclose(seen_b, expected.astype(np.float32), atol=1e-6)
+        assert float(seen_b.max()) < 1.0
 
 
 class TestRealModel:

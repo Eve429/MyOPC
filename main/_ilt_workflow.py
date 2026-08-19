@@ -56,7 +56,9 @@ class ILTMethod:
     """注入公共像素 ILT 生命周期的最小方法差异点（仅当前真实调用方）。
 
     optimize_macro 返回的 ILTMacroResult 对本层只读消费 best/binary/记录；
-    config_type 必须可被 load_config 直接注册（get_type_hints 解析）。
+    config_type 必须可被 load_config 直接注册（get_type_hints 解析），
+    且鸭子契约须暴露 batch_size（终评分批）与 sigmoid_steepness（固定
+    context 的 transmission 定义 σ(β(2T−1))）。
     """
 
     method_name: str                  # summary/产物稳定标识
@@ -145,12 +147,18 @@ def prepare_pixel_problems(layout: LayoutConfig,
 
 
 def _binary_canvas(problem: PixelMacroProblem, binary_mask: np.ndarray,
-                   core_index: int) -> np.ndarray:
-    """组装终评画布：trainable 像素取 best 二值，context 直通 target。"""
+                   core_index: int, beta: float) -> np.ndarray:
+    """组装终评画布：trainable 像素取 best 二值，context 取初始 soft。
+
+    固定 context 与训练同一套 transmission 定义 σ(β(2T−1))——终评与
+    优化的宏观边界光学一致；监督/指标目标仍是 raw T。
+    """
     target = problem.target_canvas(core_index).astype(np.float32) / 255.0
     trainable = problem.trainable_index_canvas(core_index)
     values = binary_mask.reshape(-1)[np.maximum(trainable, 0)]
-    return np.where(trainable >= 0, values, target).astype(np.float32)
+    context_soft = 1.0 / (1.0 + np.exp(-beta * (2.0 * target - 1.0)))
+    return np.where(trainable >= 0, values,
+                    context_soft).astype(np.float32)
 
 
 def _evaluate_best_binary(problem: PixelMacroProblem, result,
@@ -160,13 +168,14 @@ def _evaluate_best_binary(problem: PixelMacroProblem, result,
     core_count = problem.macro.core_count
     binary_l2 = 0  # 二值 L2 累计
     pvband = 0  # 二值 PVBand 累计
+    beta = float(config.sigmoid_steepness)  # 固定 context 的 transmission 定义
     with torch.no_grad():  # 纯推理终评
         for batch_start in range(0, core_count, config.batch_size):
             core_indices = list(range(
                 batch_start,
                 min(batch_start + config.batch_size, core_count)))
             masks = np.stack([
-                _binary_canvas(problem, result.binary_mask, c)
+                _binary_canvas(problem, result.binary_mask, c, beta)
                 for c in core_indices])
             targets = np.stack(
                 [problem.target_canvas(c) for c in core_indices])

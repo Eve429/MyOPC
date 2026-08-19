@@ -143,8 +143,13 @@ def optimize_simple_macro(
                 local.requires_grad_(True)
             soft = torch.sigmoid(beta * local.view(
                 batch_count, canvas_pixels, canvas_pixels))
-            # trainable 像素可微；macro 外 context/padding 直通 target
-            mask = torch.where(index3 >= 0, soft, target_tensor)
+            # 固定 context 统一为初始版图的 state0 transmission σ(β(2T−1))：
+            # 由常量 target 推导、无梯度边。与 trainable 像素同一套定义，
+            # 消除 macro seam 上人为的 ~1.8% transmission 跳变，并保证邻宏
+            # 在本宏画布中的初始值恰为其自身 state0（监督目标仍是 raw T）。
+            context_soft = torch.sigmoid(
+                beta * (target_tensor * 2.0 - 1.0)).detach()
+            mask = torch.where(index3 >= 0, soft, context_soft)
             printed = model.forward_many(mask, conditions)  # 一次共享 FFT
             nominal_l2, process_l2, pvband_loss = owned_continuous_losses(
                 printed["nominal"], printed["dose_max"],

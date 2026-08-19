@@ -21,7 +21,7 @@ device = "auto"
 
 [simple_ilt]
 iterations = 1
-step_size = 10.0
+step_size = 1.0
 sigmoid_steepness = 4.0
 weight_process_l2 = 1.0
 weight_pvband = 0.5

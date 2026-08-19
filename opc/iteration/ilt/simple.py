@@ -89,18 +89,13 @@ def optimize_simple_macro(
     mrow0 = (box.bottom - query.bottom) // pixel_dbu
     mcol0 = (box.left - query.left) // pixel_dbu
     target_ownership_u8 = problem.target_u8[mrow0:mrow0 + hm, mcol0:mcol0 + wm]
-    # coverage-preserving 初始化：logit(clamp(T, eps, 1-eps))/β。严格 0/1
-    # 的 eps 截断只为避免 log(0) 无穷；state0 soft 在 1e-6 内恢复 T。
+    # OpenILT 初始化：params = 2·T − 1（P1-1 修复）。端点参数 ±1 远离
+    # 机器精度区，0/1 像素 sigmoid 斜率 ≈ β·σ(β)σ(−β)（β=4 时 0.0707），
+    # 内部像素保持可优化——拓扑变化/开孔/SRAF 的前提。代价：state0
+    # soft = σ(β(2T−1)) 不再精确等于 T，但其二值化（threshold 0.5）仍与
+    # T ≥ 0.5 逐格一致（σ(β(2T−1)) ≥ 0.5 ⟺ T ≥ 0.5）。
     target_float = target_ownership_u8.astype(np.float32) / 255.0
-    eps = float(torch.finfo(torch.float32).eps)
-    clamped = np.clip(target_float, eps, 1.0 - eps)
-    flat_parameters = (np.log(clamped / (1.0 - clamped)) / beta).astype(
-        np.float32).reshape(-1)
-    # 构造不变量：初始化必须恢复覆盖率（失败说明数值契约被破坏）。
-    init_soft = torch.sigmoid(
-        beta * torch.from_numpy(flat_parameters)).numpy()
-    if float(np.max(np.abs(init_soft - target_float.reshape(-1)))) > 1e-6:
-        raise ValueError("logit 初始化未在 1e-6 内恢复目标覆盖率")
+    flat_parameters = (2.0 * target_float - 1.0).reshape(-1)
     # 三工艺角一次前向（同一 state 全部 batch 共享同一 FFT 约定）
     conditions = (model.condition("nominal"), model.condition("dose_max"),
                   model.condition("defocus_min"))

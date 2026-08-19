@@ -22,7 +22,6 @@ from opc.iteration.ilt._common import (
 LAYER = LayerSpec(1, 0)
 # 廉价契约：80² 版图、单 macro、core 40、context 20、pixel 4 → 2×2 core。
 BOUNDS = DbuBox(0, 0, 80, 80)
-_EPS32 = float(torch.finfo(torch.float32).eps)
 _DEFAULTS = {"iterations": 1, "step_size": 0.5, "sigmoid_steepness": 4.0,
              "weight_process_l2": 1.0, "weight_pvband": 0.5,
              "curvature_weight": 0.0, "mask_threshold": 0.5, "batch_size": 2}
@@ -52,6 +51,11 @@ def _problem(region, macro=None, polarity="clear"):
 def _config(**overrides):
     """按默认值组装 Simple ILT 配置。"""
     return SimpleILTConfig(**{**_DEFAULTS, **overrides})
+
+
+def _soft0(target, beta=4.0):
+    """OpenILT 初始化的 state0 soft 掩膜 σ(β(2T−1))。"""
+    return 1.0 / (1.0 + np.exp(-beta * (2.0 * np.asarray(target) - 1.0)))
 
 
 class _StubConfig:
@@ -185,9 +189,7 @@ def _float64_reference(problem, config, model):
         trainable = torch.from_numpy(
             problem.trainable_index_canvas(core_index).astype(np.int64))
         canvases.append((target, ownership, trainable))
-    clipped = np.clip(t_own, _EPS32, 1 - _EPS32)
-    parameters = torch.tensor(
-        np.log(clipped / (1.0 - clipped)) / beta, dtype=torch.float64)
+    parameters = torch.tensor(2.0 * t_own - 1.0, dtype=torch.float64)
     best_loss = float("inf")
     best = parameters.detach().clone()
     best_state = 0
@@ -261,12 +263,23 @@ class TestConfigValidation:
 class TestParameterizationAndLoss:
     """logit 初始化与四项损失公式（TEST-005）。"""
 
-    def test_state0_recovers_target_within_1e_6(self):
-        """恒等模型下 state0 全部损失 ≈ 0：初始化恢复 fractional coverage。"""
+    def test_state0_soft_matches_openilt_initialization(self):
+        """state0 soft = σ(β(2T−1))：恒等模型损失与 numpy 复算一致。"""
+        # 二值一致性（REQ-B）：threshold 0.5 下 soft 与 T≥0.5 同判
+        probe = _soft0(np.array([0.0, 64.0 / 255.0, 128.0 / 255.0, 1.0]))
+        assert list(probe >= 0.5) == [False, False, True, True]
         problem = _problem(kdb.Region(kdb.Box(8, 8, 41, 48)))  # 含 1/4 覆盖格
-        result = optimize_simple_macro(problem, _IdentityModel(), _config())
-        assert result.records[0].total_loss < 1e-8
-        assert result.records[0].pvband_loss == 0.0  # 三条件相同
+        config = _config(weight_process_l2=1.0, weight_pvband=0.5)
+        result = optimize_simple_macro(problem, _IdentityModel(), config)
+        expected = 0.0
+        for core in range(problem.macro.core_count):
+            target = problem.target_canvas(core).astype(np.float64) / 255.0
+            own = problem.ownership_canvas(core)
+            expected += float(((_soft0(target) - target) ** 2 * own).sum())
+        record = result.records[0]
+        # 恒等模型：nominal=Σd²、process=2Σd²、pvband=0 → total=3Σd²
+        assert record.total_loss == pytest.approx(3.0 * expected, rel=1e-5)
+        assert record.pvband_loss == 0.0  # 三条件相同
 
     def test_hand_computed_losses_constant_model(self):
         """常数模型：nominal/process/pvband 与 numpy 复算逐项一致。"""
@@ -274,11 +287,13 @@ class TestParameterizationAndLoss:
         model = _ConstantModel(0.5)
         config = _config(weight_process_l2=1.0, weight_pvband=0.5)
         result = optimize_simple_macro(problem, model, config)
-        expected_nom = expected_proc = 0.0
+        expected_nom = 0.0
         for core_index in range(problem.macro.core_count):
             target = problem.target_canvas(core_index).astype(
                 np.float64) / 255.0
             own = problem.ownership_canvas(core_index)
+            # 监督目标是 T：常数输出与 mask 无关，损失 = (c−T)²
+            # 与初始化方案无关（state0 soft 只影响梯度路径）
             expected_nom += float(((0.5 - target) ** 2 * own).sum())
         expected_proc = 2.0 * expected_nom  # 两个 process 条件同常数
         record = result.records[0]
@@ -300,13 +315,14 @@ class TestParameterizationAndLoss:
         for core_index in range(problem.macro.core_count):
             target = problem.target_canvas(core_index).astype(
                 np.float64) / 255.0  # [256,256]
+            soft = _soft0(target)  # state0 掩膜是 σ(β(2T−1))
             own = problem.ownership_canvas(core_index)
             # 与实现同式：无 padding valid 卷积（相关形式）+ ownership 内圈
             convo = np.zeros((254, 254))
             for dy in range(3):
                 for dx in range(3):
-                    convo += kernel[dy, dx] * target[dy:dy + 254,
-                                                     dx:dx + 254]
+                    convo += kernel[dy, dx] * soft[dy:dy + 254,
+                                                   dx:dx + 254]
             expected += float(((convo ** 2)
                                * own[1:-1, 1:-1]).sum())
         assert result.records[0].curvature_loss == pytest.approx(
@@ -411,7 +427,7 @@ class TestMacroBestAndBatch:
         assert model.calls == 12
 
         def core_loss(core_index, value):
-            """该 core 在常数输出下的 ownership 损失。"""
+            """该 core 在常数输出下的 ownership 损失（监督为 T）。"""
             target = problem.target_canvas(core_index).astype(
                 np.float64) / 255.0
             own = problem.ownership_canvas(core_index)
@@ -516,13 +532,18 @@ class TestRealModel:
 
     @staticmethod
     def _small_problem():
-        """单 core 小问题：非对齐边提供分数覆盖格（梯度入口）。
-
-        logit 初始化下严格 0/1 像素的 sigmoid 斜率约 β·eps（饱和），
-        有效梯度经分数覆盖格进入优化——几何须含非整像素边界。
+        """单 core 小问题：非对齐边保留分数覆盖格（历史：logit 初始化
+        时期它是唯一梯度入口；OpenILT 2T−1 初始化后不再必要，保留作
+        分数格路径的回归几何）。
         """
         macro = _macro(core_size_dbu=80)
         return _problem(kdb.Region(kdb.Box(21, 20, 61, 60)), macro=macro)
+
+    @staticmethod
+    def _aligned_problem():
+        """单 core 纯对齐问题：无分数覆盖格（P1-1 判别几何）。"""
+        macro = _macro(core_size_dbu=80)
+        return _problem(kdb.Region(kdb.Box(20, 20, 60, 60)), macro=macro)
 
     def test_real_cpu_update_finite_and_effective(self, cpu_model):
         """CPU 一次更新：全部有限且至少一个像素参数改变。"""
@@ -533,9 +554,31 @@ class TestRealModel:
         for record in result.records:
             assert np.isfinite(record.total_loss)
         assert np.all(np.isfinite(result.best_parameters))
-        assert np.count_nonzero(result.records[1].total_loss
-                                != result.records[0].total_loss) >= 0
         assert result.records[1].total_loss != result.records[0].total_loss
+
+    def test_real_cpu_updates_aligned_geometry(self, cpu_model):
+        """P1-1 回归：纯对齐几何（无分数格）一轮更新即可观测。
+
+        旧 logit+eps 初始化下 0/1 像素 sigmoid 斜率 ≈ β·eps（饱和），
+        该几何的 state1 损失与 state0 完全相等；OpenILT 2T−1 初始化
+        斜率 ≈ β·σ(β)σ(−β)（β=4 时 0.0707），更新必须可见。
+        """
+        problem = self._aligned_problem()
+        config = _config(iterations=1, batch_size=1)
+        result = optimize_simple_macro(problem, cpu_model, config)
+        assert result.records[1].total_loss != result.records[0].total_loss
+        # best 参数相对初值 2T−1 的最大位移须显著高于饱和区：实测新方案
+        # ≈3.9e-4（真实光刻链路局部灵敏度低于线性 stub），旧 logit+eps
+        # 初始化下 <1e-6——阈值取 1e-5 同时远离两者。
+        pixel = problem.macro.pixel_dbu
+        query = problem.macro.query_box
+        box = problem.macro.ownership_box
+        hm, wm = problem.ownership_shape
+        r0 = (box.bottom - query.bottom) // pixel
+        c0 = (box.left - query.left) // pixel
+        initial = (2.0 * problem.target_u8[r0:r0 + hm, c0:c0 + wm]
+                   .astype(np.float32) / 255.0 - 1.0)
+        assert float(np.abs(result.best_parameters - initial).max()) > 1e-5
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="无 CUDA")
     def test_real_cuda_matches_cpu(self, cpu_model):

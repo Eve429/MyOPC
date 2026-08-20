@@ -21,7 +21,7 @@ from opc.input import MaskPolarity  # 极性枚举（合法值集的唯一事实
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
 # 求解器 DBU 输入包（resolve 构造目标）
-from opc.iteration.ilt import SimpleILTConfig
+from opc.iteration.ilt import LevelSetILTConfig, SimpleILTConfig
 from opc.iteration.mbopc import (
     GradientMBOPCConfig,
     SimpleMBOPCConfig,
@@ -202,6 +202,7 @@ CONFIG_SECTIONS: dict[type, str] = {
     MBOPCConfig: "mbopc",
     GradientConfig: "gradient",
     SimpleILTConfig: "simple_ilt",
+    LevelSetILTConfig: "levelset_ilt",
     SinglePassConfig: "single_pass",
     ValidationConfig: "iteration",
     OutputConfig: "output",

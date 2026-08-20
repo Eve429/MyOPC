@@ -1,0 +1,35 @@
+# corners_unit smoke：单 macro LevelSet ILT 两轮更新（N=2 → 3 个评价状态）。
+# 注意整像素契约：该版图 bbox 1900×1900 是 pixel 4 的整数倍（非 8），
+# core 512 + 2×context 256 恰满 256 像素画布；step 取旧 LevelSetConfig 默认。
+
+[layout]
+layout = "../TestReticle/corners_unit_clear.gds"
+top_cell = "TOP"
+layer = 11
+datatype = 0
+polarity = "clear"
+
+[partition]
+macro_grid = [1, 1]
+core_size_nm = 512
+context_nm = 256
+
+[lithography]
+pixel_nm = 4
+canvas_pixels = 256
+device = "auto"
+
+[levelset_ilt]
+iterations = 2
+step_size = 0.2
+weight_process_l2 = 1.0
+weight_pvband = 0.5
+curvature_weight = 0.0
+batch_size = 8
+
+[output]
+save_final_lithography = true
+show_progress = true
+work_dir = "../output/levelset_ilt"
+final_layout = "../output/levelset_ilt/corners_unit_levelset_ilt.gds"
+final_cell_mode = "single_cell"

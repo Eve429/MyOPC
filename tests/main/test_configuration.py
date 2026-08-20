@@ -206,6 +206,46 @@ class TestStrictness:
             load_config(_write(tmp_path, neither), PartitionConfig)
 
 
+class TestLevelSetSection:
+    """[levelset_ilt] 段注册与严格解析（CHG-20260818-levelset IF-003）。"""
+
+    _SECTION = """
+[levelset_ilt]
+iterations = 2
+step_size = 0.2
+weight_process_l2 = 1.0
+weight_pvband = 0.5
+curvature_weight = 0.0
+batch_size = 4
+"""
+
+    def test_section_parses_to_config(self, tmp_path):
+        """合法段解析为 LevelSetILTConfig（全部字段无默认）。"""
+        from opc.iteration.ilt import LevelSetILTConfig
+        path = _write(tmp_path, _FULL_TOML + self._SECTION)
+        config, = load_config(path, LevelSetILTConfig)
+        assert config.iterations == 2
+        assert config.step_size == pytest.approx(0.2)
+        assert config.batch_size == 4
+        assert configuration.CONFIG_SECTIONS[LevelSetILTConfig] == "levelset_ilt"
+
+    def test_missing_required_key_fails(self, tmp_path):
+        """缺 step_size 必填键在加载期失败。"""
+        from opc.iteration.ilt import LevelSetILTConfig
+        text = _FULL_TOML + self._SECTION.replace("step_size = 0.2\n", "")
+        with pytest.raises(ValueError,
+                           match=r"\[levelset_ilt\] 缺少必填键：\['step_size'\]"):
+            load_config(_write(tmp_path, text), LevelSetILTConfig)
+
+    def test_bool_rejected_for_iterations(self, tmp_path):
+        """iterations 传 bool 冒充 int 在加载期失败。"""
+        from opc.iteration.ilt import LevelSetILTConfig
+        text = _FULL_TOML + self._SECTION.replace(
+            "iterations = 2", "iterations = true")
+        with pytest.raises(ValueError, match="iterations"):
+            load_config(_write(tmp_path, text), LevelSetILTConfig)
+
+
 class TestPaths:
     """路径三态（§24.9）。"""
 

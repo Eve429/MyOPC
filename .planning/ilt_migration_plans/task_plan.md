@@ -2,51 +2,71 @@
 
 ## Goal
 
-基于当前 `2fa75ea` 源码架构与可核验参考实现，为若干 ILT 方法分别编写可由另一名 AI 独立实施的 Markdown 规格；首个方法同时冻结后续方法复用所需的最小兼容契约。
+基于已完成的 SimpleILT 实现，扩展 ILT 方法族。后续方法不重新设计 ILT 框架，而是在已有 ILT runtime、problem、result、evaluation 契约基础上增加新的优化状态和算法后端。
+
+当前迁移顺序：SimpleILT（已完成） → LevelSetILT → CurvMultiILT → MultilevelILT。
 
 ## Phases
 
-### Phase 1：当前架构与既有契约核对 — Status: complete
+### Phase 1：ILT 公共契约冻结 — Status: complete
 
-- 读取当前配置、光刻、栅格、评价、MB-OPC workflow、文档契约和测试。
-- 明确 ILT 可复用边界与不得反向依赖的模块。
+- 已由 SimpleILT 冻结 ILT 生命周期、输入输出、loss、evaluation、result 基础接口。
+- 公共层只负责数据生命周期和 workflow，不管理具体优化变量。
+- 禁止复用 MB-OPC 的 SegmentBatch、segment owner、edge reconstruction 等边段优化接口。
 
-### Phase 2：参考 ILT 方法盘点 — Status: complete
+### Phase 2：LevelSetILT 后端迁移 — Status: pending
 
-- 核对 OpenILT 中各 ILT 方法的算法、输入输出、状态、依赖和测试资产。
-- 只选择源码事实足够、与当前项目目标相符的迁移候选。
+- 基于 SimpleILT 现有框架新增 LevelSet 优化状态。
+- 重点实现：
+  - phi(SDF) 初始化。
+  - phi 作为优化变量的生命周期管理。
+  - phi→binary mask 转换。
+  - surrogate backward：`-|grad(phi)| * upstream`。
+  - Adam 优化流程。
+- 不重新设计 ILT workflow、loss、evaluation 和结果管理。
 
-### Phase 3：迁移顺序与兼容性决策 — Status: complete
+### Phase 3：LevelSet 工程化验证 — Status: pending
 
-- 确定首个方法及其最小公共契约。
-- 明确每个后续方法复用什么、专有内容放在哪里、哪些内容不迁移。
+- 验证 LevelSet 与 SimpleILT 使用相同 target 时的数据契约一致性。
+- 验证 SDF 初始化只执行一次。
+- 验证 batch size 不改变单样本优化结果。
+- 验证 core/macro 边界 seam 风险。
 
-### Phase 4：分别编写 implementation spec — Status: complete
+### Phase 4：后续 ILT 方法扩展 — Status: pending
 
-- 每个方法单独一个 Markdown。
-- 使用 `doc/implementation_spec_template.md` 的结构，写清具体文件、符号、数据契约、算法、测试与验收。
-
-### Phase 5：交叉审查与交付 — Status: complete
-
-- 检查规格间接口一致性、无过度抽象、无未披露假设。
-- 检查只产生文档与规划记录，不修改业务代码。
+- CurvMultiILT：增加多尺度控制网格和曲率约束。
+- MultilevelILT：增加多级参数化和尺度调度。
+- 后续方法只能复用已有真实公共接口，不提前抽象不存在的需求。
 
 ## Result
 
-- 已生成四份独立 draft implementation spec。
-- 当前业务基线 446 passed；文档静态检查通过。
-- `opc/input/grid.py` 的外部/并发注释改动已隔离，未由本任务修改或纳入计划提交。
+- SimpleILT 已作为 ILT 基准实现完成。
+- 后续开发重点由“建立 ILT 框架”转为“增加 ILT 优化后端”。
 
 ## Constraints
 
-- 本轮不实施 ILT，不修改 `layout/`、`geometry/`、`00_PAST/`。
-- 无法从源码确认的产品选择写入 Blocking Open Questions，不自行决定。
-- 计划必须以当前 HEAD 为基线，不能沿用旧目录或已删除接口。
+- ILT 不复用 MB-OPC MacroProblem、SegmentBatch、edge owner 语义。
+- LevelSet 不允许每次 iteration 重新计算 SDF。
+- LevelSet 不直接加入 EPE 等边段指标，首版保持像素级评价体系。
+- 不假设 core 独立优化天然无 seam，需要明确边界处理策略。
+- 无法确认的算法选择写入 Blocking Open Questions，不自行决定。
 
-## Errors Encountered
+## Implementation Rules
 
-| Error | Attempt | Resolution |
-|---|---|---|
-| PowerShell 下把 `00_PAST/tests/opc/test_*ilt.py` 作为 rg 路径导致 Windows 路径错误，命令退出 1 | 1 | 后续把目录作为搜索根并用 `-g 'test_*ilt.py'` 过滤，不重复该写法 |
-| 全量 pytest 首次只给 1 秒 timeout，进程被工具终止且 stdout 收尾报 OSError | 1 | 这是调用参数错误；下一次使用足够 timeout 完整执行，不把该结果当测试失败 |
-| PowerShell 再次把带 `*` 的多级路径直接交给 rg，产生 Windows 路径错误；其余审查命令继续完成 | 1 | 后续只把目录交给 rg 并使用 `-g` 过滤；不把该输出当占位符审查结果 |
+- 优化变量必须由算法模块自身定义：
+  - SimpleILT：mask parameter。
+  - LevelSetILT：phi field。
+  - Multi-scale ILT：对应控制网格参数。
+- 公共接口只管理：target、process condition、loss、iteration record、result persistence。
+- Result 类型保持中性，避免所有方法复用 SimpleILTResult 导致耦合。
+
+## Verification
+
+LevelSet implementation spec 必须包含：
+
+- 算法正确性测试。
+- backward 稳定性测试。
+- SDF 初始化测试。
+- batch consistency 测试。
+- boundary/seam 测试。
+- 与 SimpleILT 收敛趋势对比测试。

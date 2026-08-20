@@ -1,8 +1,8 @@
 # Contract — ilt
 
 像素型 ILT：优化变量是宏 ownership 像素参数（不经过 SegmentBatch/owner/
-边段重建）。当前实现为 Simple ILT 与 LevelSet ILT；共享问题/结果/workflow
-契约供后续 CurvMulti、Multilevel 复用。
+边段重建）。当前实现为 Simple、LevelSet 与 CurvMulti；共享问题/结果/
+workflow 契约供后续 Multilevel 复用。
 
 ## 输入与数据契约
 
@@ -107,7 +107,54 @@ optimize_levelset_macro(problem, model, config, *, pixel_nm=1.0,
   `step_size=3.2nm` 作为 OpenILT `4nm/pixel × 0.8` 的尺度起点，不将该值
   宣称为最终最优参数。
 
+## CurvMulti 求解器（`opc/iteration/ilt/curvmulti.py`）
+
+```python
+class CurvMultiConfig:  # [curvmulti_ilt] 段直接注册（11 字段，无派生换算）
+    scales / iterations_per_stage / step_size / smoothing_kernel /
+    sigmoid_steepness / sigmoid_offset / weight_process_l2 /
+    weight_pvband / curvature_weight / mask_threshold / batch_size
+
+optimize_curvmulti_macro(problem, model, config, *,
+                        on_tiles_completed=None) -> ILTMacroResult
+build_curvmulti_final_context_canvas(problem, core_index, config)
+```
+
+语义保证：
+
+- **自含配置（DEC）**：不建共享 ILTConfig 两段式；optimizer 写死
+  `torch.optim.SGD`；`scales` 为变长 `tuple[int, ...]`（TOML 列表经
+  `_parse_scalar` 变长元组分支转换），严格递减且以 1 结尾。
+- **参数域**：宏 ownership `[Hm,Wm]`（与 Simple flat_parameters/LevelSet
+  phi 同域）；scale=s 时控制网格 `[Hm/s,Wm/s]` 为 SGD 参数，整除与
+  最粗网格 ≥ smoothing_kernel 在入口前置校验。初值直接用 [0,1] target
+  （OpenILT offset=0.5 对称软边；无 logit/SDF 变换）。
+- **可微链**：控制网格 → `smooth_sigmoid_mask`（avg_pool k×k 零补边 →
+  σ(β(x−offset))）→ `resize_image(nearest)` 上采样回全分辨率 → 经
+  `trainable_index_canvas` gather 进各 core 画布。光刻恒在完整物理网格
+  执行（粗网格只减参数自由度）。
+- **stage 转移（REQ-003）**：每 stage 独立 SGD；stage 参考
+  `resize(area)` 保覆盖率（仅首 stage 使用）、跨 stage 参数
+  `resize(nearest)` warm-start 不引入新灰度；不继承 optimizer/图。
+- **曲率作用于 nominal wafer（DEC，与 Simple/LevelSet 的 mask 曲率是
+  本方法的算法差异）**：`curvature_loss(printed["nominal"], ownership)`，
+  ownership-only 计分；curvature_weight=0 不构建卷积。
+- **可动域（DEC）**：不迁移旧 optimization_mask；macro ownership 即
+  可动域，context 固定（三值语义同 Simple：真实 context σ(β(2T−1))、
+  padding 恒 0；`build_curvmulti_final_context_canvas` 与 Simple helper
+  逐值一致）。
+- **宏同步屏障**：同 state 全 core/batch 经同一控制张量前向（快照语义）、
+  梯度跨批累加、屏障后恰一次 SGD step；state 编号跨 stage 单调连续。
+- **records/best**：`ILTStateRecord` 写 stage_index/stage_state_index/scale
+  真值；best 为全部已评价状态严格更低（平局保早），best_parameters =
+  best 控制网格 nearest 上采样到 `[Hm,Wm]`（float32）。
+
+`_common` 新增 `resize_image`（[B,H,W]、area/nearest）与
+`smooth_sigmoid_mask`（零补边均值池化 + 带偏移 sigmoid），与具体方法无关。
+
 ## 公共 workflow（`main/_ilt_workflow.py`）
+
+
 
 `ILTMethod(method_name/config_type/optimize_macro/evaluated_states/
 build_fixed_context_canvas)` 五字段注入；`run_ilt_workflow` 负责 prepare、逐宏
@@ -117,7 +164,8 @@ build_fixed_context_canvas)` 五字段注入；`run_ilt_workflow` 负责 prepare
 
 入口：`python main/run_simple_ilt.py [config.toml]`（默认
 `config/simple_ilt.toml`）；`python main/run_levelset_ilt.py [config.toml]`
-（默认 `config/levelset_ilt.toml`）。
+（默认 `config/levelset_ilt.toml`）；`python main/run_curvmulti_ilt.py
+[config.toml]`（默认 `config/curvmulti_ilt.toml`）。
 
 ## 已知限制
 
@@ -128,14 +176,17 @@ build_fixed_context_canvas)` 五字段注入；`run_ilt_workflow` 负责 prepare
 
 ## 后续方法入口
 
-CurvMulti/Multilevel 规格见
-`doc/changes/active/CHG-20260818-{curvmulti,multilevel}-ilt/`；实施须以本契约为
-基础零修改或向后兼容扩展共享层。
+Multilevel 规格见
+`doc/changes/active/CHG-20260818-multilevel-ilt/`；实施须以本契约为
+基础零修改或向后兼容扩展共享层（CurvMulti 已交付，见
+`doc/changes/completed/CHG-20260818-curvmulti-ilt/`）。
 
 ## 事实核对锚点
 
 `tests/opc/input/test_pixel_problem.py`、`tests/opc/iteration/test_simple_ilt.py`、
 `tests/opc/iteration/test_levelset_ilt.py`、
 `tests/opc/iteration/test_levelset_physical_units.py`、
-`tests/main/test_simple_ilt_runner.py`、`tests/main/test_levelset_ilt_runner.py`；
+`tests/opc/iteration/test_curvmulti_ilt.py`、
+`tests/main/test_simple_ilt_runner.py`、`tests/main/test_levelset_ilt_runner.py`、
+`tests/main/test_curvmulti_ilt_runner.py`；
 smoke `config/simple_ilt.toml`、`config/levelset_ilt.toml`。

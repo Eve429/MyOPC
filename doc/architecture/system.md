@@ -14,8 +14,8 @@
 | `lithography/` | ICCAD13 Hopkins 模型（`iccad13.py`）与求解器消费的薄契约（`contracts.py`） | 版图、栅格化、评价指标 |
 | `evaluation/` | L2/PVBand/EPE 三项指标（`metrics.py`） | 光刻前向、迭代决策 |
 | `opc/iteration/mbopc/` | MB-OPC 求解器（simple 离散 + gradient 梯度） | 光刻实现、合并、进度库 |
-| `opc/iteration/ilt/` | ILT 求解器（Simple sigmoid 像素优化 + LevelSet SDF/STE/宏 Adam + 共享 record/result/loss） | 光刻实现、合并、进度库 |
-| `main/` | 应用编排：共享宏管线生命周期（`_macro_pipeline.py`）、MB-OPC 公共工作流（`_mbopc_workflow.py`；方法适配器并入 `run_mbopc.py`/`run_gradient_mbopc.py` 入口）、像素 ILT 公共工作流（`_ilt_workflow.py`；方法适配器并入 `run_simple_ilt.py`/`run_levelset_ilt.py` 入口）、各直接运行入口 | 领域算法 |
+| `opc/iteration/ilt/` | ILT 求解器（Simple sigmoid 像素优化 + LevelSet SDF/STE/宏 Adam + CurvMulti 多尺度控制网格/wafer 曲率 + 共享 record/result/loss/resize） | 光刻实现、合并、进度库 |
+| `main/` | 应用编排：共享宏管线生命周期（`_macro_pipeline.py`）、MB-OPC 公共工作流（`_mbopc_workflow.py`；方法适配器并入 `run_mbopc.py`/`run_gradient_mbopc.py` 入口）、像素 ILT 公共工作流（`_ilt_workflow.py`；方法适配器并入 `run_simple_ilt.py`/`run_levelset_ilt.py`/`run_curvmulti_ilt.py` 入口）、各直接运行入口 | 领域算法 |
 
 ## 依赖方向（唯一合法拓扑）
 
@@ -45,7 +45,7 @@ main 内单向依赖：入口 → 方法适配器 → _mbopc_workflow/_ilt_workf
 - **参考 vs 迭代态**：`MacroProblem` 全部数组只读；唯一迭代状态是调用方
   持有的一维 `displacements`。
 - **方法层**：`opc/iteration/` 下每个方法子包自足（各自的 config/state/
-  solve），不建注册器；ILT 已有 simple 与 levelset 实现；diffopc 目录尚未创建。
+  solve），不建注册器；ILT 已有 simple、levelset 与 curvmulti 实现；diffopc 目录尚未创建。
 - **入口薄层**：`main/run_*.py` 只做参数/调用/摘要打印；MB-OPC 入口经
   各自方法适配器共享 `_mbopc_workflow.py` 生命周期，验证管线与 MB-OPC
   共享 `_macro_pipeline.py`。

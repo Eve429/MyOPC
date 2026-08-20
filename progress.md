@@ -1,5 +1,13 @@
 # MyOPC 迁移进度日志
 
+## 2026-08-21（会话：CurvMulti ILT 审查与交付）
+
+- 用户要求审查 CurvMulti 规格；按既定模式产出审查报告（3 事实错误/5 契约
+  缺口/2 决策问题），AskUserQuestion 三项裁定后批次 0 代笔修订规格。
+- 批次 A/B/C 依次交付求解器、入口配置、文档归档；每批测试先行、门禁全绿、
+  独立 commit；用户 WIP（_ilt_workflow 排版、pyproject）以显式 pathspec
+  排除。全量 660 passed + 1 skipped。
+
 ## 2026-08-20（会话：入口与适配器合并）
 
 - 用户裁定四对入口+适配器全并 + CLAUDE.md 过期入口名同步（AskUserQuestion

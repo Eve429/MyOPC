@@ -245,9 +245,28 @@ lr ≤ 1 时边界像素需多状态累积才可能越过 0 等值线（同输�
 可降至 binary_l2 1720，对照事实见 CHG-20260818-levelset-ilt
 development_report）。
 
+## 9b. CurvMulti ILT（opc/iteration/ilt/curvmulti.py，2026-08-21 迁移）
+
+多尺度控制网格参数化：per-stage 控制 [Hm/s,Wm/s] 独立 SGD（scales 严格
+递减以 1 结尾）、平滑 sigmoid（avg_pool k×k 零补边 → σ(β(x−offset))）、
+nearest 上采样回全分辨率后进光刻（光刻恒在完整物理网格）、stage 参考
+area/跨 stage warm-start nearest、曲率作用于 printed nominal wafer
+（与 Simple/LevelSet 的 mask 曲率是本方法算法差异）。配置自含 11 字段
+（DEC：不建共享 ILTConfig）；无 optimization_mask（ownership 即可动域）。
+
+```bash
+D:/app/miniforge/envs/myopc/python.exe main/run_curvmulti_ilt.py config/curvmulti_ilt.toml
+```
+
+corners_unit 对照 smoke（GTX 1650，CUDA）：CurvMulti scales=[5,1]、
+每 stage 1 更新 → 4 评价态，total 15.84s / RSS 1325MiB / CUDA 513MiB；
+Simple（2 评价态）3.01s / 948MiB / 508MiB。损失数值不跨参数化直接
+比较（状态数与初值不同），事实表见 CHG-20260818-curvmulti-ilt
+development_report。
+
 ## 10. 迁移状态
 
 layout / geometry / opc.input(+edge+pixel) / lithography / evaluation /
-opc.iteration.mbopc（simple + gradient）/ opc.iteration.ilt（simple +
-levelset）已完成；ilt 的 curvmulti/multilevel 与 main 旧入口待评审。
+opc.iteration.mbopc（simple + gradient）/ opc.iteration.ilt（simple + levelset + curvmulti）已完成；ilt 的
+multilevel 与 main 旧入口待评审。
 历史架构参照 `00_PAST/doc/`（只读归档）。

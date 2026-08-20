@@ -1,5 +1,21 @@
 # MyOPC 迁移研究发现
 
+## 2026-08-21 CurvMulti ILT 交付（CHG-20260818-curvmulti-ilt）
+
+- 审查（HEAD 5a4bf5f 基线）：规格 3 处事实错误（ILTBatchResult/workflow.py
+  注册/optimize_curvmulti_batch）+5 处契约缺口；三项 DEC 经用户裁定——
+  自含 CurvMultiConfig、曲率作用于 printed nominal wafer、不迁
+  optimization_mask（ownership 即可动域）。阶段 0 修订入档（31a4c19）。
+- 交付四批（0/A/B/C = 31a4c19/721be5a/8eebc3c/本批）：求解器（多尺度
+  控制网格 SGD + 平滑 sigmoid + nearest 上采样 + wafer 曲率）、入口与
+  配置、文档与归档；43 新测试，全量 660 passed + 1 skipped。
+- 现有函数零修改承诺的唯 exceptions：_parse_scalar 元组分支通用扩展
+  变长 tuple[X,...]（TOML 无元组类型，scales 需要；定长路径逐字不变）。
+- 实施中自查修复：best_state_index 编号偏移（递增时序）、废弃的
+  per-stage area 参考计算、REQ-006 全局 best 语义与规格统一。
+- 对照 smoke（corners_unit/CUDA）：CurvMulti 4 态 15.84s/1325MiB vs
+  Simple 2 态 3.01s/948MiB；损失不跨参数化比较。ILT 剩余：multilevel。
+
 ## 2026-08-20 main/ 入口与适配器合并（拓扑扁平化）
 
 - 四对"CLI 入口 + 方法适配器"合并（用户裁定）：_simple_ilt_workflow/

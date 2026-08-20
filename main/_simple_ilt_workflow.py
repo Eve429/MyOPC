@@ -10,8 +10,12 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
 
 from main._ilt_workflow import ILTMethod, run_ilt_workflow  # 公共生命周期
 
-# Simple ILT 求解器
-from opc.iteration.ilt import SimpleILTConfig, optimize_simple_macro
+# Simple ILT 求解器与终评 fixed-context helper
+from opc.iteration.ilt import (
+    SimpleILTConfig,
+    build_simple_final_context_canvas,
+    optimize_simple_macro,
+)
 
 
 def _evaluated_states(config: SimpleILTConfig) -> int:
@@ -24,7 +28,8 @@ SIMPLE_ILT_METHOD = ILTMethod(
     method_name="simple_ilt",
     config_type=SimpleILTConfig,
     optimize_macro=optimize_simple_macro,
-    evaluated_states=_evaluated_states)
+    evaluated_states=_evaluated_states,
+    build_fixed_context_canvas=build_simple_final_context_canvas)
 
 
 def run_simple_ilt(config_path: str | Path) -> dict:

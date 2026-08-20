@@ -236,3 +236,21 @@ def optimize_simple_macro(
         best_parameters=best_parameters, soft_mask=soft_mask,
         binary_mask=binary_mask, best_state_index=best_state_index,
         records=tuple(records))
+
+
+def build_simple_final_context_canvas(
+        problem: PixelMacroProblem, core_index: int,
+        config: SimpleILTConfig) -> np.ndarray:
+    """组装 Simple 终评的固定 context 画布：真实 context 取初始 soft，padding 恒 0。
+
+    与训练热路径同一套 transmission 定义 σ(β(2T−1))（trainable 槽位上的
+    值由公共 `_binary_canvas` 的 where 覆盖，不进入终评结果）。公式与
+    solver 内联版刻意保持代码重复：让训练留在 GPU torch、终评留在 CPU
+    numpy，避免为消除几行重复引入 CPU/GPU round-trip（REQ-012）。
+    """
+    beta = float(config.sigmoid_steepness)
+    target = problem.target_canvas(core_index).astype(np.float32) / 255.0
+    context_soft = 1.0 / (1.0 + np.exp(-beta * (2.0 * target - 1.0)))
+    # 三值语义：window 外的数值 padding 不是物理 T=0 像素，恒 0
+    return np.where(problem.context_valid_canvas(core_index),
+                    context_soft, 0.0).astype(np.float32)

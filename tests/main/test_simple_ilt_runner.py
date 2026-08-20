@@ -321,3 +321,80 @@ class TestExceptionCleanup:
         assert not (work / "summary.json").exists()  # 不发布完成摘要
         assert not (tmp_path / "final.gds").exists()  # 不合并最终版图
         assert (work / "macros" / "mr0c0" / "best.gds").is_file()  # 留诊断
+
+
+class TestWorkflowMethodIndependence:
+    """公共 workflow 对方法数学字段零依赖（TEST-009 的阶段 A 部分）。"""
+
+    def test_fake_method_without_method_math_runs_full_workflow(self,
+                                                                tmp_path):
+        """config 仅有 batch_size 的 fake 方法走完终评与合并。
+
+        fake config 完全没有 sigmoid_steepness/mask_threshold/phi——
+        若终评仍读取方法数学字段，本测试在 AttributeError 处失败。
+        """
+        from opc.iteration.ilt import ILTMacroResult, ILTStateRecord
+
+        @dataclass(frozen=True, slots=True)
+        class _FakeConfig:
+            """最小鸭子契约：公共层对算法段的唯一真实依赖是 batch_size。"""
+
+            batch_size: int
+
+        def _fake_optimize(problem, model, config, *,
+                           on_tiles_completed=None):
+            """固定全透光结果 + 单条状态记录（不含任何方法数学）。"""
+            hm, wm = problem.ownership_shape
+            if on_tiles_completed is not None:
+                on_tiles_completed(problem.macro.core_count)
+            return ILTMacroResult(
+                best_parameters=np.zeros((hm, wm), np.float32),
+                soft_mask=np.ones((hm, wm), np.float32),
+                binary_mask=np.ones((hm, wm), np.bool_),
+                best_state_index=0,
+                records=(ILTStateRecord(
+                    state_index=0, stage_index=0, stage_state_index=0,
+                    scale=1, total_loss=0.0, nominal_l2=0.0, process_l2=0.0,
+                    pvband_loss=0.0, curvature_loss=0.0,
+                    elapsed_seconds=0.0),))
+
+        def _fake_context(problem, core_index, config):
+            """零 context 画布：终评公式完全由方法侧注入。"""
+            size = int(problem.macro.canvas_pixels)
+            return np.zeros((size, size), np.float32)
+
+        fake_method = ilt_workflow.ILTMethod(
+            method_name="fake_ilt",
+            config_type=_FakeConfig,
+            optimize_macro=_fake_optimize,
+            evaluated_states=lambda config: 1,
+            build_fixed_context_canvas=_fake_context)
+        saved_sections = dict(configuration.CONFIG_SECTIONS)
+        try:  # 临时注册 fake 段，测试后复原（与 postponed 探针同款）
+            configuration.CONFIG_SECTIONS[_FakeConfig] = "fake_ilt"
+            configuration._SECTION_TO_TYPE.clear()
+            configuration._SECTION_TO_TYPE.update(
+                {v: k for k, v in configuration.CONFIG_SECTIONS.items()})
+            layout_path = _write_gds(tmp_path)
+            config_path = _write_config(tmp_path, layout_path)
+            text = config_path.read_text(encoding="utf-8")
+            head, _, tail = text.partition("[simple_ilt]")  # 换掉算法段
+            _, _, tail = tail.partition("[output]")
+            config_path.write_text(
+                head + "[fake_ilt]\nbatch_size = 2\n\n[output]" + tail,
+                encoding="utf-8")
+            summary = ilt_workflow.run_ilt_workflow(fake_method, config_path)
+        finally:  # 复原注册表
+            configuration.CONFIG_SECTIONS.clear()
+            configuration.CONFIG_SECTIONS.update(saved_sections)
+            configuration._SECTION_TO_TYPE.clear()
+            configuration._SECTION_TO_TYPE.update(
+                {v: k for k, v in configuration.CONFIG_SECTIONS.items()})
+        assert summary["method"] == "fake_ilt"
+        assert summary["iterations"] is None  # fake config 无 iterations 键
+        work = tmp_path / "work"
+        for macro in summary["macros"]:  # 终评完成且产物齐全
+            assert isinstance(macro["binary_l2"], int)
+            macro_dir = work / "macros" / macro["macro_id"]
+            assert (macro_dir / "fake_ilt_result.npz").is_file()
+            assert (macro_dir / "best.gds").is_file()

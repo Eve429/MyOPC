@@ -56,15 +56,17 @@ class ILTMethod:
     """注入公共像素 ILT 生命周期的最小方法差异点（仅当前真实调用方）。
 
     optimize_macro 返回的 ILTMacroResult 对本层只读消费 best/binary/记录；
-    config_type 必须可被 load_config 直接注册（get_type_hints 解析），
-    且鸭子契约须暴露 batch_size（终评分批）与 sigmoid_steepness（固定
-    context 的 transmission 定义 σ(β(2T−1))）。
+    config_type 必须可被 load_config 直接注册（get_type_hints 解析），且
+    鸭子契约只须暴露 batch_size（终评分批）；固定 context 的 transmission
+    定义由 build_fixed_context_canvas 策略注入，本层不读任何方法数学字段。
     """
 
     method_name: str                  # summary/产物稳定标识
     config_type: type                 # load_config 请求的算法段 Config
     optimize_macro: Callable          # (problem, model, config, *, on_tiles_completed)
     evaluated_states: Callable        # (config) -> 每 macro 评价状态数（进度 total）
+    build_fixed_context_canvas: Callable
+    # (problem, core_index, config) -> 固定 context 画布（方法数学所在地）
 
 
 def prepare_pixel_problems(layout: LayoutConfig,
@@ -147,38 +149,36 @@ def prepare_pixel_problems(layout: LayoutConfig,
 
 
 def _binary_canvas(problem: PixelMacroProblem, binary_mask: np.ndarray,
-                   core_index: int, beta: float) -> np.ndarray:
-    """组装终评画布：trainable 像素取 best 二值，context 取初始 soft。
+                   core_index: int, build_context: Callable,
+                   config) -> np.ndarray:
+    """组装终评画布：trainable 像素取 best 二值，context 由方法策略提供。
 
-    固定 context 与训练同一套 transmission 定义 σ(β(2T−1))——终评与
-    优化的宏观边界光学一致；监督/指标目标仍是 raw T。
+    本函数不含任何方法数学：σ(β(2T−1))、hard target 等固定 context 的
+    transmission 定义全部在方法模块的 build_fixed_context_canvas 内。
     """
-    target = problem.target_canvas(core_index).astype(np.float32) / 255.0
     trainable = problem.trainable_index_canvas(core_index)
     values = binary_mask.reshape(-1)[np.maximum(trainable, 0)]
-    context_soft = 1.0 / (1.0 + np.exp(-beta * (2.0 * target - 1.0)))
-    # 与训练同款三值语义：真实 context 用初始 soft，数值 padding 恒 0
-    context = np.where(problem.context_valid_canvas(core_index),
-                       context_soft, 0.0)
+    context = build_context(problem, core_index, config)
     return np.where(trainable >= 0, values,
                     context).astype(np.float32)
 
 
 def _evaluate_best_binary(problem: PixelMacroProblem, result,
                           model: ICCAD13Lithography, config,
-                          conditions) -> tuple[int, int]:
+                          conditions,
+                          build_context: Callable) -> tuple[int, int]:
     """在 best 二值掩膜上执行最终前向并按 ownership 统计 L2/PVBand。"""
     core_count = problem.macro.core_count
     binary_l2 = 0  # 二值 L2 累计
     pvband = 0  # 二值 PVBand 累计
-    beta = float(config.sigmoid_steepness)  # 固定 context 的 transmission 定义
     with torch.no_grad():  # 纯推理终评
         for batch_start in range(0, core_count, config.batch_size):
             core_indices = list(range(
                 batch_start,
                 min(batch_start + config.batch_size, core_count)))
             masks = np.stack([
-                _binary_canvas(problem, result.binary_mask, c, beta)
+                _binary_canvas(problem, result.binary_mask, c,
+                               build_context, config)
                 for c in core_indices])
             targets = np.stack(
                 [problem.target_canvas(c) for c in core_indices])
@@ -258,7 +258,8 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
                     bar.close()
             # best 二值终评（REQ-010：独立于训练的最终前向）
             binary_l2, binary_pvband = _evaluate_best_binary(
-                problem, result, model, algo, conditions)
+                problem, result, model, algo, conditions,
+                method.build_fixed_context_canvas)
             macro_dir = macros_dir / macro_id  # 产物目录
             macro_dir.mkdir(parents=True, exist_ok=True)
             # 像素 → Region → best GDS（RESULT Cell，完整 macro 候选）

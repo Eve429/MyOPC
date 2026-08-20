@@ -12,6 +12,7 @@ from opc.input.pixel import prepare_pixel_macro_problem
 from opc.input.raster import _center_padding
 from opc.iteration.ilt import (
     SimpleILTConfig,
+    build_simple_final_context_canvas,
     optimize_simple_macro,
 )
 from opc.iteration.ilt import simple as simple_module
@@ -756,3 +757,35 @@ class TestCallCountsAndProgress:
         # 曲率关闭时 context=0 完全合法（不构造卷积）
         result = optimize_simple_macro(problem, _DoseModel(), _config())
         assert len(result.records) == 2
+
+
+class TestFinalContextHelper:
+    """Simple 终评 fixed-context helper 与训练 context 公式等价（REQ-012）。"""
+
+    def test_helper_equals_solver_context_formula(self):
+        """helper 输出 = 训练热路径同款 σ(β(2T−1))｜valid，padding 恒 0。
+
+        numpy 公式逐位相等（同一实现路径）；torch sigmoid 允许 float32
+        实现差异（REQ-012 容差），训练与终评宏观边界仍一致。
+        """
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 41, 48)))  # 含分数覆盖格
+        config = _config()
+        for core_index in range(problem.macro.core_count):
+            actual = build_simple_final_context_canvas(
+                problem, core_index, config)
+            valid = problem.context_valid_canvas(core_index)
+            target = problem.target_canvas(core_index)
+            # numpy 同式复算：helper 与 _soft0 是同一实现路径，必须逐位相等
+            expected_np = np.where(
+                valid, _soft0(target.astype(np.float32) / 255.0), 0.0)
+            np.testing.assert_array_equal(actual, expected_np)
+            # torch 训练公式（solver 内联同式）：跨实现只要求浮点容差
+            target_t = torch.from_numpy(target).to(torch.float32) / 255.0
+            expected_t = torch.sigmoid(
+                4.0 * (target_t * 2.0 - 1.0)).numpy()
+            np.testing.assert_allclose(
+                actual, np.where(valid, expected_t, 0.0),
+                rtol=0.0, atol=1e-6)
+            assert actual.dtype == np.float32
+            # 三值语义：window 外数值 padding 严格为 0
+            assert not actual[~valid].any()

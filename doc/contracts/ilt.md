@@ -59,30 +59,35 @@ class LevelSetILTConfig:  # [levelset_ilt] 段直接注册（6 字段，无派�
     iterations / step_size / weight_process_l2 /
     weight_pvband / curvature_weight / batch_size
 
-signed_distance_initialization(target_u8) -> np.ndarray          # once/macro
-macro_gradient_magnitude(problem, initial_query_phi, macro_phi)  # once/backward-state
-build_levelset_final_context_canvas(problem, core_index, config)  # 终评 hard context
-optimize_levelset_macro(problem, model, config, *,
+signed_distance_initialization(target_u8, pixel_nm=1.0) -> np.ndarray
+macro_gradient_magnitude(problem, initial_query_phi, macro_phi, pixel_nm=1.0)
+build_levelset_final_context_canvas(problem, core_index, config)
+optimize_levelset_macro(problem, model, config, *, pixel_nm=1.0,
                         on_tiles_completed=None) -> ILTMacroResult
 ```
 
 语义保证：
 
+- **物理单位事实源**：LevelSet 的 `phi` 与 `step_size` 均以 nm 表示；生产入口
+  的 `pixel_nm` 只来自 `[lithography].pixel_nm`，不得在 `[levelset_ilt]`
+  重复配置。solver/test 的 `pixel_nm=1.0` 默认仅用于保持独立单元测试的
+  单位归一语义，正式 workflow 会显式绑定真实 `pixel_nm`。
 - **SDF once/macro**：`target_u8/255 >= 0.5`（127/128 分界）为唯一阈值
-  事实源；背景 +像素中心距离、前景取负；全前景/全背景 ±max(Hq,Wq) 有限
-  常量场。SciPy `distance_transform_edt` 生产路径（旧纯 Python EDT 仅作
-  测试 oracle）。raster 像素中心定义，刻意不与 OpenILT polygon-edge
-  初值对齐（规格 §2.2 冻结）。
+  事实源；背景为 +物理像素中心距离（nm）、前景取负；SciPy EDT 使用
+  `sampling=(pixel_nm,pixel_nm)`。全前景/全背景常量场为
+  `±max(Hq,Wq)·pixel_nm`。raster 像素中心定义，刻意不与 OpenILT
+  polygon-edge 初值逐值对齐。
 - **macro-global phi**：唯一可训练参数 [Hm,Wm] float32（SDF 的 ownership
-  crop）；CPU 常驻 + `torch.optim.Adam`（betas=(0.9,0.999)、eps=1e-8、
-  weight_decay=0、amsgrad=False 与 PyTorch reference 逐位一致）。
+  crop，单位 nm）；CPU 常驻 + `torch.optim.Adam`（betas=(0.9,0.999)、
+  eps=1e-8、weight_decay=0、amsgrad=False）。`config.step_size` 是该 nm-SDF
+  的 Adam 学习率，因此像素从 4nm 改为 2nm 时不再隐式把同一超参数解释为
+  不同物理长度。
 - **唯一梯度系数**：每 backward state 恰一次 `macro_gradient_magnitude`：
   [Hm+2,Wm+2] halo（外围=initial_query_phi 固定物理 context，中心=当前
-  快照）中心差分 /2 → sqrt(dx²+dy²)。同一参数跨 core 恒同 phi 同系数
-  （core-local 差分/replicate padding 为契约违例）；末纯评价 state 不调用。
+  快照），中心差分除以 `2·pixel_nm`，因此标准 SDF 上 `|grad(phi)|≈1`
+  且系数无量纲。同一参数跨 core 恒同 phi 同系数；末纯评价 state 不调用。
 - **STE**：`_LevelSetBinarize`——forward `(phi < 0)`（phi==0 不透光），
-  backward `-|grad(phi)|·grad_output`（系数只读返回 None，内部零空间
-  差分，任意形状张量成立）。
+  backward `-|grad(phi)|·grad_output`（系数只读返回 None，内部零空间差分）。
 - **context ≥ 1 像素**：无条件入口拒绝（中心差分需真实物理邻域，与
   curvature_weight 无关）。
 - **固定 context**：训练与终评同一套三值语义——真实 context 取 hard
@@ -90,25 +95,20 @@ optimize_levelset_macro(problem, model, config, *,
 - **宏同步状态/梯度**：同 Simple——同一 state 全 core 同快照、scatter-add
   raw sum 不平均、屏障后恰一次 Adam step；N 更新 N+1 评价态、best 严格
   更低平局保早。
-- **best 物化**：`best_parameters`=phi、`binary_mask=(phi<0)`、
-  `soft_mask=sigmoid(-phi)`（仅诊断）；`best_parameters` 在 result NPZ 中
-  语义为 phi。
-- **步长提示**：像素中心 SDF 的 |phi| ≥ 1，Adam 首步 |Δ| < lr——lr ≤ 1
-  时边界像素需多状态累积才可能越过 0 等值线（smoke 对照见
-  CHG-20260818-levelset-ilt development_report）。
+- **best 物化**：`best_parameters`=nm 单位 phi、`binary_mask=(phi<0)`、
+  `soft_mask=sigmoid(-phi)`（仅诊断）；result NPZ 中 `best_parameters`
+  语义同样为 nm-SDF。
+- **步长标度**：推荐配置需按物理 nm 进行 benchmark；当前 smoke 以
+  `step_size=3.2nm` 作为 OpenILT `4nm/pixel × 0.8` 的尺度起点，不将该值
+  宣称为最终最优参数。
 
 ## 公共 workflow（`main/_ilt_workflow.py`）
 
 `ILTMethod(method_name/config_type/optimize_macro/evaluated_states/
-build_fixed_context_canvas)` 五字段注入；`run_ilt_workflow` 负责 prepare
-（ilt_plan.json 键集兼容 merge/final-litho）、逐宏求解（进度 total =
-core×states、双层 try/finally）、best binary 终评（ownership 二值
-L2/PVBand；固定 context 画布由方法策略 `build_fixed_context_canvas
-(problem, core_index, config)` 提供，本层不读 sigmoid_steepness/mask_
-threshold/phi 等方法数学字段）、产物（best.gds + `<method>_result.npz`
-+ metrics.json）、merge 恰一次（空宏候选按零覆盖容忍）、可选最终光刻
-与 summary（`seam_strategy=macro_independent_fixed_context` 显式入档）。
-config 鸭子契约只要求 `batch_size`（终评分批）。
+build_fixed_context_canvas)` 五字段注入；`run_ilt_workflow` 负责 prepare、逐宏
+求解、best binary 终评、产物、merge 与 summary。LevelSet 方法适配器在进入
+公共 workflow 前仅从同一 TOML 的 `LithographyConfig.pixel_nm` 读取一次物理
+尺度并绑定到 solver；公共 `ILTMethod` 仍不感知 phi、sigmoid 或方法数学字段。
 
 入口：`python main/run_simple_ilt.py [config.toml]`（默认
 `config/simple_ilt.toml`）；`python main/run_levelset_ilt.py [config.toml]`
@@ -119,18 +119,18 @@ config 鸭子契约只要求 `batch_size`（终评分批）。
 - macro 间不交换优化后参数；macro seam 仍可能存在（独立宏 + 固定 context）。
 - 输出是 pixel-grid stair-step 几何；无 MRC/shot/最小线宽约束。
 - 目标层 bbox 宽高必须整像素（比 edge 管线严），否则 prepare 前置失败。
-- EPE/shot 不属于 ILT 评价指标（本 change 明确不迁）。
+- EPE/shot 不属于 ILT 评价指标。
 
 ## 后续方法入口
 
 CurvMulti/Multilevel 规格见
-`doc/changes/active/CHG-20260818-{curvmulti,multilevel}-ilt/`；
-实施须以本契约为基础零修改或向后兼容扩展共享层（ILTMethod 五字段含
-`build_fixed_context_canvas`）。
+`doc/changes/active/CHG-20260818-{curvmulti,multilevel}-ilt/`；实施须以本契约为
+基础零修改或向后兼容扩展共享层。
 
 ## 事实核对锚点
 
 `tests/opc/input/test_pixel_problem.py`、`tests/opc/iteration/test_simple_ilt.py`、
-`tests/opc/iteration/test_levelset_ilt.py`、`tests/main/test_simple_ilt_runner.py`、
-`tests/main/test_levelset_ilt_runner.py`；smoke `config/simple_ilt.toml`、
-`config/levelset_ilt.toml`。
+`tests/opc/iteration/test_levelset_ilt.py`、
+`tests/opc/iteration/test_levelset_physical_units.py`、
+`tests/main/test_simple_ilt_runner.py`、`tests/main/test_levelset_ilt_runner.py`；
+smoke `config/simple_ilt.toml`、`config/levelset_ilt.toml`。

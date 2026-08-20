@@ -1,6 +1,6 @@
 # corners_unit smoke：单 macro LevelSet ILT 两轮更新（N=2 → 3 个评价状态）。
 # 注意整像素契约：该版图 bbox 1900×1900 是 pixel 4 的整数倍（非 8），
-# core 512 + 2×context 256 恰满 256 像素画布；step 取旧 LevelSetConfig 默认。
+# core 512 + 2×context 256 恰满 256 像素画布。
 
 [layout]
 layout = "../TestReticle/corners_unit_clear.gds"
@@ -21,7 +21,8 @@ device = "auto"
 
 [levelset_ilt]
 iterations = 2
-step_size = 0.2
+# LevelSet phi 与 Adam step 均使用物理 nm；3.2nm 对应 OpenILT 4nm/pixel × 0.8 的尺度起点。
+step_size = 3.2
 weight_process_l2 = 1.0
 weight_pvband = 0.5
 curvature_weight = 0.0

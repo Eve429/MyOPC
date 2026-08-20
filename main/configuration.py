@@ -21,7 +21,11 @@ from opc.input import MaskPolarity  # 极性枚举（合法值集的唯一事实
 from opc.input.edge.fragmentation import FragmentationConfig  # 边段配置
 
 # 求解器 DBU 输入包（resolve 构造目标）
-from opc.iteration.ilt import LevelSetILTConfig, SimpleILTConfig
+from opc.iteration.ilt import (
+    CurvMultiConfig,
+    LevelSetILTConfig,
+    SimpleILTConfig,
+)
 from opc.iteration.mbopc import (
     GradientMBOPCConfig,
     SimpleMBOPCConfig,
@@ -202,6 +206,7 @@ CONFIG_SECTIONS: dict[type, str] = {
     MBOPCConfig: "mbopc",
     GradientConfig: "gradient",
     SimpleILTConfig: "simple_ilt",
+    CurvMultiConfig: "curvmulti_ilt",
     LevelSetILTConfig: "levelset_ilt",
     SinglePassConfig: "single_pass",
     ValidationConfig: "iteration",
@@ -250,12 +255,17 @@ def _parse_scalar(annotation: object, value: object, name: str,
             return MaskPolarity(str(value))  # 转枚举
         except ValueError as exc:  # 未知极性
             raise ValueError(f"不支持的极性：{value!r}") from exc  # 报极性
-    if origin is tuple:  # 定长整数元组（macro_grid [列,行]）
-        inner = get_args(annotation)[0]  # 元素注解
-        if (not isinstance(value, list) or len(value) != len(get_args(annotation))):  # 形状
+    if origin is tuple:  # 元组注解：定长（macro_grid [列,行]）或变长（scales）
+        args = get_args(annotation)
+        if len(args) == 2 and args[1] is Ellipsis:  # 变长 tuple[X, ...]
+            if not isinstance(value, list):  # TOML 数组形态
+                raise ValueError(f"{name} 必须是列表")  # 报类型
+            return tuple(_parse_scalar(args[0], item, name, base_dir)
+                         for item in value)
+        if not isinstance(value, list) or len(value) != len(args):  # 定长形状
             raise ValueError(f"{name} 必须是列表 [列, 行]")  # 报形状
         # 逐元素
-        return tuple(_parse_scalar(inner, item, name, base_dir)
+        return tuple(_parse_scalar(args[0], item, name, base_dir)
                      for item in value)
     if origin is Literal:  # 字面量枚举（final_cell_mode 等）
         choices = get_args(annotation)  # 合法值集

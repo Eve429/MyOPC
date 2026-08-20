@@ -106,7 +106,7 @@ def prepare_pixel_problems(layout: LayoutConfig,
             batch = database.query(
                 [layer], macro.query_box).materialize_intersecting()
             problem = prepare_pixel_macro_problem(
-                batch, layer, layout.polarity, macro)
+                batch, layer, layout.polarity, macro, layout_bounds=bounds)
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")
             pixel_count_sum += int(problem.ownership_shape[0]
                                    * problem.ownership_shape[1])

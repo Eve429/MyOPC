@@ -230,8 +230,13 @@ class PixelMacroProblem:
 
 def prepare_pixel_macro_problem(
         batch: RegionBatch, layer: LayerSpec, polarity: MaskPolarity | str,
-        macro: MacroSpec) -> PixelMacroProblem:
-    """从一次完整相交物化构造像素 macro 问题（一次栅格化，不提边）。"""
+        macro: MacroSpec, *, layout_bounds: DbuBox) -> PixelMacroProblem:
+    """从一次完整相交物化构造像素 macro 问题（一次栅格化，不提边）。
+
+    layout_bounds 是 plan_macros 所用的版图层 bbox，即光学场边界（00_PAST
+    field_box 契约的迁移等价）：query 超出 bbox 的环带恒不透光。必填无默认，
+    缺省会静默保留负板透光缺陷，契约必须显式。
+    """
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")
     try:
@@ -240,6 +245,7 @@ def prepare_pixel_macro_problem(
     except ValueError as exc:
         raise ValueError(f"不支持的 mask 极性：{polarity!r}") from exc
     pixel_dbu = int(macro.pixel_dbu)
+    query = macro.query_box
     # 实际 box 整像素前置校验：最外侧缩短 core 是网格规划允许的合法形态，
     # 但非整像素缩短会产生 partial ownership pixel——它无法映射到唯一个
     # 参数/计分/回写像素，必须在栅格化之前失败而不是静默取整。
@@ -249,13 +255,43 @@ def prepare_pixel_macro_problem(
         _require_pixel_aligned(
             macro.core(core_index).ownership_box, pixel_dbu,
             f"macro {macro.macro_id} core {core_index} ownership")
+    ownership = macro.ownership_box
+    if (layout_bounds.left > ownership.left or layout_bounds.bottom > ownership.bottom
+            or layout_bounds.right < ownership.right
+            or layout_bounds.top < ownership.top):
+        raise ValueError(
+            "layout_bounds 必须四向包含 macro ownership（应传 plan_macros "
+            "所用的版图层 bbox）")
+    # bounds 与 query 的交叠边必须落在 query 像素格点上：按网格契约 bounds 边
+    # 即 ownership 切线、context 为 pixel 整数倍，天然对齐；余数非零说明调用方
+    # 传了与规划网格不一致的 bounds，静默取整会切掉半个像素。
+    inside_left = max(layout_bounds.left, query.left)
+    inside_right = min(layout_bounds.right, query.right)
+    inside_bottom = max(layout_bounds.bottom, query.bottom)
+    inside_top = min(layout_bounds.top, query.top)
+    row0, rem_y0 = divmod(inside_bottom - query.bottom, pixel_dbu)
+    row1, rem_y1 = divmod(inside_top - query.bottom, pixel_dbu)
+    col0, rem_x0 = divmod(inside_left - query.left, pixel_dbu)
+    col1, rem_x1 = divmod(inside_right - query.left, pixel_dbu)
+    if rem_y0 or rem_y1 or rem_x0 or rem_x1:
+        raise ValueError(
+            f"layout_bounds 与 query 的交叠边必须是 pixel_dbu={pixel_dbu} "
+            "的整像素倍")
     # 完整相交物化合并物理覆盖后栅格化一次：查询框不参与布尔相交，
     # 版图真实边界的覆盖率（斜边/半像素）原样进入 transmission。
     region = normalize_mask(batch, layer)
-    coverage = rasterize_region_window(region, macro.query_box, pixel_dbu)
+    coverage = rasterize_region_window(region, query, pixel_dbu)
     # 极性只在此边界出现一次：clear 时图形即透光，opaque 时背景透光。
     transmission = (coverage if normalized is MaskPolarity.CLEAR
                     else 1.0 - coverage)
+    # 版图 bbox 之外恒不透光：外围 macro 的 query 超出 bbox 的环带没有几何，
+    # opaque 的 1−coverage 会把 0 覆盖反成虚假透光环，污染边界 core 的光学
+    # 上下文；clear 该处置零是逐位 no-op。场边界只作用于 transmission 数组、
+    # 绝不作为图形进入 Region，因此不会产生虚假可动边（旧系统明令）。
+    transmission[:row0, :] = 0.0
+    transmission[row1:, :] = 0.0
+    transmission[:, :col0] = 0.0
+    transmission[:, col1:] = 0.0
     target_u8 = np.rint(
         np.clip(transmission, 0.0, 1.0) * 255.0).astype(np.uint8)
     return PixelMacroProblem(

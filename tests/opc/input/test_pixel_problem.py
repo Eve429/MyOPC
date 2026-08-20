@@ -29,11 +29,12 @@ def _macro(**overrides):
     return plan_macros(BOUNDS, **values)[0]
 
 
-def _prepare(region, macro=None, polarity="clear"):
+def _prepare(region, macro=None, polarity="clear", layout_bounds=BOUNDS):
     """把原生 Region 包装为 RegionBatch 并生成像素 macro 问题。"""
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
-    return prepare_pixel_macro_problem(batch, LAYER, polarity, macro)
+    return prepare_pixel_macro_problem(
+        batch, LAYER, polarity, macro, layout_bounds=layout_bounds)
 
 
 def _binary_over_ownership(problem):
@@ -91,11 +92,12 @@ class TestPrepareAndPersistence:
         assert target[7, 15] == 64
 
     def test_opaque_transmission_inverted(self):
-        """opaque：field−coverage；材料内 0、背景 255。"""
+        """opaque：field−coverage；材料内 0、bbox 内背景 255、bbox 外 0。"""
         problem = _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)), polarity="opaque")
         target = problem.target_u8
         assert target[8, 8] == 0  # 材料不透光
-        assert target[0, 0] == 255  # 背景透光
+        assert target[20, 20] == 255  # bbox 内无材料背景透光
+        assert target[0, 0] == 0  # query 角落落在版图 bbox 外：恒不透光
 
     def test_npz_roundtrip_identical(self, tmp_path):
         """NPZ 往返：网格、层、极性与栅格逐值一致。"""
@@ -172,6 +174,69 @@ class TestCoreMapping:
                 problem.ownership_canvas(core_index), mask >= 0.5)
 
 
+class TestLayoutBounds:
+    """版图 bbox 外恒不透光（00_PAST field_box 契约的迁移等价）。"""
+
+    def test_opaque_outside_bounds_stays_dark(self):
+        """opaque：query 超出 bbox 的环带全 0，不得反相成虚假透光。"""
+        # 默认规划：query=(−20,−20,100,100)、bbox=[0,80)²、pixel 4
+        # → 栅格 [5,25)² 之内是 bbox，四条外环带必须恒 0（对应旧
+        # test_opaque_context_outside_field_stays_dark 的行为规格）。
+        problem = _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)), polarity="opaque")
+        target = problem.target_u8
+        assert not target[:5].any() and not target[25:].any()
+        assert not target[:, :5].any() and not target[:, 25:].any()
+        assert target[20, 20] == 255  # bbox 内背景仍透光
+        assert target[8, 8] == 0  # bbox 内材料不透光
+
+    def test_clear_zeroing_is_bitwise_noop(self):
+        """clear：bbox 外无几何，置零前后逐位一致（防误伤）。"""
+        region = kdb.Region(kdb.Box(8, 8, 40, 48))
+        bounded = _prepare(region)
+        # bounds 完全盖住 query 时不置零任何像素，作为无干预参照
+        reference = _prepare(region, layout_bounds=_macro().query_box)
+        assert np.array_equal(bounded.target_u8, reference.target_u8)
+
+    def test_interior_macro_not_zeroed(self):
+        """内部 macro（query 全在 bbox 内）：不做任何置零。"""
+        bounds = DbuBox(0, 0, 240, 240)
+        macro = plan_macros(bounds, macro_grid=(3, 3), core_size_dbu=40,
+                            context_dbu=20, pixel_dbu=4,
+                            canvas_pixels=CANVAS)[4]  # 行优先中心 mr1c1
+        assert macro.query_box == DbuBox(60, 60, 180, 180)  # 全在 bounds 内
+        region = kdb.Region(kdb.Box(90, 90, 150, 150))
+        problem = _prepare(region, macro=macro, layout_bounds=bounds)
+        reference = _prepare(region, macro=macro, layout_bounds=macro.query_box)
+        assert np.array_equal(problem.target_u8, reference.target_u8)
+
+    def test_ownership_pixels_never_modified(self):
+        """两极性下 ownership 像素与无干预参照逐位一致。"""
+        region = kdb.Region(kdb.Box(8, 8, 40, 48))
+        for polarity in ("clear", "opaque"):
+            problem = _prepare(region, polarity=polarity)
+            reference = _prepare(
+                region, polarity=polarity, layout_bounds=_macro().query_box)
+            query = problem.macro.query_box
+            box = problem.macro.ownership_box
+            r0 = (box.bottom - query.bottom) // 4
+            c0 = (box.left - query.left) // 4
+            block = problem.target_u8[r0:r0 + 20, c0:c0 + 20]
+            other = reference.target_u8[r0:r0 + 20, c0:c0 + 20]
+            assert np.array_equal(block, other)
+
+    def test_ownership_not_within_bounds_rejected(self):
+        """bounds 未四向包含 ownership：显式失败，不猜测场边界。"""
+        with pytest.raises(ValueError, match="包含"):
+            _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)),
+                     layout_bounds=DbuBox(0, 0, 40, 80))
+
+    def test_bounds_off_pixel_grid_rejected(self):
+        """bounds 交叠边非整像素：显式失败，不静默取整。"""
+        with pytest.raises(ValueError, match="整像素"):
+            _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)),
+                     layout_bounds=DbuBox(0, 0, 83, 80))
+
+
 class TestPixelAlignment:
     """实际 box 整像素契约的合法/非法边界（TEST-002）。"""
 
@@ -180,7 +245,8 @@ class TestPixelAlignment:
         macro = plan_macros(DbuBox(0, 0, 100, 80), macro_grid=(1, 1),
                             core_size_dbu=40, context_dbu=20, pixel_dbu=4,
                             canvas_pixels=CANVAS)[0]
-        problem = _prepare(kdb.Region(kdb.Box(10, 10, 90, 70)), macro=macro)
+        problem = _prepare(kdb.Region(kdb.Box(10, 10, 90, 70)), macro=macro,
+                           layout_bounds=DbuBox(0, 0, 100, 80))
         assert problem.ownership_shape == (20, 25)  # 100/4 × 80/4
 
     def test_nonaligned_bbox_rejected_before_raster(self, monkeypatch):

@@ -1,5 +1,22 @@
 # MyOPC 迁移研究发现
 
+## 2026-08-20 负板透光环（ILT 像素路径迁移回归）
+
+- 现象：opaque（负板）极性下，外围 macro 的 query（ownership+context）超出
+  版图 layer bbox 的环带无几何，`prepare_pixel_macro_problem` 的
+  `1−coverage` 把 0 覆盖反成透光 1，形成虚假亮环污染边界 core 光学上下文。
+- 旧系统先例（00_PAST）：`opc/input/raster.py:40-59` field_box 契约——opaque
+  canvas = field coverage − polygon coverage，框外恒 0；入口强制 opaque 显式
+  box；明确不补几何（框不进 ContourBatch，避免虚假可动边）；回归
+  `00_PAST/tests/opc/test_polarity.py:30`。新树迁移时该机制丢失。
+- 修复（用户批准：transmission 层置零、仅 ILT 像素路径）：prepare 必填
+  `layout_bounds`（=plan_macros 所用 layer bbox），query 超出 bbox 的像素
+  transmission 置 0（clear 逐位 no-op）；ownership/core 整像素校验次序在前，
+  bounds 包含与交叠整像素校验随后、均在栅格化前。
+- **遗留同缺陷**：MB-OPC edge 路径 `rasterize_mask_canvas` 无 field 概念
+  （mbopc simple/gradient 逐 core 建 canvas、_macro_pipeline 验证对照、
+  main_test_lithography 演示同样受影响），需另行立 CHG 修复。
+
 ## 2026-08-19 Gradient MB-OPC EPE loss 更新设计（进行中）
 
 - 当前生产 `gradient.py` 已采用 DiffOPC Algorithm 4 midpoint STE：硬几何栅格作为

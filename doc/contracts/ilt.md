@@ -9,6 +9,11 @@
 - 问题：`opc/input/pixel.py::PixelMacroProblem`（见
   `doc/contracts/opc_input.md` 像素宏问题节）——query box 一次栅格化的
   uint8 transmission、core 画布/参数索引映射、像素→Region 回写。
+- 场边界：`prepare_pixel_macro_problem` 必填 `layout_bounds`（plan_macros
+  所用版图层 bbox，00_PAST field_box 契约的迁移等价）——query 超出 bbox
+  的环带 transmission 恒置 0（不透光）：opaque 的 1−coverage 不得把无几何
+  环带反成虚假透光；clear 处为逐位 no-op。场边界只作用于 transmission
+  数组，绝不作为图形进入 Region（不产生虚假可动边）。
 - 记录：`opc/iteration/ilt/_common.py::ILTStateRecord`
   （state_index/stage_index/stage_state_index/scale + 四项损失 + 耗时；
   Simple/LevelSet 恒写 0/state_index/state_index/1）。

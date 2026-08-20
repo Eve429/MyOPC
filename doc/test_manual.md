@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 604 用例）
+# 全量（当前 609 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py
@@ -18,7 +18,7 @@ D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/main/test_macro_pipeli
 |---|---|
 | tests/layout | 版图打开/查询/物化/GLP（27） |
 | tests/geometry | 轮廓提取、校验、Patch、栅格化（25） |
-| tests/opc/input | 两级网格规划与校验、居中 canvas 与极性、points_to_canvas、MacroProblem 与 NPZ（49）；像素宏问题：一次栅格/极性/NPZ 往返/计分唯一/trainable 索引一致/整像素边界/几何矩阵回环/损坏拒绝（20） |
+| tests/opc/input | 两级网格规划与校验、居中 canvas 与极性、points_to_canvas、MacroProblem 与 NPZ（49）；像素宏问题：一次栅格/极性/NPZ 往返/计分唯一/trainable 索引一致/整像素边界/几何矩阵回环/损坏拒绝/layout_bounds 场边界（opaque 框外恒暗、clear 逐位 no-op、内部 macro 不置零、ownership 永不修改、包含/整像素两类拒绝，00_PAST field_box 契约迁移）（26） |
 | tests/main | 统一配置体系（configuration 28：含 GridRuntime 5 例与 [levelset_ilt] 段严格解析 3 例；单/多 Config、单次读、未请求段严格、Path 三态）；管线配置校验、双轮状态机、最终合并；单遍入口；simple/gradient runner（119）；simple ILT runner：配置契约/仓库外直跑/postponed 注解探针、产物 dtype 字段、merge 恰一次与拼接 raster 精确相等、第二 macro 异常收尾、fake method 无方法数学字段走通公共终评（13）；levelset ILT runner：配置契约（含 Simple 字段混入拒绝）/仓库外直跑/context<pixel 前置传播、产物 schema（best_parameters=phi、binary==phi<0、soft==sigmoid(-phi)）、state0 二值对靶 INV-004、终评不重跑 SDF、ILTMethod 五字段消费面（12） |
 | tests/lithography | 配置解析、资产哈希/布局、前向数值参考、性能计数、backward 有限差分、CUDA parity、main 直跑（81） |
 | tests/evaluation | L2/PVBand/EPE 指标与方向表、ownership 屏蔽、阈值边界、光刻契约 isinstance（25） |

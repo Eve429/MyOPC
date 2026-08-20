@@ -1,5 +1,16 @@
 # MyOPC 迁移进度日志
 
+## 2026-08-20（会话：负板透光环修复）
+
+- 用户报告负板 macro 扩张最外圈变透光；经查为新树丢失 00_PAST field_box
+  契约的迁移回归（详见 findings 2026-08-20 节）。
+- 计划模式评审：两问（修法/范围）经用户裁定——transmission 层置零、仅 ILT
+  像素路径；MB-OPC edge 路径同缺陷另行立 CHG。
+- 实施：回归测试先行（26 红含 TypeError 证明契约缺口）→ prepare 增必填
+  layout_bounds + 置零 + 两类校验 → _ilt_workflow 传 bounds → 三个测试
+  helper 补参数；contracts/ilt.md 契约行、test_manual 609。全量 609
+  passed + 1 skipped。
+
 ## 2026-08-19（会话：Gradient MB-OPC EPE loss 更新设计）
 
 - 用户要求参考 DiffOPC，为现有 gradient MB-OPC 设计新增 EPE loss 的更新方案。

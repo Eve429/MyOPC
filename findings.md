@@ -979,3 +979,25 @@
   context 三值语义 σ(β(2T−1))/padding 恒 0、barrier 单步 SGD）。
 - 引用同步：INDEX 两处、三份 active ILT 规格 depends_on 改
   `dataflow/index.md`；archive/completed 历史引用按规则保留。
+
+## CHG-20260818-levelset-ilt 交付事实（2026-08-20）
+
+- 实施四批次（a09414c/A → 8390c93/B → 71149c8/C → D docs），起点
+  e036825（生产代码=规格基线父提交 02de825），545→603 passed。
+- 阶段 A：ILTMethod +1 字段 build_fixed_context_canvas；_evaluate_best_binary
+  去 sigmoid_steepness；Simple 固定 workload 终评 bit-identical 零回归。
+- 阶段 B：levelset.py 落地全部规格契约——SciPy EDT SDF once/macro
+  （127/128 冻结、±max 常量场）、macro halo 唯一系数（外围=初始物理
+  context，replicate 判别测试）、STE（反向 -|grad|·上游、一维反传证明
+  零内部差分）、CPU torch Adam 契约超参、跨 core raw-sum + 屏障单步。
+- 事实发现：像素中心 SDF |phi|≥1 且 Adam 首步 |Δ|<lr → lr≤1 时边界像素
+  需多状态累积才越过 0 等值线；lr=1.5/N=6 探针 8960→2855
+  （binary_l2 1720 < Simple 2876）。已入 contract 步长提示。
+- 环境事实：WSL myopc312 装入 scipy 1.18.0（requirements 唯一新增依赖）；
+  门禁 scope 统一为含 common+evaluation 的最宽集合（development_manual
+  已对齐）。
+- 对照 smoke（corners_unit，GTX1650）：LevelSet 3 态 total 2.49s /
+  RSS 1100.9MiB / CUDA 510MiB；SDF 40.7ms 恰 1 次、宏梯度 4ms 恰 N 次。
+- 测试侧教训：假光刻 stub 的批维语义（2-D mask 被 avg_pool2d 当
+  [N,C,L] 逐行池化，静默错值）；全局 monkeypatch Adam 记录器须防
+  叠加与边迭代边增长（一度造成 4.7GB 失控进程）。

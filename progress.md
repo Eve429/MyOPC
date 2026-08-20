@@ -453,3 +453,10 @@
   （index + 总管线/simple mb/gradient mb/simple ilt），每文件函数级流向
   + 伪代码双表示；顺带修正旧文档 load_macro_config 过期事实与补齐
   gradient 求解层；INDEX/active 规格引用同步。doc-only，全量门禁照跑。
+
+- LevelSet ILT（CHG-20260818-levelset-ilt）四批次交付：A 终评 context
+  策略化解耦（Simple 零回归 bit-identical）→ B SciPy SDF/halo STE/宏 Adam
+  求解器（42 测试，含 float64 镜像与 Adam 逐位复现）→ C 入口/配置/smoke
+  （15 测试，两 runner 直跑）→ D contracts/system/dataflow/两手册/两报告/
+  active→completed。审查三观察（scipy 前置、门禁 scope、smoke 值）随批
+  处理；步长与 0 等值线事实入 contract。全量 603 passed + 1 skipped。

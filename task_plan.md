@@ -8,7 +8,9 @@
 ## Next Step
 
 **Phase 6 剩余（ilt 后三方法）**：Simple ILT 与像素管线完成；Gradient
-EPE loss（CHG-20260819）完成；LevelSet/CurvMulti/Multilevel 规格待批。
+EPE loss（CHG-20260819）完成；LevelSet ILT 完成（2026-08-20，
+CHG-20260818-levelset-ilt：SciPy SDF/halo STE/宏 Adam，603 passed）；
+CurvMulti/Multilevel 规格待批。
 随后 Phase 7（旧 main 入口评审 + 收尾审计）。
 
 ## 当前会话：项目现状复核（2026-08-19）

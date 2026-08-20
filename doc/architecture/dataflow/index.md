@@ -12,6 +12,7 @@
 | Simple MB-OPC | `simple_mbopc.md` | `python main/run_mbopc.py config/mbopc_single_macro.toml` |
 | Gradient MB-OPC（含可微 EPE loss） | `gradient_mbopc.md` | `python main/run_gradient_mbopc.py config/gradient_mbopc.toml` |
 | Simple ILT（像素型） | `simple_ilt.md` | `python main/run_simple_ilt.py config/simple_ilt.toml` |
+| LevelSet ILT（SDF + STE + 宏 Adam） | `levelset_ilt.md` | `python main/run_levelset_ilt.py config/levelset_ilt.toml` |
 
 四条工作流共享同一套宏生命周期（prepare → 逐 macro 独立求解 →
 merge 恰一次），其完整定义见 `macro_pipeline.md`；其余文件在 workflow

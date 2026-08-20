@@ -2,7 +2,7 @@
 id: CHG-20260818-levelset-ilt
 title: LevelSet ILT 迁移
 type: implementation-spec
-status: draft
+status: approved
 baseline_commit: 3bd72025aa100fa5c8d8606a3dc30314457d401f
 baseline_worktree: unknown
 baseline_dirty_paths: []

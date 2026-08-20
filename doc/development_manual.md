@@ -5,13 +5,14 @@
 ## 1. 环境与门禁
 
 - 解释器固定：`D:/app/miniforge/envs/myopc/python.exe`（Python ≥ 3.12，
-  依赖见 `requirements.txt`：klayout / numpy / pillow / psutil / torch）。
-- 门禁（范围必须显式，绝不 `ruff check .`）：
+  依赖见 `requirements.txt`：klayout / numpy / pillow / psutil / scipy / torch）。
+- 门禁（范围必须显式，绝不 `ruff check .`；common/evaluation 为生产包
+  必须入检，2026-08-20 对齐）：
 
 ```bash
 python -m pytest -q tests
-python -m ruff check layout geometry opc lithography main tests
-python -m compileall -q layout geometry opc lithography main tests
+python -m ruff check common layout geometry opc lithography evaluation main tests
+python -m compileall -q common layout geometry opc lithography evaluation main tests
 ```
 
 - Bash on Windows：路径用正斜杠。
@@ -209,8 +210,9 @@ state 新增 `epe_loss`。注意 weight_epe=1.0 下 EPE 项占总目标约 85%
 栅格化的 PixelMacroProblem、core 画布/参数索引映射、像素→Region 回写）；
 求解器 `simple.py`（OpenILT 2T−1 初始化（P1-1，2026-08-19 取代 logit+eps）、core 批梯度 scatter-add 求和、
 屏障后同步 SGD、macro best 严格更低、N+1 已评价状态）；共享
-`main/_ilt_workflow.py`（ILTMethod 四字段注入、best binary 终评、merge 恰
-一次）。
+`main/_ilt_workflow.py`（ILTMethod 五字段注入（含
+`build_fixed_context_canvas` 终评 context 策略，2026-08-20 起）、best
+binary 终评、merge 恰一次）。
 
 ```bash
 # corners_unit smoke（默认参数即此配置；也可省略参数）
@@ -218,11 +220,34 @@ D:/app/miniforge/envs/myopc/python.exe main/run_simple_ilt.py config/simple_ilt.
 ```
 
 关键约束：目标层 bbox 宽高必须是 pixel 整数倍（比 edge 管线严）；空 macro
-候选（无材料/全暗区域）合法，merge 按零覆盖容忍。LevelSet/CurvMulti/
-Multilevel 复用本管线（见 doc/contracts/ilt.md 与四份规格）。
+候选（无材料/全暗区域）合法，merge 按零覆盖容忍。CurvMulti/Multilevel
+复用本管线（见 doc/contracts/ilt.md 与各规格）。
+
+## 9a. LevelSet ILT（opc/iteration/ilt/levelset.py，2026-08-20 迁移）
+
+第二个像素 ILT 方法：宏 ownership 像素 phi（带符号距离场）的 hard 优化。
+SDF 用 SciPy `distance_transform_edt`（once/macro、127/128 阈值语义、
+全前景/全背景 ±max(Hq,Wq) 常量场；requirements 因此新增 scipy）；
+`_LevelSetBinarize` STE（forward `phi<0`、backward `-|grad(phi)|·上游`）；
+梯度系数在 macro 域 halo（外围=初始固定 context）中心差分每 backward
+state 恰算一次；CPU `torch.optim.Adam`（契约超参）屏障后单步。固定
+context 为 hard `target>=0.5`（与 Simple 的 soft σ(β(2T−1)) 不同）。
+
+```bash
+# corners_unit smoke（N=2 → 3 个评价状态）
+D:/app/miniforge/envs/myopc/python.exe main/run_levelset_ilt.py config/levelset_ilt.toml
+```
+
+约束：`context_dbu >= pixel_dbu` 无条件入口拒绝（与 curvature_weight
+无关）；`[levelset_ilt]` 无 sigmoid_steepness/mask_threshold（混入即未知
+键失败）。步长提示：像素中心 SDF |phi| ≥ 1，Adam 首步 |Δ| < lr——
+lr ≤ 1 时边界像素需多状态累积才可能越过 0 等值线（同输入 lr=1.5/N=6
+可降至 binary_l2 1720，对照事实见 CHG-20260818-levelset-ilt
+development_report）。
 
 ## 10. 迁移状态
 
-layout / geometry / opc.input(+edge) / lithography / evaluation / opc.iteration.mbopc
-（simple + gradient）已完成；ilt 与 main 旧入口待评审。历史架构参照
-`00_PAST/doc/`（只读归档）。
+layout / geometry / opc.input(+edge+pixel) / lithography / evaluation /
+opc.iteration.mbopc（simple + gradient）/ opc.iteration.ilt（simple +
+levelset）已完成；ilt 的 curvmulti/multilevel 与 main 旧入口待评审。
+历史架构参照 `00_PAST/doc/`（只读归档）。

@@ -2,7 +2,7 @@
 id: CHG-20260819-gradient-mbopc-epe-loss
 title: Gradient MB-OPC 可微 EPE Loss
 type: implementation-spec
-status: draft
+status: approved
 baseline_commit: 08f4866（Simple ILT 全部交付后；生产源码与测试相对其无修改）
 baseline_worktree: dirty（仅本规格与规划记录的修订差异）
 scope:
@@ -784,4 +784,5 @@ None. 本文处于 draft 是因为尚待用户批准，不表示存在未定义�
 | Revision | Date | Status | Summary |
 |---|---|---|---|
 | 0.1 | 2026-08-19 | draft | 新增任意方向、唯一 owner、归一化且默认关闭的 Gradient EPE loss 设计 |
-| 0.2 | 2026-08-20 | draft | 用户修正：profile 聚合 mean→sum（Q 不变性，TEST-013）与 segment 归约等权→参考长度加权（切段不变性，TEST-014）；DEC-002 反转、新增 DEC-007、INV-005/REQ-003/§8.3/§10 同步；基线刷新至 08f4866 | 二次自审：§2.1/TEST-005/§11.1 残留 O 措辞清理；TEST-013 补构造性覆盖前提（断 pre-sigmoid d_s）；§24 补梯度活性窗口与 EPE 精修定位 |
+| 0.2 | 2026-08-20 | approved | 用户修正：profile 聚合 mean→sum（Q 不变性，TEST-013）与 segment 归约等权→参考长度加权（切段不变性，TEST-014）；DEC-002 反转、新增 DEC-007、INV-005/REQ-003/§8.3/§10 同步；基线刷新至 08f4866 | 二次自审：§2.1/TEST-005/§11.1 残留 O 措辞清理；TEST-013 补构造性覆盖前提（断 pre-sigmoid d_s）；§24 补梯度活性窗口与 EPE 精修定位 |
+| 1.0 | 2026-08-20 | approved | 用户批准实施（"可以了，你来实施吧"）；实施后按用户要求做迭代算法自审 | 用户 |

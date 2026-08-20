@@ -447,3 +447,9 @@
   改善、资源增量符合 O(O·Q) 上界）→ 迭代算法自审（无饱和、连续/离散
   同降、EPE 占比 85% 记录）→ contracts/mbopc.md Gradient 节 + 两手册 +
   规格 Rev 1.1 移 completed + 两报告 + 三记录。全量 545 passed。
+
+
+- 数据流文档重构（用户方案）：dataflow.md → dataflow/ 目录五文件
+  （index + 总管线/simple mb/gradient mb/simple ilt），每文件函数级流向
+  + 伪代码双表示；顺带修正旧文档 load_macro_config 过期事实与补齐
+  gradient 求解层；INDEX/active 规格引用同步。doc-only，全量门禁照跑。

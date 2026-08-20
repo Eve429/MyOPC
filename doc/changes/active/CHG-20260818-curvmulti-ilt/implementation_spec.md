@@ -369,7 +369,7 @@ stage optimizer 在同步点释放；batch 完成后 shared workflow 回写 owne
 | `tests/main/test_curvmulti_ilt_runner.py` | tests | add | adapter/CLI/artifacts/progress | TEST-008/009 |
 | `tests/main/test_configuration.py` | tests | modify | variadic/fixed tuple matrix | TEST-010 |
 | `doc/contracts/ilt.md` | 接口文档 | modify | 增加 CurvMulti API/限制 | 交付 |
-| `doc/architecture/system.md`、`doc/architecture/dataflow.md` | 架构文档 | modify | 增加多尺度组件/数据流 | 交付 |
+| `doc/architecture/system.md`、`doc/architecture/dataflow/index.md` | 架构文档 | modify | 增加多尺度组件/数据流 | 交付 |
 | `doc/development_manual.md`、`doc/test_manual.md` | 手册 | modify | 使用与测试 | 交付 |
 | `doc/changes/active/CHG-20260818-curvmulti-ilt/implementation_spec.md` → `doc/changes/completed/CHG-20260818-curvmulti-ilt/implementation_spec.md` | 规格 | move | baseline/status/revision/evidence | 交付 |
 | `doc/changes/completed/CHG-20260818-curvmulti-ilt/development_report.md` | 开发报告 | add | 实施、偏差、审计 | 交付 |

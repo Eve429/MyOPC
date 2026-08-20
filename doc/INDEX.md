@@ -12,7 +12,7 @@
 | 设计新 Change（AI A） | `AGENTS.md` → 本文件 → 相关 `contracts/*.md` → 相关 `architecture/*.md` → 当前源码与 tests → `implementation_spec_template.md` | 相关 `adr/*.md`（决策背景） |
 | 实现 Change（AI B） | `AGENTS.md` → 本文件 → 对应 `changes/active/CHG-xxx/implementation_spec.md` → spec 引用的 contracts/architecture → 相关源码与 tests | — |
 | 了解术语 | `glossary.md` | — |
-| 了解系统现状 | `architecture/system.md` → `architecture/dataflow.md` | `architecture/data_model.md` |
+| 了解系统现状 | `architecture/system.md` → `architecture/dataflow/index.md` | `architecture/data_model.md` |
 | 查某模块接口保证 | 对应 `contracts/<module>.md` | — |
 | 查开发/测试操作 | `development_manual.md`（根） → `test_manual.md`（根） | — |
 | 追溯某次变更 | `changes/completed/CHG-xxx/`（spec + 两报告） | 对应版本 git 记录 |
@@ -55,7 +55,7 @@ doc/changes/completed/*/test_report.md         → 某次 Change 实际验证结
 ```text
 INDEX.md / glossary.md / implementation_spec_template.md
 development_manual.md · test_manual.md   （活跃手册）
-architecture/  system.md · dataflow.md · data_model.md
+architecture/  system.md · dataflow/（index + 四工作流文件） · data_model.md
 contracts/     layout · geometry · opc_input · edge · lithography · mbopc · ilt · evaluation
 adr/           ADR-001 .. ADR-006
 changes/       completed/（active/ 于下一个进行中 CHG 时自建）

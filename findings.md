@@ -963,3 +963,19 @@
   weight_epe=1.0 使 EPE 占总目标 85%——示例可用但偏激进，建议按
   workload 从 0.1–0.5 起步（规格非阻塞问题的数据回答）。
 - 全量 529 → 545 passed；定向 123 passed；ruff/compileall/diff-check 绿。
+
+
+## 数据流文档分文件事实（2026-08-20，doc/architecture 重构）
+
+- `dataflow.md`（单文件五节）拆为 `dataflow/` 目录：index（映射 + 共享
+  跨界标注）+ macro_pipeline（共享宏生命周期 + 验证管线 + 单遍消费者）+
+  simple_mbopc / gradient_mbopc / simple_ilt 四工作流文件；每文件统一
+  "函数级流向（module::function 树）+ 伪代码 + 本工作流边界"双表示。
+- 重写时修正旧文档一处过期事实：`load_macro_config`/`load_validation_deltas`
+  已不存在（配置集中后入口为 `run()` + `load_config(..., ValidationConfig)`，
+  deltas 来自 `validation.round_deltas_nm`）。
+- gradient 求解层首次有独立数据流（三段函数 + 四项 loss 含 EPE profile
+  sum 聚合/长度加权）；simple_ilt 按当前实现写（OpenILT 2T−1 初始化、
+  context 三值语义 σ(β(2T−1))/padding 恒 0、barrier 单步 SGD）。
+- 引用同步：INDEX 两处、三份 active ILT 规格 depends_on 改
+  `dataflow/index.md`；archive/completed 历史引用按规则保留。

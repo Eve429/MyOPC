@@ -575,6 +575,7 @@ CPU EDT、CUDA、I/O 等未知错误原样传播；entry 不捕获并伪装成�
 
 ## 14. File-Level Change Plan
 
+<<<<<<< HEAD
 | File / Symbol | Action | Contract change | Reason |
 |---|---|---|---|
 | `opc/input/pixel/problem.py` | modify | 增通用 query-array→core-canvas helper；`target_canvas` 复用 | 唯一坐标事实，避免 LevelSet 复制切片 |
@@ -597,6 +598,26 @@ CPU EDT、CUDA、I/O 等未知错误原样传播；entry 不捕获并伪装成�
 | 本规格 active→completed | move/update | baseline/status/revision/evidence | 交付 |
 | `development_report.md`、`test_report.md` | add | 实施/偏差/测试/性能 | 交付 |
 | `task_plan.md`、`findings.md`、`progress.md` 或任务专属 `.planning/` | modify | 同步 | AGENTS |
+=======
+| File / Symbol | File type | Action | Contract change | Reason |
+|---|---|---|---|---|
+| `opc/iteration/ilt/levelset.py` | 业务代码 | add | config/SDF/STE/optimizer | REQ-002..007 |
+| `opc/iteration/ilt/__init__.py` | 业务代码 | modify | 导出 LevelSet API | REQ-001 |
+| `main/configuration.py::CONFIG_SECTIONS` | 业务代码 | modify | 注册 `[levelset_ilt]` | IF-002 |
+| `main/_levelset_ilt_workflow.py` | 方法适配器 | add | METHOD + thin run | REQ-008/009 |
+| `main/run_levelset_ilt.py` | 运行入口 | add | 直接 Python 入口 | REQ-001 |
+| `config/levelset_ilt.toml` | 配置 | add | smoke 配置 | §8.1 |
+| `tests/opc/iteration/test_levelset_ilt.py` | 测试 | add | SDF/STE/state/batch/real model | TEST-001..007 |
+| `tests/main/test_levelset_ilt_runner.py` | 测试 | add | config/adapter/CLI/artifacts | TEST-008..010 |
+| `tests/main/test_configuration.py` | 测试 | modify | 新 section 严格解析 | TEST-008 |
+| `doc/contracts/ilt.md` | 接口文档 | modify | 增加当前 LevelSet API/限制 | 交付 |
+| `doc/architecture/system.md`、`doc/architecture/dataflow/index.md` | 架构文档 | modify | 增加当前 LevelSet 组件/数据流 | 交付 |
+| `doc/development_manual.md`、`doc/test_manual.md` | 手册 | modify | 使用与测试 | 交付 |
+| `doc/changes/active/CHG-20260818-levelset-ilt/implementation_spec.md` → `doc/changes/completed/CHG-20260818-levelset-ilt/implementation_spec.md` | 规格 | move | baseline/status/revision/evidence | 交付 |
+| `doc/changes/completed/CHG-20260818-levelset-ilt/development_report.md` | 开发报告 | add | 实施、偏差、审计 | 交付 |
+| `doc/changes/completed/CHG-20260818-levelset-ilt/test_report.md` | 测试报告 | add | 环境、命令、结果 | 交付 |
+| `task_plan.md`、`findings.md`、`progress.md` 或任务专属 `.planning/` | 项目记录 | modify | 同步 | AGENTS |
+>>>>>>> d57d27c (docs(architecture): 数据流按工作流分文件（函数级+伪代码双表示）)
 
 除上述最小公共化修改外，不得借本 change 重构 unrelated workflow/pixel API。
 

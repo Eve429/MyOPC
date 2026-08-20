@@ -8,12 +8,14 @@
 #   / pytest 9.1.1 + ruff 0.16.2（质量门禁工具）。
 # torch 的 CUDA/CPU 构建选择见 doc/development_manual.md §5；
 # 不在本文件硬编码任何私有下载源。
+# 2026-08-20 新增 scipy（LevelSet ILT 的精确 EDT；WSL myopc312 实测 1.18.0）。
 
 klayout
 matplotlib
 numpy
 pillow
 psutil
+scipy
 torch
 tqdm
 

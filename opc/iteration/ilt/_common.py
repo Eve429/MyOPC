@@ -87,3 +87,26 @@ def weighted_macro_loss(
     return (nominal_l2 + weight_process_l2 * process_l2
             + weight_pvband * pvband_loss
             + curvature_weight * curvature_value)
+
+
+def resize_image(image: torch.Tensor, shape: tuple[int, int],
+                 mode: str) -> torch.Tensor:
+    """保持 `[B,H,W]` 契约缩放目标、参数、wafer 或优化窗口。
+
+    area 用于 stage 参考（保覆盖率），nearest 用于跨 stage warm-start 与
+    控制网格上采样（不引入新灰度、最近邻路由可微分）；语义迁自 00_PAST。
+    """
+    return functional.interpolate(image[:, None], size=shape, mode=mode)[:, 0]
+
+
+def smooth_sigmoid_mask(parameters: torch.Tensor, kernel: int,
+                        steepness: float, offset: float) -> torch.Tensor:
+    """对连续参数执行固定均值平滑和带偏移 sigmoid，生成可微软掩膜。
+
+    平滑在前（avg_pool 边缘补 k//2 零），σ(β(x−offset)) 在后：控制网格先
+    获得空间连续性再生成透光倾向，是 CurvMulti 与逐像素 sigmoid（Simple）
+    的参数化差异所在；梯度经 avg_pool/sigmoid 自然回传到控制参数。
+    """
+    pooled = functional.avg_pool2d(
+        parameters[:, None], kernel, stride=1, padding=kernel // 2)[:, 0]
+    return torch.sigmoid(steepness * (pooled - offset))

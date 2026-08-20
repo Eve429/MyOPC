@@ -146,7 +146,9 @@ evaluation。
 结果 MUST 是现有 `ILTMacroResult`（best_parameters/soft_mask/binary_mask/
 best_state_index/records），workflow 只读消费：
 
-- `best_parameters`：末尺度（scale=1）全分辨率 `[Hm, Wm]` 参数；
+- `best_parameters`：全局 best 状态的控制网格 nearest 上采样到全分辨率
+  `[Hm, Wm]`（best 可来自任意 stage，与 Simple/LevelSet 的"全部已评价状态
+  严格更低"语义一致）；
 - `soft_mask`：全局 best state 的宏 ownership soft mask；
 - `binary_mask`：`soft_mask >= mask_threshold`；
 - `best_state_index`：全局单调状态编号（跨 stage 连续）；

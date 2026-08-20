@@ -3,16 +3,16 @@ id: CHG-20260818-levelset-ilt
 title: LevelSet ILT 迁移
 type: implementation-spec
 status: draft
-baseline_commit: 02de825b4853f416b643a6a3e0092b4efe17495d
+baseline_commit: 3bd72025aa100fa5c8d8606a3dc30314457d401f
 baseline_worktree: unknown
 baseline_dirty_paths: []
 scope:
-  - opc/input/pixel
   - opc/iteration/ilt
   - main
   - config
   - tests
   - doc
+  - requirements.txt
 depends_on:
   - doc/changes/completed/CHG-20260818-simple-ilt/implementation_spec.md
   - doc/contracts/ilt.md
@@ -25,190 +25,342 @@ supersedes: []
 
 ## 0. Document Contract
 
-本文档是本 change 的唯一实现规格，已按 `migration@02de825b4853f416b643a6a3e0092b4efe17495d` 与已完成 Simple ILT 重新审查。该提交记录全量 `545 passed`；实施 AI MUST 在开始实现时再次记录实际 HEAD 与全量测试数，若共享接口已变化则先修订本文。
+本文档是本 change 的唯一实现规格。当前审查基线为 `migration@3bd72025aa100fa5c8d8606a3dc30314457d401f`；该提交仅更新 LevelSet 规格，生产代码与其父提交 `02de825b4853f416b643a6a3e0092b4efe17495d` 一致。父提交已完成 Simple ILT，记录全量 `545 passed`。实施 AI MUST 在开始实现时再次记录实际 HEAD、worktree 状态和全量测试数；若共享接口已变化，必须先修订本文。
 
-实现 MUST 复用当前 `PixelMacroProblem -> macro-global parameter -> core-batched lithography -> gradient scatter-add -> macro barrier -> ILTMacroResult -> run_ilt_workflow` 生命周期；以 OpenILT LevelSet 的 hard forward / surrogate backward / Adam 为算法参考，以 MyOPC 当前 macro/core ownership 为工程事实。
+实现 MUST 复用当前 `PixelMacroProblem -> macro-global parameter -> core-batched lithography -> gradient scatter-add -> macro barrier -> ILTMacroResult -> run_ilt_workflow` 生命周期。LevelSet 只替换参数化、代理梯度、优化器和固定 context 语义，不复制整套 workflow。
 
-实现 MUST NOT：复制整套 ILT workflow；建立当前无调用价值的 ILT 基类/注册器；把 core ownership 当参数 ownership；按 core 独立生成 SDF、phi 或空间梯度场；在 core-local canvas 上重新计算同一物理像素的 `|grad(phi)|`；静默修正 NaN、I/O、CUDA 错误；修改 `00_PAST/**`、`layout/**`、`geometry/**`、`lithography/**`、`evaluation/**`。
+实现 MUST NOT：建立当前无调用价值的 ILT 基类/注册器；把 core ownership 当参数 ownership；按 core 独立生成 SDF/phi/空间梯度系数；在 core-local canvas 上重新计算同一物理参数的 `|grad(phi)|`；在 batch 内更新参数；平均跨 core 梯度；静默修正 NaN、I/O、CUDA 错误；修改 `00_PAST/**`、`layout/**`、`geometry/**`、`lithography/**`、`evaluation/**`。
 
 ## 1. Objective
 
-在已经完成的 Simple ILT 像素型 macro/core 管线上实现 hard LevelSet ILT，并完成一次最小的公共 workflow 通用化，使 `python main/run_levelset_ilt.py [config.toml]` 可直接运行，同时不破坏 Simple ILT 数值行为。
+在已完成的 Simple ILT 像素型 macro/core 管线上实现 hard LevelSet ILT，使 `python main/run_levelset_ilt.py [config.toml]` 可直接运行，同时保持 Simple ILT 的现有热路径和数值行为不变。
 
-核心约束升级为：**一个 macro query 内每个物理像素只有一个权威 phi，并且在同一 state 内只有一个权威 `|grad(phi)|`；core 只是光刻/loss 的计算窗口，不拥有独立参数、独立 SDF 或独立空间梯度。**
+核心工程约束：
+
+1. 一个 macro ownership 像素只有一个权威 `phi` 参数；
+2. 每个需要 backward 的 state，每个可训练 macro 参数只有一个权威 `|grad(phi)|` 代理梯度系数；
+3. core 只是光刻/loss 计算窗口，不拥有独立参数、独立 SDF 或独立 LevelSet 空间梯度；
+4. 同一 macro 参数即使同时出现在多个 core context，也必须使用相同 `phi`、相同 `|grad(phi)|`，各 core loss 对它的梯度只做 raw sum；
+5. Simple ILT solver 不因本 change 被迫改写 CPU/GPU 热路径。
 
 ## 2. Baseline and Evidence
 
-### 2.1 Baseline
-
-- 审查基线：`02de825b4853f416b643a6a3e0092b4efe17495d`。
-- 该基线提交说明全量测试为 `545 passed`；本文未在远端连接器环境重复执行测试。
-- 当前生产 Simple ILT 已建立 `PixelMacroProblem -> optimize_simple_macro -> ILTMacroResult -> run_ilt_workflow`。
-- 当前 `_ilt_workflow.py` 终评仍直接读取 `sigmoid_steepness`，属于 Simple 专属语义泄漏。
-- 当前 `doc/architecture/dataflow/` 已按工作流拆分，Simple ILT 文档为 `doc/architecture/dataflow/simple_ilt.md`。
-
-### 2.2 Confirmed Facts
+### 2.1 Confirmed Current Facts
 
 | ID | Fact | Evidence |
 |---|---|---|
-| FACT-001 | Simple 参数域是 macro ownership；core 通过 `trainable_index_canvas` 映射同一 macro 参数 | `opc/iteration/ilt/simple.py`、`opc/input/pixel/problem.py` |
-| FACT-002 | 同一参数可出现在多个 core context；Simple 将梯度 scatter-add 求和并在全 core 屏障后单次 SGD | `optimize_simple_macro` |
-| FACT-003 | OpenILT LevelSet hard forward 为 `phi<0`，backward 为 `-|grad(phi)|*grad_output`，optimizer 为 Adam | `OpenILT/pyilt/levelset.py` |
-| FACT-004 | OpenILT 在完整 tile levelset 上计算空间梯度；不存在 MyOPC core-local 重算问题 | `OpenILT/pyilt/levelset.py::gradImage/_Binarize` |
-| FACT-005 | 旧迁移已有精确二维 EDT、全空/全满、strict-zero 的可复用参考 | `00_PAST/opc/iteration/ilt/levelset.py` |
-| FACT-006 | 当前公共结果为 `ILTMacroResult`，共享 loss/curvature 位于 `ilt/_common.py` | 当前生产源码 |
+| FACT-001 | Simple 参数域定义在 macro ownership | `opc/iteration/ilt/simple.py` |
+| FACT-002 | core 通过 `trainable_index_canvas` 映射同一 macro 参数 | `opc/input/pixel/problem.py` |
+| FACT-003 | 同一参数可出现在多个 core context；Simple 将 local gradient scatter-add 后在 macro barrier 处单次 SGD | `optimize_simple_macro` |
+| FACT-004 | 公共结果已统一为 `ILTMacroResult`；连续 loss/curvature 位于 `ilt/_common.py` | 当前生产源码 |
+| FACT-005 | `_ilt_workflow` final evaluation 仍直接读取 `sigmoid_steepness`，存在 Simple 专属语义泄漏 | `main/_ilt_workflow.py` |
+| FACT-006 | 旧 LevelSet 参考已包含 hard `phi<0`、空间梯度代理反向、Adam 和 raster EDT | `00_PAST/opc/iteration/ilt/levelset.py` |
 
-### 2.3 Adaptation Boundary
+### 2.2 Algorithm Adaptation Boundary
 
-OpenILT 的一张 tile 在参数/SDF/空间梯度语义上对应 MyOPC 的 **macro query**，不是单个 core。MyOPC 的 core overlap 只用于受显存限制的光刻与 loss 分批，因此任何会影响 LevelSet surrogate gradient 的 field 都必须先在 macro-query 坐标系中唯一确定，再裁给各 core。
+OpenILT LevelSet 的 hard forward、`-|grad(phi)|*grad_output` surrogate backward 与 Adam 是算法参考；MyOPC 的 macro/core ownership、fixed context、N+1 state、artifact/merge 生命周期是工程事实。
 
-LevelSet STE 是代理梯度，不宣称为 hard threshold 的数学真导数；macro 之间仍独立优化并使用固定外部 context，macro seam 联合优化不属于本 change。
+OpenILT 原始执行域是一张完整 tile；MyOPC 为控制显存将光刻/loss 拆成多个 core。不能因此把一个物理 LevelSet 参数复制成多份 core-local 参数或多份空间梯度系数。
+
+MyOPC 本 change 使用 **raster signed-distance field**：距离定义在像素中心上，不宣称与 OpenILT polygon-edge initializer 逐值一致。该差异必须在测试中固定，禁止后续以“对齐 OpenILT”为由无规格修改 SDF 数值定义。
 
 ## 3. Current Behavior
 
-1. `PixelMacroProblem` 持久化一张 macro query `target_u8`，按需生成 core target、ownership、trainable-index、valid-context canvas。
-2. `optimize_simple_macro` 在 macro ownership 上维护唯一 CPU 参数；同一 state 全部 core/batch 读同一快照，梯度回散求和后单次同步 SGD。
+1. `PixelMacroProblem` 持久化 macro query 的单张 `target_u8`，按需生成 core target、ownership、trainable-index、valid-context canvas。
+2. `optimize_simple_macro` 在 macro ownership 上维护唯一 CPU 参数，同一 state 全部 core/batch 读取同一参数快照；local gradient 回散求和后仅做一次同步 SGD。
 3. `run_ilt_workflow` 负责 prepare、逐 macro solve、binary final evaluation、artifact、merge、summary。
-4. `_ilt_workflow::_binary_canvas/_evaluate_best_binary` 仍假定 config 含 `sigmoid_steepness`。
-5. 当前无生产 LevelSet solver。
+4. `_ilt_workflow::_binary_canvas/_evaluate_best_binary` 仍假定算法 config 存在 `sigmoid_steepness`。
+5. 当前没有生产 LevelSet macro solver。
 
 ## 4. Target Behavior
 
 ### REQ-001：直接入口
 
-提供 `python main/run_levelset_ilt.py [config.toml]`；默认 `config/levelset_ilt.toml`。输入、macro 生命周期、artifact、merge 与 Simple ILT 对齐。
+提供 `python main/run_levelset_ilt.py [config.toml]`；默认配置 `config/levelset_ilt.toml`。输入、macro 生命周期、artifact、merge、summary 与 Simple ILT 对齐。
 
 ### REQ-002：hard forward 与 external-gradient STE
 
-前向 MUST 严格输出 `(phi < 0).float()`，`phi==0` 为不透光。
+前向严格：
 
-backward MUST 使用调用方提供的、与当前 state 同源的 `grad_magnitude`：
+```text
+hard = (phi < 0).float()
+```
+
+`phi==0` 必须是不透光。
+
+代理反向严格：
 
 ```text
 grad_phi = -grad_magnitude * grad_output
 ```
 
-`_LevelSetBinarize` MUST NOT 在 core-local canvas 内重新对 phi 做中心差分。推荐接口：
+`grad_magnitude` 由调用方提供，属于当前 macro state 的只读系数，不参与 autograd。推荐：
 
 ```python
-_LevelSetBinarize.apply(phi_canvas, grad_magnitude_canvas)
+_LevelSetBinarize.apply(local_phi, local_grad_magnitude)
 ```
 
-其中 `grad_magnitude_canvas` 无梯度，仅作为 surrogate backward 系数。
+其中 `local_phi` 与 `local_grad_magnitude` 对同一 `trainable_index_canvas` gather；`_LevelSetBinarize` 内部 MUST NOT 再做空间差分。
 
-### REQ-003：macro-query 唯一 SDF
+### REQ-003：SDF once/macro，使用生产级 EDT
 
-每个 macro 从完整 `problem.target_u8` 生成且仅生成一次 `initial_query_phi[Hq,Wq]`：`target>=0.5` 为负，背景为正。不得按 core target 独立运行 SDF。
-
-同一物理像素 P 出现在 core A/B 时，必须始终满足：
+每个 macro 从完整 `problem.target_u8` 仅生成一次 `initial_query_phi[Hq,Wq]`：
 
 ```text
-phi_A(P) == phi_B(P)
+binary = target_u8 / 255 >= 0.5
+background pixel: phi = +distance(pixel_center, nearest foreground pixel_center)
+foreground pixel: phi = -distance(pixel_center, nearest background pixel_center)
 ```
 
-### REQ-004：每 state 唯一空间梯度场
+mixed target 使用 `scipy.ndimage.distance_transform_edt`。本 change 允许并要求在 `requirements.txt` 增加 `scipy`；禁止把旧版逐 row/column 的 Python EDT 循环直接搬入生产热路径。旧纯 Python/暴力距离实现仅可作为小尺寸测试 oracle，不得作为 production solver。
 
-每个需要 backward 的 state，MUST 先在 CPU macro-query 坐标系构造唯一当前 field：
+全前景/全背景显式返回有限常量场：
 
 ```text
-current_query_phi = initial_query_phi.copy()
-current_query_phi[macro ownership] = macro_phi_snapshot
+all foreground -> -max(Hq, Wq)
+all background -> +max(Hq, Wq)
 ```
 
-然后在 **完整 current_query_phi** 上一次性计算中心差分：
+SDF 只在初始化执行一次，不进入 state/core/batch 循环。实现 SHOULD 顺序执行 inside/outside EDT 并及时释放中间数组，避免无意义同时常驻多套 float64 distance map。
+
+### REQ-004：macro-global phi + 1 pixel halo
+
+可训练参数仅为 macro ownership：
 
 ```text
-dx = (right - left) / 2
-dy = (up - down) / 2
-grad_magnitude = sqrt(dx^2 + dy^2)
+macro_phi[Hm,Wm]
 ```
 
-macro-query 最外沿采用 replicate boundary。各 core 只允许从该唯一 `current_query_phi` / `grad_magnitude` 裁出窗口，不得重算。因此同一物理像素还必须满足：
+初始化值是 `initial_query_phi` 的 macro ownership crop。
+
+每个需要 backward 的 state，不再构造完整 `current_query_phi[Hq,Wq]` 与完整 `query_grad_magnitude[Hq,Wq]`。改为构造 macro ownership 周围 1 pixel 的 LevelSet halo：
 
 ```text
-grad_magnitude_A(P) == grad_magnitude_B(P)
+phi_halo[Hm+2,Wm+2]
 ```
 
-空间梯度仅在 `state_index < iterations` 时构造；末状态纯评价，不得无意义重复计算。
+语义：
 
-### REQ-005：精确 EDT 与生命周期
+```text
+phi_halo[1:-1, 1:-1] = 当前 macro_phi snapshot
+phi_halo 外围 1 pixel = initial_query_phi 中对应的固定物理 context
+```
 
-SDF 使用 `O(Hq*Wq)` 精确二维欧氏距离变换，不新增 SciPy/OpenCV 依赖；全空/全满返回有限且符号正确的常量场。EDT 每 macro 恰一次，不进入 state/core/batch 热循环。
+然后只计算当前可训练参数的唯一梯度系数：
 
-EDT 实现 SHOULD 复用至多两张 float64 query workspace + `O(max(Hq,Wq))` 一维 scratch；foreground/background 两次 EDT 顺序执行并复用 workspace，不得同时常驻两套完整 float64 distance map。
+```text
+dx = (phi_halo[1:-1,2:] - phi_halo[1:-1,:-2]) / 2
+dy = (phi_halo[2:,1:-1] - phi_halo[:-2,1:-1]) / 2
+macro_grad_magnitude = sqrt(dx^2 + dy^2)   # [Hm,Wm]
+```
 
-### REQ-006：macro-global phi 与同步 Adam
+因此同一 macro 参数 P 无论出现在 core A/B 哪个位置，都只有：
 
-可训练参数是 macro ownership 上唯一 `macro_phi[Hm,Wm]`。同一 state：所有 core 读取同一快照；loss 仅在各自 `ownership_canvas` 统计；local phi 梯度按 `trainable_index_canvas` scatter-add 到唯一 `macro_gradient`，绝不按出现次数平均；全 core 完成后恰一次 Adam update；Adam `m/v` 属于 macro 参数，不能按 core/batch 分裂。
+```text
+macro_phi[P]
+macro_grad_magnitude[P]
+```
 
-batch size/core 顺序不得改变算法语义，只允许正常浮点累加容差。
+两份权威值。core-local canvas 位置、padding、batch size 不得改变这两个值。
 
-### REQ-007：三类画布语义
+### REQ-005：context 宽度
 
-1. `trainable_index_canvas>=0`：当前 macro 参数，使用 `macro_phi_snapshot`，即使位于当前 core context 也可通过该 core ownership loss 得梯度。
-2. macro 外且 `context_valid_canvas=True`：只读物理 context，phi 使用 `initial_query_phi`，不可更新。
-3. `context_valid_canvas=False`：纯数值 padding，mask transmission 严格 0，不解释为物理 T=0 后再做连续参数化。
+LevelSet MUST 要求：
 
-core ownership 只定义 loss owner，不定义 parameter owner。
+```text
+context_dbu >= pixel_dbu
+```
 
-### REQ-008：context 宽度
+原因是 macro ownership 边缘参数的中心差分至少需要一圈真实物理 context。该约束与 `curvature_weight` 是否为 0 无关。
 
-LevelSet MUST 要求 `context_dbu >= pixel_dbu`。原因是 macro ownership 边缘的 query-level 中心差分和 3x3 曲率都至少需要一圈真实物理 context；该约束与 `curvature_weight` 是否为 0 无关。core seam 不再依赖 core-local replicate，因为空间梯度已经在 query field 上统一计算。
+这里的 1-pixel halo 是 **macro 参数梯度的物理邻域**，不是 core padding。不得用 core-local replicate padding 替代。
 
-### REQ-009：损失、状态与 best
+### REQ-006：core batch 只 gather，不定义 LevelSet field
 
-复用 `owned_continuous_losses`、`weighted_macro_loss`、`ILTStateRecord`、`ILTMacroResult`。N 次 Adam 更新对应 N+1 个完整已评价 macro state，末状态纯评价。best 只按完整 macro total loss 严格下降选择，平局保留更早 state。
+每个 core batch 继续复用已有：
 
-输出：`best_parameters=best_phi`、`soft_mask=sigmoid(-best_phi)` 仅作诊断、`binary_mask=(best_phi<0)`。
+- `target_canvas`
+- `ownership_canvas`
+- `trainable_index_canvas`
+- `context_valid_canvas`
 
-### REQ-010：曲率
+对 `trainable_index_canvas>=0` 的位置：
 
-曲率作用于当前 hard mask，只统计 ownership 有效卷积区；权重为 0 时不得执行 conv。复用 `_common.curvature_loss`，不得复制第二套核。
+```text
+local_phi      = gather(macro_phi_snapshot, trainable_index)
+local_grad_mag = gather(macro_grad_magnitude, trainable_index)
+local_hard     = LevelSetBinarize(local_phi, local_grad_mag)
+```
 
-### REQ-011：公共 workflow 通用化
+固定位置：
 
-`_ilt_workflow` MUST 不再读取 `sigmoid_steepness`、`mask_threshold`、phi 等算法字段，也不自行决定固定 context transmission。
+1. macro 外且 `context_valid_canvas=True`：使用 `target>=0.5` 的 hard transmission；
+2. `context_valid_canvas=False`：纯数值 padding，transmission 严格为 0。
 
-`ILTMethod` 增加最小 final-context strategy：
+然后：
+
+```text
+mask = where(trainable_index>=0, local_hard, fixed_context_hard)
+```
+
+不得为了 LevelSet 为每个 core 建独立 SDF、独立 phi canvas 或独立 spatial-gradient field。
+
+### REQ-007：cross-core raw gradient sum + macro barrier
+
+loss 仍只在每个 core 自己的 `ownership_canvas` 统计；parameter ownership 与 loss ownership 严格分离。
+
+同一 macro 参数出现在多个 core context 时，各 core ownership loss 对该参数的偏导必须 raw sum：
+
+```text
+macro_gradient[P] += local_grad_from_core_A[P]
+macro_gradient[P] += local_grad_from_core_B[P]
+```
+
+绝不按出现次数平均。所有 core/batch 必须读取同一 state 的 `macro_phi` 与 `macro_grad_magnitude` 快照；全部 core 完成后才能更新参数一次。
+
+batch size 与 core 遍历顺序不得改变算法语义，只允许正常浮点累加误差。
+
+### REQ-008：Adam 明确契约
+
+使用 macro-global Adam，推荐直接使用 CPU `torch.optim.Adam`，避免重新手写 optimizer 状态机。
+
+参数固定：
+
+```text
+lr = config.step_size
+betas = (0.9, 0.999)
+eps = 1e-8
+weight_decay = 0
+amsgrad = False
+```
+
+`macro_phi`、Adam `m/v` 均属于 macro 参数域，不得按 core/batch 拆分。每个 backward state：
+
+```text
+1. 全 core gradient sum 完成
+2. 将唯一 macro_gradient 赋给 macro parameter.grad
+3. optimizer.step() 恰一次
+4. optimizer.zero_grad(set_to_none=True)
+```
+
+若使用等价手写 Adam，必须逐值通过 PyTorch Adam reference test。
+
+### REQ-009：N 次 update + N+1 evaluated states
+
+MyOPC 明确保留 Simple ILT 的状态生命周期：
+
+```text
+iterations = N
+评价 state 0
+update 1
+评价 state 1
+...
+update N
+评价 state N
+```
+
+即 N 次 Adam 更新，N+1 个完整已评价 macro state；最后一个 state 纯评价，不计算 `macro_grad_magnitude`、不 backward、不 update。
+
+这是对 OpenILT 原始 loop 的有意工程适配，不要求与 OpenILT “最后一次 step 后不再评价”的状态计数逐值一致。
+
+best 只能从完整 macro state 中严格下降选择，平局保留更早 state。
+
+### REQ-010：损失、结果、曲率
+
+复用：
+
+- `owned_continuous_losses`
+- `weighted_macro_loss`
+- `curvature_loss`
+- `ILTStateRecord`
+- `ILTMacroResult`
+
+输出：
+
+```text
+best_parameters = best_phi
+soft_mask = sigmoid(-best_phi)      # 仅诊断
+binary_mask = (best_phi < 0)
+```
+
+曲率作用于当前 hard mask，仅统计 ownership 有效卷积区；`curvature_weight==0` 时不得执行 conv。
+
+### REQ-011：公共 workflow 仅抽象 final-context strategy
+
+`_ilt_workflow` MUST 不再读取 `sigmoid_steepness`、`mask_threshold`、phi 等算法数学字段。
+
+`ILTMethod` 仅新增一个真实需要的策略：
 
 ```python
 build_fixed_context_canvas: Callable[[PixelMacroProblem, int, object], np.ndarray]
 ```
 
-公共 `_binary_canvas` 只将 `result.binary_mask` 写入 trainable 位置，其余消费 method strategy。
+公共 `_binary_canvas`：
 
-策略的数学实现 MUST 位于算法模块而不是 adapter：
+1. 调 method strategy 得到 fixed context canvas；
+2. 将 `result.binary_mask` 写入 `trainable_index_canvas>=0` 位置；
+3. 不知道 Simple sigmoid 或 LevelSet phi 数学。
 
-- `simple.py::build_simple_fixed_context_canvas(...)`：真实 context=`sigmoid(beta*(2T-1))`，padding=0；Simple solver 训练时也复用同一 helper，保证训练/终评公式只有一个事实源。
-- `levelset.py::build_levelset_fixed_context_canvas(...)`：真实 context=`target>=0.5` 的 hard transmission，padding=0；不得为终评重新运行 SDF，因为该 sign 与初始 LevelSet 严格等价。
-- `_simple_ilt_workflow.py` / `_levelset_ilt_workflow.py` 只挂载 callable，不复制数学公式。
+策略实现放在算法模块：
 
-### REQ-012：artifact 一致性
+- `simple.py::build_simple_final_context_canvas(...)`：真实 context=`sigmoid(beta*(2T-1))`，padding=0；
+- `levelset.py::build_levelset_final_context_canvas(...)`：真实 context=`target>=0.5`，padding=0。
 
-继续由公共 workflow 生成配置、进度、资源统计、macro result NPZ、metrics、best.gds、summary、final merge/final lithography。方法文件为 `levelset_ilt_result.npz`，沿用公共 schema，`best_parameters` 语义为 phi。
+### REQ-012：Simple ILT 热路径零重构
+
+本 change 不要求 `optimize_simple_macro` 调用 `build_simple_final_context_canvas`，也不要求把其 GPU `torch.sigmoid` context 路径改成 NumPy helper。
+
+Simple solver 当前训练热路径保持原样；新增 final-context helper 仅服务公共 final evaluation。必须通过测试证明：
+
+```text
+Simple 训练 fixed-context 公式 == Simple final-context helper 公式
+```
+
+允许正常 float32 容差，但现有 Simple 固定 workload 的 best/binary/final metrics/artifact 必须零回归。
+
+公式的轻微代码重复优先于为消除重复而引入 CPU/GPU round-trip 或新的通用抽象层。
+
+### REQ-013：artifact 一致性
+
+继续由公共 workflow 生成配置、进度、资源统计、macro result NPZ、metrics、best.gds、summary、final merge/final lithography。LevelSet 方法文件为 `levelset_ilt_result.npz`；公共 schema 不变，`best_parameters` 在 LevelSet 中语义为 phi。
 
 ## 5. Scope
 
 ### 5.1 In Scope
 
-- macro-query 精确 SDF；query-global current phi / spatial-gradient field；hard-forward surrogate-backward；macro-global Adam。
-- `PixelMacroProblem` 增通用 query-array→core-canvas helper。
-- `_ilt_workflow/ILTMethod` 去除 Simple 专属 final-context 假设；Simple context helper 单一事实源。
-- config、adapter、runner、tests、contracts、architecture dataflow、manual、reports。
+- production raster SDF once/macro；
+- macro-global `phi`；
+- 1-pixel physical halo；
+- macro-global `|grad(phi)|` coefficient once/backward-state；
+- external-gradient STE；
+- cross-core raw gradient sum；
+- macro-global Adam；
+- `_ilt_workflow` final-context 最小通用化；
+- LevelSet config/adapter/runner/tests/docs；
+- `requirements.txt` 增 `scipy`。
 
 ### 5.2 Out of Scope
 
-SDF reinitialization/fast marching/narrow-band；macro 间参数交换/seam healing；MRC/EPE/shot；CurvMulti/Multilevel 算法实现；无关 workflow/pixel API 重构。
+- SDF reinitialization / fast marching / narrow-band；
+- macro 间参数交换 / seam healing；
+- MRC / EPE / shot；
+- CurvMulti / Multilevel 算法实现；
+- `trainable_index_canvas` 的矩形 slice 优化；
+- Simple ILT optimizer/参数化重构；
+- unrelated pixel/workflow API 重构。
 
 ## 6. Invariants
 
-- **INV-001 Unique Phi**：同一 macro query 物理坐标只有一个当前 phi。
-- **INV-002 Unique Spatial Gradient**：同一 state、同一物理坐标只有一个 `|grad(phi)|`，与 core/batch 无关。
-- **INV-003 Sign**：`target>=0.5 -> initial phi<0`；`phi<0 <=> binary=True`；`phi==0 -> False`。
-- **INV-004 Ownership Separation**：macro ownership=parameter ownership；core ownership=loss ownership；macro 外 query context 只读；padding transmission=0。
-- **INV-005 Macro Barrier**：同一 state 全 core 读同一快照，raw gradient 求和，Adam 仅屏障后一步。
-- **INV-006 Macro Best**：best 只来自完整已评价 macro state。
-- **INV-007 Method-independent Workflow**：公共 workflow 不含 Simple/LevelSet 数学参数化。
+- **INV-001 Unique Phi**：每个 macro ownership 参数只有一个 `macro_phi[P]`。
+- **INV-002 Unique Gradient Coefficient**：每个 backward state，每个 macro 参数只有一个 `macro_grad_magnitude[P]`。
+- **INV-003 Cross-Core Identity**：同一 P 在 core A/B gather 到相同 phi 与 grad coefficient。
+- **INV-004 Sign**：`target>=0.5 -> initial phi<0`；`phi<0 <=> binary=True`；`phi==0 -> False`。
+- **INV-005 Ownership Separation**：macro ownership=parameter ownership；core ownership=loss ownership。
+- **INV-006 Fixed Context**：macro 外真实 context 固定，padding transmission=0。
+- **INV-007 Macro Barrier**：全部 core raw gradient sum 后 Adam 恰一次。
+- **INV-008 Macro Best**：best 只来自完整已评价 macro state。
+- **INV-009 Method-independent Workflow**：公共 workflow 不含 Simple/LevelSet 数学字段。
+- **INV-010 Simple Zero Regression**：本 change 不改变 Simple solver 热路径的数值语义。
 
 ## 7. Architecture and Data Flow
 
@@ -216,280 +368,327 @@ SDF reinitialization/fast marching/narrow-band；macro 间参数交换/seam heal
 
 | Component | Responsibility | MUST NOT own |
 |---|---|---|
-| `PixelMacroProblem` | query raster、通用 query-array→core canvas 坐标映射 | LevelSet/Simple 数学 |
-| `ilt.levelset` | SDF、query spatial gradient、STE、macro phi/Adam、fixed-context helper、solver | GDS/TOML/artifact |
-| `ilt.simple` | Simple solver + Simple fixed-context helper | workflow |
+| `PixelMacroProblem` | query raster、core target/ownership/trainable/context 映射 | LevelSet/Simple 数学 |
+| `ilt.levelset` | SDF、macro halo gradient、STE、Adam、LevelSet final context、solver | workflow/GDS/TOML |
+| `ilt.simple` | 现有 Simple solver + Simple final-context helper | workflow |
 | `ilt._common` | 中性 result/record/loss/curvature | method context policy |
 | `_ilt_workflow` | prepare/solve/final-eval/artifact/merge | sigmoid/phi 数学 |
-| method adapters | `ILTMethod` 装配 + thin run | 数学复制/optimizer |
+| method adapter | `ILTMethod` 装配 + thin run | optimizer/算法公式复制 |
 
 ### 7.2 Data Flow
 
 ```text
 PixelMacroProblem.target_u8 [Hq,Wq]
- -> signed_distance_initialization                         # once / macro
- -> initial_query_phi
-      ├─ ownership crop -> macro_phi [Hm,Wm]              # trainable CPU
-      └─ outside ownership -> fixed query phi             # readonly
+ -> scipy EDT once/macro
+ -> initial_query_phi [Hq,Wq]
+ -> ownership crop
+ -> macro_phi [Hm,Wm]                         # unique trainable parameter
 
 for state in 0..N:
-    current_query_phi = initial_query_phi
-    overwrite ownership with macro_phi snapshot
-
     if state < N:
-        query_grad_magnitude = spatial_gradient(current_query_phi)      # once/state
+        phi_halo = fixed 1px context + macro_phi snapshot
+        macro_grad_magnitude = central_difference(phi_halo)   # [Hm,Wm], once/state
         macro_gradient = 0
 
     for core batch:
-        phi_canvas  = query_array_canvas(current_query_phi)
-        grad_canvas = query_array_canvas(query_grad_magnitude)          # backward states only
         target / ownership / trainable-index / valid
+        gather local_phi from macro_phi
+        gather local_grad_mag from macro_grad_magnitude
+        local_hard = LevelSetBinarize(local_phi, local_grad_mag)
+        fixed context = hard target; padding = 0
+        mask = trainable ? local_hard : fixed context
 
-        local leaf values come from macro_phi snapshot
-        hard = LevelSetBinarize(phi_canvas, grad_canvas)
-        padding hard = 0
         printed = model.forward_many(three conditions)
         loss = ownership-only shared losses + optional curvature
-        backward -> scatter-add local grad -> macro_gradient
+        backward -> scatter-add local.grad -> macro_gradient
 
-    record full state / update macro best
+    record full macro state; update best
+
     if state < N:
-        Adam(macro_phi, summed macro_gradient) exactly once
+        macro Adam step exactly once
 
-best -> ILTMacroResult -> method-independent final evaluation/artifacts/merge
+best -> ILTMacroResult -> common final evaluation/artifacts/merge
 ```
-
-关键点：`phi_canvas` 与 `grad_canvas` 是 query-global field 的窗口；core 不重新定义二者。
 
 ## 8. Data Contracts
 
 ### 8.1 `LevelSetILTConfig`
 
-六字段全部 required、无默认：`iterations:int>=1`、`step_size:finite>0`、`weight_process_l2:finite>=0`、`weight_pvband:finite>=0`、`curvature_weight:finite>=0`、`batch_size:int>=1`。bool 不得当 int。nominal 权重固定 1；SDF threshold 固定 0.5；binary threshold 固定严格 0。不得为兼容公共 workflow 增加 `sigmoid_steepness` 或 `mask_threshold`。
+全部字段 required、无默认：
 
-### 8.2 Tensor Residency
+```text
+iterations: int >= 1
+step_size: finite float > 0
+weight_process_l2: finite float >= 0
+weight_pvband: finite float >= 0
+curvature_weight: finite float >= 0
+batch_size: int >= 1
+```
+
+bool 不得当 int。nominal 权重固定 1；SDF threshold 固定 0.5；binary threshold 固定严格 0。不得为了兼容公共 workflow 增加 `sigmoid_steepness` 或 `mask_threshold`。
+
+### 8.2 Tensor/Array Residency
 
 | Name | Shape/type | Resident | Lifetime |
 |---|---|---|---|
 | `initial_query_phi` | float32 `[Hq,Wq]` | CPU | macro solve |
-| `current_query_phi` | float32 `[Hq,Wq]` | CPU | one state |
-| `query_grad_magnitude` | float32 `[Hq,Wq]` | CPU | one backward state |
 | `macro_phi` | float32 `[Hm,Wm]` | CPU | macro solve |
-| Adam `m/v` | float32 `2×[Hm,Wm]` | CPU | macro solve |
+| `phi_halo` | float32 `[Hm+2,Wm+2]` | CPU | one backward state |
+| `macro_grad_magnitude` | float32 `[Hm,Wm]` | CPU | one backward state |
 | `macro_gradient` | float32 `[Hm,Wm]` | CPU | one backward state |
+| Adam `m/v` | float32 `2×[Hm,Wm]` | CPU | macro solve |
 | `best_phi` | float32 `[Hm,Wm]` | CPU | macro solve |
-| EDT scratch | <=2×float64 query + 1D scratch | CPU | initialization only |
-| local phi/grad/hard/printed | canvas batch | GPU | one core batch |
+| EDT temporaries | SciPy float64 query arrays | CPU | initialization only |
+| local phi/grad/hard/printed | core canvas batch | GPU | one batch |
 
 完整 macro autograd graph 不得常驻 GPU。
 
-## 9. Interface Changes
+## 9. Interfaces
 
 ### IF-001 LevelSet API
 
 ```python
-signed_distance_initialization(target, threshold=0.5)
-spatial_gradient_magnitude(query_phi: np.ndarray) -> np.ndarray
-build_levelset_fixed_context_canvas(problem, core_index, config) -> np.ndarray
+@dataclass(frozen=True, slots=True)
+class LevelSetILTConfig: ...
+
+signed_distance_initialization(target_u8: np.ndarray) -> np.ndarray
+macro_gradient_magnitude(problem, initial_query_phi, macro_phi) -> np.ndarray
+build_levelset_final_context_canvas(problem, core_index, config) -> np.ndarray
 optimize_levelset_macro(problem, model, config, *, on_tiles_completed=None) -> ILTMacroResult
 ```
 
-`spatial_gradient_magnitude` 的权威定义域是 macro query。
+内部 helper 名称允许调整，但外部语义不得变化。
 
-### IF-002 Generic query-array canvas
+### IF-002 `ILTMethod`
 
 ```python
-PixelMacroProblem.query_array_canvas(
-    array: np.ndarray,
-    core_index: int,
-    *,
-    fill_value=0,
-) -> np.ndarray
+@dataclass(frozen=True, slots=True)
+class ILTMethod:
+    method_name: str
+    config_type: type
+    optimize_macro: Callable
+    evaluated_states: Callable
+    build_fixed_context_canvas: Callable
 ```
 
-要求 `array.shape == target_u8.shape`，复用 `_context_window/_center_padding`；`target_canvas` SHOULD 改为调用该 helper。不得为单 core 构造 O(macro_pixels) 全宏索引表。
+不增加 optimizer factory、parameterization base class、registry 等当前无第二调用价值的接口。
 
-### IF-003 ILTMethod strategy
+### IF-003 Config/CLI
 
-`ILTMethod` 从四字段扩展一个 `build_fixed_context_canvas` callable。Simple 与 LevelSet adapter 均提供；公共 final evaluation 只认该接口。
-
-### IF-004 Config/CLI
-
-`CONFIG_SECTIONS[LevelSetILTConfig] = "levelset_ilt"`；新增 `LEVELSET_ILT_METHOD`、`run_levelset_ilt`、`main/run_levelset_ilt.py` 与 `config/levelset_ilt.toml`。
+- `CONFIG_SECTIONS[LevelSetILTConfig] = "levelset_ilt"`
+- 新增 `LEVELSET_ILT_METHOD`
+- 新增 `main/_levelset_ilt_workflow.py`
+- 新增 `main/run_levelset_ilt.py`
+- 新增 `config/levelset_ilt.toml`
+- `requirements.txt` 墘 `scipy`
 
 ## 10. Algorithm
 
 ### 10.1 SDF
 
-mixed target 分别计算到前景/背景的精确 EDT；前景位置取负 inside distance，背景取正 outside distance。全前景/全背景使用有限常量 `-/+max(Hq,Wq)`。距离单位为 pixel center。
+```text
+binary = target_u8 >= 128     # 等价于 target>=0.5 的 uint8 语义需在实现中精确确认
 
-### 10.2 State Loop
+if all(binary):
+    phi = -max(Hq,Wq)
+elif none(binary):
+    phi = +max(Hq,Wq)
+else:
+    outside = EDT(~binary)    # background -> nearest foreground
+    inside  = EDT(binary)     # foreground -> nearest background
+    phi = outside
+    phi[binary] = -inside[binary]
+```
+
+注意：若实现直接以 `target_u8.astype(float32)/255 >= 0.5` 判断，则阈值事实源以该表达式为准；不得在代码不同位置混用 `>=127`、`>=128` 等不等价整数阈值。推荐直接使用归一化浮点比较，测试覆盖 `127/128`。
+
+### 10.2 Macro Halo Gradient
 
 ```text
-query_target = target_u8 / 255
-initial_query_phi = SDF(query_target)                  # once
-macro_phi = ownership_crop(initial_query_phi).copy()
-Adam state = zeros_like(macro_phi)
+macro_phi = ownership crop(initial_query_phi)
 
-for state_index in 0..N:
-    build_gradient = state_index < N
+for backward state:
+    phi_halo = ownership + 1 physical pixel context
+    overwrite halo center with macro_phi snapshot
 
-    current_query_phi = initial_query_phi.copy()
-    current_query_phi[ownership] = macro_phi           # authoritative snapshot
-
-    if build_gradient:
-        query_grad = spatial_gradient_magnitude(current_query_phi)     # once
-        macro_gradient = zeros_like(macro_phi)
-
-    sums = 0
-    for core batch:
-        phi_canvas = crop(current_query_phi)
-        grad_canvas = crop(query_grad) if build_gradient else None
-        trainable = trainable_index_canvas
-
-        # 为 autograd 建 local leaf；数值必须与 phi_canvas trainable 位一致
-        local = gather(macro_phi, trainable>=0)
-        phi_device = fixed phi canvas with trainable positions replaced by local
-        hard = LevelSetBinarize(phi_device, grad_canvas) if build_gradient \
-               else (phi_device < 0)
-        hard[padding] = 0
-
-        printed = forward_many(hard, nominal/dose_max/defocus_min)
-        loss = shared ownership losses + optional curvature
-        accumulate scalars
-
-        if build_gradient:
-            backward(loss)
-            scatter-add local.grad -> macro_gradient
-
-    record full macro state; update best on strict decrease
-    if build_gradient:
-        validate gradient
-        Adam_step(macro_phi, macro_gradient) exactly once
-        validate phi/m/v
+    dx = (right - left) / 2
+    dy = (up - down) / 2
+    macro_grad = sqrt(dx^2 + dy^2)
 ```
 
-禁止在 batch 内更新参数；禁止从某个 core canvas 计算 `grad_canvas`。
+`macro_grad` 只定义在 trainable macro ownership；fixed context 不需要代理参数梯度。
 
-### 10.3 STE
+### 10.3 Core Batch
 
-```python
-forward(phi, grad_mag):
-    return (phi < 0).to(phi.dtype)
+```text
+trainable = problem.trainable_index_canvas(core)
+owned = trainable >= 0
+safe = where(owned, trainable, 0)
 
-backward(grad_output):
-    return -grad_mag * grad_output, None
+local_phi = macro_phi_flat[safe]
+local_grad = macro_grad_flat[safe]
+local_hard = LevelSetBinarize(local_phi, local_grad)
+
+fixed_hard = target>=0.5 on valid physical context
+fixed_hard = 0 on numerical padding
+mask = where(owned, local_hard, fixed_hard)
 ```
 
-`grad_mag` 必须 detach/no-grad；常量 field 的梯度幅值为 0，不做 fallback。
+local tensor 是 GPU leaf；backward 后只把 `local.grad[owned]` scatter-add 到唯一 `macro_gradient`。
 
-### 10.4 Fixed Context
+### 10.4 Adam
 
-训练时 macro 外 query context 的 phi 固定为 `initial_query_phi`；hard transmission 因而等价于 `target>=0.5`。终评 LevelSet fixed context 直接从 target hard sign 构造，避免第二次 EDT。Simple fixed context 继续保持 `sigmoid(beta*(2T-1))`，但训练和终评必须共用 `simple.py` 中同一 helper。
+```text
+for state 0..N:
+    evaluate all cores
+    update best
 
-## 11. Ownership and State
+    if state < N:
+        verify macro_gradient finite
+        macro_parameter.grad = macro_gradient
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        verify macro_phi and Adam state finite
+```
 
-`macro_phi + Adam m/v` 由当前 macro 独占；`trainable_index_canvas` 是 core→macro 参数的唯一映射。每个 core 的 `ownership_canvas` 唯一计分，因此不同 core loss 对同一参数的偏导是总目标的不同项，必须求和而非平均。
+## 11. Performance and Memory
 
-`initial_query_phi` 全程只读；`current_query_phi/query_grad_magnitude` 每 state 派生；core-local tensor 均为临时窗口，不得成为权威状态。
+1. SDF：`1 call/macro`；生产实现使用 SciPy compiled EDT，禁止 Python 像素级双重热循环。
+2. `macro_grad_magnitude`：`iterations calls/macro`，每次只处理 `[Hm+2,Wm+2]`，不随 core_count/batch_size 增长。
+3. 不构造每 state 的完整 `current_query_phi[Hq,Wq] + query_grad_magnitude[Hq,Wq]`。
+4. 每 state/core batch 仍仅一次 `forward_many(three conditions)`。
+5. `curvature_weight==0` 时不构建 conv。
+6. GPU 仅保留当前 batch autograd graph；macro phi/Adam state 常驻 CPU。
+7. 不缓存所有 core 的 `target/ownership/trainable/valid` canvas；现有按需构造策略保持。
+8. `trainable_index_canvas` 的矩形 slice 优化属于后续性能 change，本 change 不扩大范围。
+9. smoke 必须记录 total/SDF/macro-gradient 时间、CPU RSS、CUDA peak，并与同输入 Simple 做事实对照。
 
 ## 12. Error Handling
 
-非法 config、target/shape/canvas mismatch、`context_dbu<pixel_dbu` -> `ValueError`。非有限 loss、macro gradient、macro phi、Adam state、query gradient -> `FloatingPointError`。EDT/CUDA/I/O 未知异常原样传播；不得跳过 core/pixel、重置 optimizer 或发布部分成功 macro。
+以下前置失败：
 
-## 13. Performance and Memory
+- config 非法；
+- target/canvas/shape mismatch；
+- `context_dbu < pixel_dbu`；
+- SDF/halo 索引无法取得完整 1px context。
 
-- SDF：`1 call / macro`，`O(HqWq)`。
-- query spatial gradient：`iterations calls / macro`，即每个需要 backward 的 state 恰一次；不得随 core_count/batch_size 增长。
-- 每 state/core batch 仍仅一次 `forward_many(three conditions)`；curvature=0 不构建 conv。
-- CPU 允许 `initial/current/query_grad` 三张 float32 query 量级临时/常驻组合；可通过 workspace 复用进一步降低，但不得牺牲语义。
-- EDT 峰值目标：至多两张 float64 query workspace，foreground/background 顺序复用。
-- GPU 只保留当前 core batch 的 autograd 图；不得常驻完整 macro phi/grad graph。
-- 不缓存所有 core 的完整 `trainable/ownership/valid/phi` canvas；仅可缓存轻量 window/padding 元数据。
-- smoke 记录 total、SDF、query-gradient 时间，CPU RSS、CUDA peak，并与同输入 Simple 只做事实对照。
+异常类型：配置/形状/契约错误 -> `ValueError`；非有限 loss、macro gradient、macro phi、Adam state、macro grad magnitude -> `FloatingPointError`。
 
-## 14. File-Level Change Plan
+EDT/CUDA/I/O 未知异常原样传播；不得跳 core/pixel、重置 optimizer、发布部分成功 macro 或用零值静默替代失败结果。
 
-| File / Symbol | Action | Contract change | Reason |
+## 13. File-Level Change Plan
+
+| File / Symbol | Action | Change | Reason |
 |---|---|---|---|
-| `opc/input/pixel/problem.py` | modify | 增 `query_array_canvas`；`target_canvas` 复用 | 坐标事实唯一 |
-| `opc/iteration/ilt/levelset.py` | add | config、EDT/SDF、query spatial gradient、external-grad STE、fixed context、macro Adam solver | 核心算法 |
-| `opc/iteration/ilt/simple.py` | modify | 提取并复用 `build_simple_fixed_context_canvas` | 训练/终评单一公式源 |
-| `opc/iteration/ilt/__init__.py` | modify | 导出 LevelSet API | 公共入口 |
-| `main/_ilt_workflow.py` | modify | `ILTMethod` 增 fixed-context strategy；终评移除 Simple 专属字段 | 方法无关 workflow |
-| `main/_simple_ilt_workflow.py` | modify | 挂载 Simple fixed-context helper | Simple 零回归 |
-| `main/_levelset_ilt_workflow.py` | add | METHOD + thin run，仅装配 callable | 新方法接入 |
+| `requirements.txt` | modify | 增 `scipy` | compiled exact EDT |
+| `opc/iteration/ilt/levelset.py` | add | config、SciPy SDF、macro halo gradient、STE、final context、macro Adam solver | 核心算法 |
+| `opc/iteration/ilt/simple.py` | modify minimal | 仅增 `build_simple_final_context_canvas`；不改 solver 热路径 | final workflow 解耦 |
+| `opc/iteration/ilt/__init__.py` | modify | 导出 LevelSet API/final helper | 方法入口 |
+| `main/_ilt_workflow.py` | modify | `ILTMethod` 增 final-context strategy；终评去除 Simple 专属字段 | method-independent workflow |
+| `main/_simple_ilt_workflow.py` | modify minimal | 挂载 Simple final-context helper | Simple 适配 |
+| `main/_levelset_ilt_workflow.py` | add | METHOD + thin run | LevelSet 适配 |
 | `main/configuration.py` | modify | 注册 `[levelset_ilt]` | 配置 |
-| `main/run_levelset_ilt.py` | add | 直接入口 | CLI |
-| `config/levelset_ilt.toml` | add | smoke 配置 | 可运行样例 |
-| `tests/opc/input/test_pixel_problem.py` | modify | query-array 映射/target 回归 | 坐标正确性 |
-| `tests/opc/iteration/test_levelset_ilt.py` | add | SDF、唯一 phi/grad、STE、Adam、cross-core、real model | 核心验证 |
-| `tests/opc/iteration/test_simple_ilt.py` | modify as needed | context helper 重构零回归 | 兼容 |
+| `main/run_levelset_ilt.py` | add | CLI | 直接运行 |
+| `config/levelset_ilt.toml` | add | smoke config | 可运行样例 |
+| `tests/opc/iteration/test_levelset_ilt.py` | add | SDF/halo/STE/Adam/cross-core/real model | 核心验证 |
+| `tests/opc/iteration/test_simple_ilt.py` | modify as needed | final helper 等价性 + zero regression | Simple 保护 |
 | `tests/main/test_levelset_ilt_runner.py` | add | config/adapter/CLI/artifact/final context | 集成 |
 | `tests/main/test_simple_ilt_runner.py` | modify as needed | workflow 通用化零回归 | 兼容 |
 | `tests/main/test_configuration.py` | modify | 新 section 严格解析 | 配置 |
-| `doc/contracts/ilt.md` | modify | LevelSet + 新 ILTMethod contract | 契约 |
+| `doc/contracts/ilt.md` | modify | LevelSet + ILTMethod contract | 契约 |
 | `doc/architecture/system.md` | modify | LevelSet 组件 | 架构 |
-| `doc/architecture/dataflow/index.md` | modify | 索引 LevelSet dataflow | 当前文档结构 |
-| `doc/architecture/dataflow/levelset_ilt.md` | add | 函数级流向 + 伪代码 + 边界 | 当前文档结构 |
+| `doc/architecture/dataflow/index.md` | modify | 索引 LevelSet flow | 文档入口 |
+| `doc/architecture/dataflow/levelset_ilt.md` | add | 函数级流向/边界/伪代码 | 当前事实 |
 | `doc/development_manual.md`、`doc/test_manual.md` | modify | 使用/测试 | 交付 |
-| change active→completed + `development_report.md` + `test_report.md` | move/add | baseline、实施偏差、测试/性能 | 交付 |
+| change active→completed + reports | move/add | development/test report | 完成闭环 |
 
-不得修改已废弃的 `doc/architecture/dataflow.md` 路径；不得借本 change 重构 unrelated workflow。
+不得借本 change 修改 `PixelMacroProblem` 映射 API；现有 `trainable_index_canvas` 已足够完成正确实现。
 
-## 15. Test Specification
+## 14. Test Specification
 
-### TEST-001 SDF exactness/lifecycle
+### TEST-001 SDF definition / performance path
 
-rectangle/single/hole/all-empty/all-full 与 brute-force 最近距离逐值比对；sign/strict-zero 明确。spy：一个 macro 的 SDF 调用数恒为 1，与 core/state/batch 无关。
+- rectangle/single/hole/mixed target 与 brute-force 最近 opposite-class pixel-center 距离逐值对比；
+- `target_u8=127/128` 固定 threshold 语义；
+- all-empty/all-full 有限常量与 sign；
+- spy：一个 macro 的 production SDF 调用恰一次；
+- production implementation 必须调用 SciPy EDT，禁止落回 Python 逐像素 EDT。
 
-### TEST-002 Query-array mapping
+### TEST-002 Macro halo gradient exactness
 
-标号 query array 在 A/B overlap 同一物理坐标裁值一致；padding fill 正确；`target_canvas` 重构前后逐值一致。
+构造手算 `macro_phi` + 1px fixed context，逐值验证中心差分。重点覆盖 macro ownership 边缘参数，证明其梯度使用真实 query context，而非 core-local replicate。
 
-### TEST-003 Query-global spatial gradient
+spy：`macro_gradient_magnitude` 调用数恰等于 `iterations`/macro；末纯评价 state 不调用。
 
-手算中心差分与 replicate query outer boundary。构造物理像素 P：P 在 core A 的 local window 边缘、在 core B 内部，断言从 query-global field 裁出的 `phi_A(P)==phi_B(P)` 且 `grad_A(P)==grad_B(P)`。
+### TEST-003 Cross-core identity
 
-测试必须能击穿错误实现：若在各 core-local canvas 上自行 pad+差分，则该场景结果不同并失败。
+构造同一参数 P 同时出现在 core A/B context：
 
-spy：`spatial_gradient_magnitude` 调用数恰为 `iterations`/macro，不随 core_count/batch_size 增长；末纯评价 state 不调用。
+```text
+local_phi_A(P) == local_phi_B(P)
+local_grad_mag_A(P) == local_grad_mag_B(P)
+```
+
+测试必须能击穿按 core 自己做空间差分的错误实现。
 
 ### TEST-004 STE
 
-forward 严格 `phi<0`；给定显式 `grad_mag` 和 `grad_output`，backward 逐值等于 `-grad_mag*grad_output`；对 grad_mag 返回 None；证明 backward 不调用任何空间差分 helper。
+给定显式 local phi / grad magnitude / upstream gradient：
+
+```text
+forward == (phi<0)
+backward == -grad_mag * grad_output
+```
+
+`grad_mag` 返回 None；backward 不调用任何 spatial-gradient helper。
 
 ### TEST-005 Cross-core gradient sum
 
-局部耦合 differentiable lithography stub；同一 macro 参数 P 同时影响 A/B ownership loss，验证两个 core 使用同一 query-global grad coefficient，local raw gradients scatter-add 求和；batch=1/2 结果一致；owner-only 或平均实现失败。
+使用局部耦合 differentiable lithography stub；同一参数 P 同时影响 A/B ownership loss，验证两份 local raw gradient 被求和而非平均。`batch_size=1/2` 结果一致。
 
-### TEST-006 Macro Adam barrier
+### TEST-006 Adam reference / macro barrier
 
-独立数值 Adam 参考：所有 core 同一快照、每 state 恰一次 macro step、m/v 唯一；N=2 -> 3 个评价 state；禁止 batch 内提前 step。
+使用 CPU `torch.optim.Adam` reference 固定参数：`betas=(0.9,0.999), eps=1e-8, weight_decay=0, amsgrad=False`。
+
+验证：
+
+- 所有 core 同一参数快照；
+- 每 backward state 恰一次 macro step；
+- m/v 唯一；
+- N=2 -> 3 个 evaluated states；
+- batch 内提前 step 的错误实现失败。
 
 ### TEST-007 Context/padding
 
-macro ownership 参数可从邻 core context 得梯度；macro 外 context 固定；padding hard transmission=0；`context_dbu<pixel_dbu` 前置失败。
+- macro 外真实 context hard=`target>=0.5`；
+- padding=0；
+- macro ownership 参数可从邻 core ownership loss 得梯度；
+- `context_dbu<pixel_dbu` 前置失败。
 
 ### TEST-008 Loss/curvature/real model
 
-共享 nominal/process/PV 逐值；curvature ownership-only 且 weight0 无 conv；真实 ICCAD13 CPU 一轮 backward/update/final eval finite；有 CUDA 时 smoke/parity 并记录资源。
+共享 nominal/process/PV 逐值；curvature ownership-only；weight0 无 conv。真实 ICCAD13 CPU 至少 1 次 update + final evaluation 全 finite；CUDA 可用时执行 smoke/parity 并记录资源。
 
 ### TEST-009 Workflow method independence
 
-fake method 证明 `_ilt_workflow` 不访问 `sigmoid_steepness/mask_threshold/phi`。Simple 训练与 final evaluation 的 fixed context 调用同一 helper；LevelSet final context 不触发 SDF。
+fake method 证明 `_ilt_workflow` 不访问 `sigmoid_steepness/mask_threshold/phi`。LevelSet final context 不运行 SDF；Simple final context helper 与 Simple solver 现有 context 公式数值等价。
 
-### TEST-010 CLI/artifact/Simple zero regression
+### TEST-010 Simple zero regression / CLI / artifact
 
-合法/缺键/未知键/nonfinite/bool-int；仓库外 cwd 默认/显式 config；LevelSet result/metrics/best/final/summary schema 与公共格式一致。Simple 固定 workload 的 best/binary/binary_l2/pvband/artifact key 与重构前一致；全量测试绿色。
+- Simple solver 源码热路径不被 LevelSet change 改写；
+- 固定 Simple workload 的 best/binary/binary_l2/pvband/artifact key 与变更前一致；
+- LevelSet 合法/缺键/未知键/nonfinite/bool-int 配置；
+- 仓库外 cwd 默认/显式 config；
+- LevelSet result/metrics/best/final/summary schema 与公共格式一致；
+- 全量测试绿色。
 
-### 15.1 Verification Commands
+## 15. Verification Commands
 
 ```bash
 python -m pytest -q tests/opc/iteration/test_levelset_ilt.py
-python -m pytest -q tests/opc/input/test_pixel_problem.py
-python -m pytest -q tests/main/test_levelset_ilt_runner.py tests/main/test_simple_ilt_runner.py
 python -m pytest -q tests/opc/iteration/test_simple_ilt.py
+python -m pytest -q tests/main/test_levelset_ilt_runner.py tests/main/test_simple_ilt_runner.py
+python -m pytest -q tests/main/test_configuration.py
 python -m pytest -q tests
 python -m ruff check common layout geometry opc lithography evaluation main tests
 python -m compileall -q common layout geometry opc lithography evaluation main tests
@@ -500,62 +699,94 @@ git diff --check
 
 ## 16. Acceptance Criteria
 
-- [ ] AC-001：直接入口、method、artifact/merge contract 完成。
-- [ ] AC-002：SDF once/macro，精确距离/sign/strict-zero 通过。
-- [ ] AC-003：同一 overlap 物理像素在 A/B core 中 `phi` 与 `|grad(phi)|` 均一致；query gradient 每 backward state 只计算一次。
-- [ ] AC-004：cross-core gradient sum、macro Adam barrier、batch invariance 通过。
-- [ ] AC-005：context fixed、padding0、N+1 best/loss/curvature/真实模型通过。
-- [ ] AC-006：`_ilt_workflow` 无方法数学字段；Simple context helper 单一事实源且数值零回归。
-- [ ] AC-007：contracts、`dataflow/levelset_ilt.md`、manual、development_report、test_report、baseline/revision evidence 完成。
+- [ ] AC-001：LevelSet CLI/method/config/artifact/merge 完成。
+- [ ] AC-002：production SDF 使用 SciPy EDT，once/macro；距离/sign/127-128/all-empty/all-full 通过。
+- [ ] AC-003：每 backward state 只构造一次 macro 1px halo 和一次 `[Hm,Wm]` gradient coefficient；不构造完整 query current/gradient field。
+- [ ] AC-004：同一参数跨 core 的 phi/grad coefficient 完全一致。
+- [ ] AC-005：cross-core raw gradient sum、batch invariance、macro Adam barrier 通过。
+- [ ] AC-006：Adam 参数与 PyTorch reference 一致；N update + N+1 evaluated states 通过。
+- [ ] AC-007：LevelSet fixed context hard、padding0、loss/curvature/best/真实模型通过。
+- [ ] AC-008：`_ilt_workflow` 无方法数学字段，只新增 final-context strategy。
+- [ ] AC-009：Simple solver 热路径保持原样，final helper 数学等价，固定 workload 零回归。
+- [ ] AC-010：contracts/dataflow/manual/development_report/test_report 与最终实现同步；full tests/ruff/compileall/diff-check 全绿。
 
 ## 17. Compatibility and Migration
 
-- `PixelMacroProblem` NPZ v1 不变，只增加派生 helper。
+- `PixelMacroProblem` NPZ v1 不变；不新增 query-array canvas API。
 - `ILTMacroResult` 与 result NPZ schema 不变。
-- `ILTMethod` 有一次向后兼容字段扩展；Simple adapter 同步提供 strategy。
-- Simple CLI/数值必须零变化。
-- LevelSet 不承诺与 OpenILT 单 tile 逐值一致；保留其 hard/STE/Adam 核心算法，工程上增加 macro-query 唯一 field 与 core-batched optics。
-- CurvMulti/Multilevel 的 active spec 在实施前 MUST 以完成后的真实 `ILTMethod` contract 重新核对；其中“ILTMethod 必须保持四字段完全不变”的旧假设不得继续作为阻塞条件。
+- `ILTMethod` 增加一个 final-context callable；Simple adapter 同步提供。
+- Simple CLI/config/solver 数值语义不得变化。
+- `requirements.txt` 新增 SciPy 是本 change 唯一新增 runtime dependency。
+- LevelSet 不承诺与 OpenILT initializer/单 tile 逐值一致；保留 hard/STE/Adam 核心算法，SDF 使用本文固定的 raster pixel-center 定义。
+- CurvMulti/Multilevel active spec 在实施前必须以完成后的真实 `ILTMethod` contract 重新核对。
 
 ## 18. Decisions
 
-### DEC-001 OpenILT tile -> MyOPC macro query
+### DEC-001 OpenILT tile -> MyOPC macro parameter domain
 
-LevelSet field 是物理连续状态；core 是计算切片。按 core 建 SDF 会直接产生多份同位置 phi。
+LevelSet 参数是物理连续状态；core 只是计算切片。按 core 建参数/SDF 会直接产生多份同位置状态。
 
-### DEC-002 Query-global spatial gradient
+### DEC-002 Unique coefficient defined only for trainable parameters
 
-仅保证唯一 phi 不够。OpenILT backward 乘 `|grad(phi)|`；若在 core-local canvas 重算中心差分，同一 P 会因 local window 边缘/padding 得到不同 surrogate coefficient，导致优化依赖 core 切分。故每 backward state 必须先在 macro query 上计算唯一梯度场，再裁给 core。
+代理 backward 只需要可训练 `phi` 的 `|grad(phi)|`。因此无需为整个 macro query 每轮生成完整空间梯度场；`macro_phi + 1px physical halo -> macro_grad_magnitude[Hm,Wm]` 已充分且更省内存。
 
-### DEC-003 Macro Adam
+### DEC-003 No core-local spatial difference
 
-Adam 是带状态的非线性更新；按 core/batch step 会让结果依赖切分/order，必须 raw gradient 全部求和后一步更新。
+同一参数在不同 core 中的位置不同。若每个 core 对自己的画布做 replicate/padding 差分，同一 P 可能得到不同 surrogate coefficient，使算法依赖 core partition。故 spatial difference 必须在 macro 参数域统一计算一次。
 
-### DEC-004 Fixed-context strategy belongs to algorithm module
+### DEC-004 Macro Adam
 
-adapter 只装配，不复制公式；Simple solver 与 final evaluation 共用 `simple.py` helper，避免未来训练/终评漂移。LevelSet final hard context 直接由 target sign 得到，禁止重复 EDT。
+Adam 是带状态非线性更新；按 core/batch step 会使结果依赖切分/order。必须先 sum 全部 raw gradient，再一步更新。
 
-### DEC-005 EDT memory bound
+### DEC-005 SciPy EDT over Python EDT
 
-精确 EDT 保留，但 foreground/background 顺序执行并复用两张 float64 query workspace；算法正确性优先于极端微优化。
+旧 O(HW) EDT 虽渐近复杂度正确，但主体为 Python row/column loop，不适合作为大像素图生产路径。生产实现使用 SciPy compiled EDT；旧实现只作为 correctness oracle。
+
+### DEC-006 Minimal workflow abstraction
+
+公共 workflow 只抽象实际发生差异的 final fixed-context policy。不为两个算法建立参数化基类、optimizer factory 或通用 solver engine。
+
+### DEC-007 Preserve Simple hot path
+
+Simple solver 已完成并通过现有测试。为消灭几行 sigmoid 公式重复而让训练改走 NumPy helper/CPU round-trip，收益小于回归风险，因此本 change 不做。
+
+### DEC-008 N+1 state is intentional MyOPC behavior
+
+MyOPC best 必须来自完整已评价状态；因此最后一次 update 后再评价一次。与 OpenILT 原始 loop 的 state count 差异是明确适配，不是 bug。
 
 ## 19. Open Questions
 
 Blocking：None。
 
-Non-blocking：SDF reinitialization、narrow-band、macro seam healing、query workspace 进一步原地复用均另立 change；本 change 不引入这些复杂度。
+Non-blocking：SDF reinitialization、narrow-band、macro seam healing、`trainable_index_canvas -> rectangular slice` 性能优化均另立 change。
 
 ## 20. Implementation Freedom
 
-允许等价 EDT workspace、显式或 PyTorch CPU Adam、局部 helper 命名调整；不得改变：macro-query 唯一 SDF、每 backward state 唯一 query phi/grad field、macro-global phi、core loss ownership、cross-core raw-gradient sum、macro Adam once、hard `phi<0`、external-grad STE、padding0、公共 workflow 无方法数学参数。
+允许：helper 命名、SciPy EDT workspace 组织、CPU Torch/NumPy 间零拷贝细节、等价 PyTorch Adam 管理方式调整。
+
+不得改变：
+
+- raster SDF 定义与 once/macro；
+- macro-global phi；
+- 1px physical halo；
+- 每参数每 state 唯一 `macro_grad_magnitude`；
+- external-gradient STE；
+- cross-core raw-gradient sum；
+- macro Adam once；
+- Adam 参数；
+- hard `phi<0`；
+- fixed context hard / padding0；
+- N update + N+1 evaluated states；
+- 公共 workflow 只含 final-context strategy；
+- Simple solver 热路径零重构。
 
 ## 21. Implementation Stages
 
 | Stage | Objective | Main files | Verify |
 |---|---|---|---|
-| A | 通用 query canvas + method-independent final context + Simple helper 单一事实源 | pixel problem / simple / `_ilt_workflow` / Simple adapter | Simple 数值零回归 |
-| B | SDF + query-global spatial gradient + STE + macro Adam solver | levelset.py | TEST-001..008 |
-| C | config/adapter/runner/artifacts | main/config/tests | TEST-009..010 + direct main |
+| A | workflow final-context 最小通用化 + Simple helper | simple / `_ilt_workflow` / Simple adapter | Simple zero regression |
+| B | SciPy SDF + macro halo gradient + STE + macro Adam solver | levelset.py / requirements | TEST-001..008 |
+| C | config/adapter/runner/artifacts | main/config/tests | TEST-009..010 |
 | D | docs/full smoke/audit | contracts/dataflow/manual/reports | all commands |
 
 ## 22. Delivery and Final Audit
@@ -563,13 +794,15 @@ Non-blocking：SDF reinitialization、narrow-band、macro seam healing、query w
 交付前必须证明：
 
 1. 实施 baseline/status/test count 已更新；
-2. 一个 macro 的 SDF 调用恒为 1；
-3. query spatial-gradient 调用恒为 `iterations`，不随 core/batch 增长；
-4. overlap A/B 同一物理 P 的 phi 和 grad magnitude 均一致；
-5. 同一参数来自多个 core ownership loss 的梯度为 sum，不平均；
-6. Adam 每 backward state 只有一次 macro update；
-7. LevelSet final context 不重复 SDF；Simple 训练/终评 context 公式来自同一 helper；
-8. `_ilt_workflow` 不访问 Simple/LevelSet 数学配置；
-9. 无 workflow 复制、core-local 权威 phi/grad、独立 core EDT、gradient averaging、padding 伪透光；
-10. `doc/architecture/dataflow/levelset_ilt.md` 与 index 已更新；
-11. Simple/full tests、ruff、compileall、diff-check 全绿并输出 development_report/test_report。
+2. production SDF 使用 SciPy EDT 且一个 macro 恰一次；
+3. `macro_grad_magnitude` 调用恒为 `iterations`，不随 core/batch 增长；
+4. 不存在每 state 完整 `current_query_phi/query_grad_magnitude` query field；
+5. overlap A/B 同一参数的 phi 和 grad coefficient 完全一致；
+6. 同一参数来自多个 core ownership loss 的梯度为 sum，不平均；
+7. Adam 每 backward state 只有一次 macro update，参数与 PyTorch reference 一致；
+8. LevelSet final context 不重复 SDF；
+9. `_ilt_workflow` 不访问 Simple/LevelSet 数学配置；
+10. Simple solver 热路径未被 LevelSet change 改写，固定 workload 零回归；
+11. 无 workflow 复制、core-local SDF/gradient、gradient averaging、padding 伪透光；
+12. `doc/architecture/dataflow/levelset_ilt.md` 与 index 已更新；
+13. full tests、ruff、compileall、direct runner、diff-check 全绿并输出 development_report/test_report。

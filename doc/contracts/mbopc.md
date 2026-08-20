@@ -81,8 +81,44 @@ save_final_lithography(plan, final_layout, model, batch_size, output_dir)
   （merge patches 持有全部 clipped 为已知上界——PatchWriter 接口在
   geometry/）。
 
+## Gradient 求解器与可微 EPE loss（2026-08-20 CHG-20260819）
+
+```python
+class GradientMBOPCConfig:   # 尾部新增（旧 TOML 省略时 EPE 关闭）
+    weight_epe: float = 0.0        # 可微 EPE loss 权重（0=完全关闭）
+    epe_steepness: float = 4.0     # penalty sigmoid 陡度 γ
+
+class GradientMBOPCIterationRecord:   # 尾部新增
+    epe_loss: float = 0.0          # 加权前 L_epe（关闭路径恒 0.0）
+```
+
+- **公式**（参考 DiffOPC eq.(6)-(8) 的法向 profile 推广，独立实现）：
+  profile 固定在参考段中点 ± 法向 `q=(−R+0.5…R−0.5)·pixel`（Q=2R，
+  启用时要求 epe_distance 为 pixel 整数倍）；`d_s = Σ_q bilinear(D)`，
+  `D=(Z_nom−T)²` 复用 nominal 误差张量；`penalty=2(σ(γ·d_s)−0.5)`；
+  `L_epe = Σ_s len_s·penalty_s / Σ_s len_s`。
+- **两条归一化契约**（Rev 0.2）：profile 内 **sum** 聚合（d_s ≈ 偏移
+  pixel 数，loss 尺度与 epe_distance/Q 解耦，TEST-013）；segment 间按
+  **参考长度加权**（≈沿 target 边界均匀积分，对切段基本不敏感，TEST-014）。
+  分母 L_sum 是全 macro owner 段长总和（宏内常量），不随 batch/core 变。
+- **梯度语义**：EPE 与三项旧 loss 同一次 backward；mask 梯度继续经全部
+  memberships 的 midpoint STE 累加到唯一 owner 参数；无 EPE 专用参数或
+  单独 step；每段 penalty 只由 owner core 计一次。
+- **失败语义**：profile 越出画布闭区间 → ValueError（含 macro/core 上下文，
+  不裁剪不跳过）；非有限 sample/loss/gradient → FloatingPointError。
+- **兼容**：weight_epe=0 时不构造/采样 profile、不建 EPE 图，旧数值逐值
+  兼容；metrics/summary additive 新增 epe_loss/loss_weights.epe/
+  epe_steepness/best_epe_loss；result NPZ 不改版。
+- **实测定位**（gcd_30um smoke，γ=4/R=2）：state0 平均 d_s≈0.6 pixel
+  （γd≈2.4，σ′≈0.08——活跃但已衰减），epe_loss 0.832→0.702（−15.5%）与
+  离散 EPE −30% 同向单调；weight_epe=1.0 时 EPE 项占总目标约 85%，
+  属激进示例值，按 workload 调整。
+
 ## 事实核对锚点
 
 `tests/opc/iteration/test_simple_mbopc.py`（53 例）、
 `tests/main/test_mbopc_runners.py`（23 例）；gcd_45nm smoke 记录于
-`changes/completed/CHG-20260816-simple-mbopc/`。
+`changes/completed/CHG-20260816-simple-mbopc/`；Gradient 与 EPE 契约
+锚点 `tests/opc/iteration/test_gradient_mbopc.py`、
+`tests/main/test_gradient_mbopc_runner.py`，记录于
+`changes/completed/CHG-20260819-gradient-mbopc-epe-loss/`。

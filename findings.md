@@ -947,3 +947,19 @@
   TEST-014（切段不变性，含非等长混合段）+ 矩阵行 + AC-011；基线刷新至 08f4866。
   两个修正相互独立：P1 治 profile 宽度漂移，P2 治 fragmentation 漂移。
 - 规格仍为 draft，待用户批准后实施。
+
+
+## Gradient EPE loss 实施与自审事实（2026-08-20，CHG-20260819）
+
+- **实施**（阶段 A/B 前一会话完成，C 本会话收尾）：profile 预计算 + sum
+  聚合 + 长度加权全部按 Rev 0.2 契约落地；sampler `_profile_d_s` 与
+  _EdgeGradientMask.backward 同源布局契约，D 复用 nominal 误差张量。
+- **对照 smoke（gcd_30um、870 core、11 状态、CUDA）**：加 EPE
+  （weight_epe=1.0）后 state10 全部指标优于关闭组——nominal −8.9%、
+  离散 l2 −9.8%、离散 epe −5.5%；代价 +3.5% 耗时、+22 MiB RSS（≈
+  profile CPU 数据 O(O·Q)）、CUDA 峰值零增量；两组 state0 逐值相同。
+- **自审结论**：γ=4/R=2 无深饱和（平均 d_s 0.60→0.43 pixel，σ′≈0.08）；
+  连续 epe_loss 与离散 epe 11 状态双双严格单调同降（本 workload 事实）；
+  weight_epe=1.0 使 EPE 占总目标 85%——示例可用但偏激进，建议按
+  workload 从 0.1–0.5 起步（规格非阻塞问题的数据回答）。
+- 全量 529 → 545 passed；定向 123 passed；ruff/compileall/diff-check 绿。

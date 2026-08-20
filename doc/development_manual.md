@@ -194,6 +194,15 @@ D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradien
   simple 模块级导入路径不变。
 
 
+### 可微 EPE loss（2026-08-20，CHG-20260819）
+
+`[gradient]` 段新增可选 `weight_epe`（默认 0=关闭）与 `epe_steepness`
+（默认 4.0）；启用时要求 `epe_distance_nm` 为 pixel 整数倍。公式与语义
+见 `doc/contracts/mbopc.md` Gradient 节。示例 `config/gradient_mbopc.toml`
+显式 `weight_epe = 1.0`。关闭时与旧实现逐值兼容；metrics/summary 逐
+state 新增 `epe_loss`。注意 weight_epe=1.0 下 EPE 项占总目标约 85%
+（gcd_30um 实测），实际使用按 workload 调权。
+
 ## 9. Simple ILT（opc/iteration/ilt，2026-08-19 迁移）
 
 像素型 ILT 基础管线 + 首个方法。输入层 `opc/input/pixel`（query box 一次

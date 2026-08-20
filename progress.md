@@ -440,3 +440,10 @@
 - Gradient EPE loss 规格修正（用户 P1/P2）：profile 聚合 mean→sum（Q 不变性）+
   segment 归约等权→参考长度加权（切段不变性）；DEC-002 反转 + DEC-007 新增 +
   TEST-013/014 + AC-011，基线刷新至 08f4866；Rev 0.2，仍 draft 待批。
+
+
+- Gradient EPE loss 阶段 C 收尾（本会话接手）：核实 A/B 实现完整（定向
+  123 passed）→ PERF-004 对照 smoke（ON 183.2s vs OFF 177.1s，全部指标
+  改善、资源增量符合 O(O·Q) 上界）→ 迭代算法自审（无饱和、连续/离散
+  同降、EPE 占比 85% 记录）→ contracts/mbopc.md Gradient 节 + 两手册 +
+  规格 Rev 1.1 移 completed + 两报告 + 三记录。全量 545 passed。

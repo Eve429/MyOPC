@@ -67,7 +67,7 @@ def iter_region_coverage_tiles(
     if (not isinstance(pixel_dbu, Integral) or isinstance(pixel_dbu, bool) or pixel_dbu <= 0 or
             height <= 0 or width <= 0 or max_tile_pixels <= 0):
         raise RasterizationError("像素 DBU、栅格尺寸和分块像素上限必须为正整数")
-    # 两个上层调用都需要相同的集合语义：只计算当前 ROI，并在原生端合并重叠
+    # 两个上层调用都需要相同的集合语义：只计算当前 ROI，即进行剪裁，并在原生端合并重叠
     # Polygon，避免面积重复。显示层和 OPC 层共享坐标方向，只在类型、padding
     # 以及是否跨入图片输出边界上分工。
     clipped = (region & kdb.Region(box.to_native())).merged()

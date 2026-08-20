@@ -210,7 +210,7 @@ def plan_macros(
             raise ValueError("macro size must be a whole multiple of core size")
         x_macro = _macro_cuts_by_size(bounds.left, bounds.right, macro_size_dbu)
         y_macro = _macro_cuts_by_size(bounds.bottom, bounds.top, macro_size_dbu)
-    else:
+    elif macro_grid is not None:
         columns, rows = macro_grid
         if (not isinstance(columns, Integral) or isinstance(columns, bool) or
                 not isinstance(rows, Integral) or isinstance(rows, bool) or

@@ -2,7 +2,7 @@
 
 固定步长、EPE 驱动的离散边段移动求解器。
 锚点：`opc/iteration/mbopc/simple.py`；编排 `main/_mbopc_workflow.py`
-（simple 方法适配器宿主 `main/_simple_mbopc_workflow.py`）。
+（simple 方法适配器并入入口 `main/run_mbopc.py`）。
 
 ## 数据结构（frozen/slots）
 
@@ -55,8 +55,8 @@ def optimize_macro(problem, model, config, target_cache, *,
 run_mbopc_workflow(method, config_path)            # 公共生命周期：加载→prepare
                                                    # →model/cache→macro 循环→merge
                                                    # →留档→summary（资源统计公共）
-MBOPCMethod(method_name, algo_config_type,         # 方法适配器（simple 宿主
-  build_solver_config, optimize_macro,             #   _simple_mbopc_workflow.py）：
+MBOPCMethod(method_name, algo_config_type,         # 方法适配器（simple 并入
+  build_solver_config, optimize_macro,             #   入口 run_mbopc.py）：
   save_macro_result, macro_summary,                #   配置解析/optimizer/序列化/
   summary_extras)                                  #   摘要钩子注入公共层
 resolve_mbopc_config(algo, partition, edge, dbu_nm)  # [mbopc] 跨段校验 + nm→DBU

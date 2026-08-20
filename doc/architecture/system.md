@@ -15,7 +15,7 @@
 | `evaluation/` | L2/PVBand/EPE 三项指标（`metrics.py`） | 光刻前向、迭代决策 |
 | `opc/iteration/mbopc/` | MB-OPC 求解器（simple 离散 + gradient 梯度） | 光刻实现、合并、进度库 |
 | `opc/iteration/ilt/` | ILT 求解器（Simple sigmoid 像素优化 + LevelSet SDF/STE/宏 Adam + 共享 record/result/loss） | 光刻实现、合并、进度库 |
-| `main/` | 应用编排：共享宏管线生命周期（`_macro_pipeline.py`）、MB-OPC 公共工作流与适配器（`_mbopc_workflow.py` + `_simple/_gradient_mbopc_workflow.py`）、像素 ILT 公共工作流与适配器（`_ilt_workflow.py` + `_simple/_levelset_ilt_workflow.py`）、各直接运行入口 | 领域算法 |
+| `main/` | 应用编排：共享宏管线生命周期（`_macro_pipeline.py`）、MB-OPC 公共工作流（`_mbopc_workflow.py`；方法适配器并入 `run_mbopc.py`/`run_gradient_mbopc.py` 入口）、像素 ILT 公共工作流（`_ilt_workflow.py`；方法适配器并入 `run_simple_ilt.py`/`run_levelset_ilt.py` 入口）、各直接运行入口 | 领域算法 |
 
 ## 依赖方向（唯一合法拓扑）
 

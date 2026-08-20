@@ -44,8 +44,8 @@ python -m pytest -q tests
 ```bash
 python main/run_macro_pipeline.py config/macro_pipeline.toml        # 双轮 ±2nm 验证管线
 python main/run_single_pass.py config/single_pass.toml              # 单遍偏置扩张
-python main/run_mbopc_single_macro.py config/mbopc_single_macro.toml  # 单 macro MB-OPC
-python main/run_mbopc_multi_macro.py config/mbopc_multi_macro.toml    # 多 macro MB-OPC
+python main/run_mbopc.py config/mbopc_single_macro.toml        # simple MB-OPC（macro 数由网格决定）
+python main/run_gradient_mbopc.py config/gradient_mbopc.toml     # gradient MB-OPC
 python main/main_test_lithography.py                                # 光刻模型演示
 ```
 

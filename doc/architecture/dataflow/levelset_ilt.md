@@ -10,7 +10,7 @@ once/macro、macro 域唯一 |grad(phi)| 代理系数、`-|grad|·上游` STE、
 
 ```text
 main/run_levelset_ilt.py::main（可选位置参数，默认 config/levelset_ilt.toml）
-└─ main/_levelset_ilt_workflow.py::run_levelset_ilt
+└─ main/run_levelset_ilt.py::run_levelset_ilt（LEVELSET_ILT_METHOD 适配器同文件）
    └─ main/_ilt_workflow.py::run_ilt_workflow(LEVELSET_ILT_METHOD)
       ├─ configuration.py::load_config（[layout][partition][lithography]
       │    [levelset_ilt][output]；不读取 [edge]）

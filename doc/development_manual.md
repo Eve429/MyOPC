@@ -42,10 +42,10 @@ as_points）、`io`（atomic_write_json/atomic_write_npz）、`units`（exact_db
 准备/候选写出/最终合并/最终光刻留档）；MB-OPC 两方法共用
 `main/_mbopc_workflow.py` 的公共生命周期（配置加载→prepare→device/model/
 cache→macro 循环→merge→留档→summary），算法差异以 `MBOPCMethod` 适配器
-注入：`main/_simple_mbopc_workflow.py` 与 `main/_gradient_mbopc_workflow.py`
+注入：适配器并入入口文件 `main/run_mbopc.py` 与 `main/run_gradient_mbopc.py`，
 只保留各自的 optimizer 与序列化/摘要钩子（2026-08-18 拆分防大 workflow
 复燃，同日两轮上提公共层——solve 包装与生命周期均公共化，注入式而非
-机械合并，新增方法只写一个 adapter 文件）。
+机械合并；2026-08-20 适配器并入各自入口，新增方法在入口文件内写适配器）。
 
 ## 3. Macro–Core 管线（直接运行，无需安装）
 

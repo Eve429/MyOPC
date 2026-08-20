@@ -9,7 +9,7 @@ owner 边段法向位移的连续优化：midpoint STE 代理梯度、四项连�
 
 ```text
 main/run_gradient_mbopc.py::main
-└─ main/_gradient_mbopc_workflow.py::run_gradient_mbopc
+└─ main/run_gradient_mbopc.py::run_gradient_mbopc（GRADIENT_METHOD 适配器同文件）
    └─ main/_mbopc_workflow.py::run_mbopc_workflow(GRADIENT_METHOD)
       ├─ configuration.py::load_config（[gradient] 段，尾部可选
       │    weight_epe=0.0 / epe_steepness=4.0，旧 TOML 兼容）

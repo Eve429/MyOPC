@@ -9,11 +9,11 @@
 
 ```text
 main/run_mbopc.py::main
-└─ main/_simple_mbopc_workflow.py::run_mbopc
+└─ main/run_mbopc.py::run_mbopc（SIMPLE_METHOD 适配器同文件）
    └─ main/_mbopc_workflow.py::run_mbopc_workflow(SIMPLE_METHOD)
       ├─ configuration.py::load_config（[mbopc] 段）
       ├─ _macro_pipeline.py::prepare_problems（共享生命周期，见 macro_pipeline.md）
-      ├─ _simple_mbopc_workflow.py::resolve_mbopc_config（跨段校验 + nm→DBU）
+      ├─ configuration.py::resolve_mbopc_config（跨段校验 + nm→DBU；入口导入）
       │    → SimpleMBOPCConfig
       ├─ lithography.ICCAD13Lithography(device)（auto；资源统计起量）
       ├─ mbopc/_cache.py::TargetCanvasCache(target_cache_bytes)（跨 macro 共享）
@@ -39,7 +39,7 @@ main/run_mbopc.py::main
       │  │                整批一次 .cpu()）→ 写集核对 → clip ±max
       │  │     出口：records[0]=baseline；best 位移 → reconstruct_region
       │  └─ _solve_macro 尾部：write_macro_gds(problem.layer, best_region)
-      │     → _simple_mbopc_workflow.py::save_macro_result（result.npz + metrics.json）
+      │     → run_mbopc.py::save_macro_result（result.npz + metrics.json）
       │     → macro_summary
       ├─ merge_macro_results（全部完成后恰一次，显式 macro_id→GDS 映射）
       ├─ save_final_lithography（可选）

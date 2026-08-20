@@ -1,5 +1,20 @@
 # MyOPC 迁移研究发现
 
+## 2026-08-20 main/ 入口与适配器合并（拓扑扁平化）
+
+- 四对"CLI 入口 + 方法适配器"合并（用户裁定）：_simple_ilt_workflow/
+  _levelset_ilt_workflow/_simple_mbopc_workflow/_gradient_mbopc_workflow 的
+  全部符号（METHOD 实例、序列化/摘要钩子、run_* 函数）逐字并入对应
+  run_*.py 入口，适配器文件删除；纯移动、零行为变化，76 个 runner 用例
+  （含 subprocess 仓库外直跑）原样通过。
+- 不动：_ilt_workflow(353)/_mbopc_workflow(209)/_macro_pipeline(346)——
+  共享生命周期库且 _macro_pipeline 被 _mbopc_workflow/_ilt_workflow 反向
+  依赖，不是"几行的适配器"；run_macro_pipeline/run_single_pass 自洽。
+- 顺带：CLAUDE.md 入口清单过期名（run_mbopc_single_macro/run_mbopc_multi_macro）
+  同步为现名 run_mbopc/run_gradient_mbopc；当前事实文档（dataflow 四文件
+  调用树、system/data_model/development_manual/contracts-mbopc）同步，
+  completed CHG 与 doc/archive 历史不动。
+
 ## 2026-08-20 负板透光环（ILT 像素路径迁移回归）
 
 - 现象：opaque（负板）极性下，外围 macro 的 query（ownership+context）超出

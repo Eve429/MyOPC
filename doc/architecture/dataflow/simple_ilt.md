@@ -10,7 +10,7 @@ EPE 重建。
 
 ```text
 main/run_simple_ilt.py::main（可选位置参数，默认 config/simple_ilt.toml）
-└─ main/_simple_ilt_workflow.py::run_simple_ilt
+└─ main/run_simple_ilt.py::run_simple_ilt（SIMPLE_ILT_METHOD 适配器同文件）
    └─ main/_ilt_workflow.py::run_ilt_workflow(SIMPLE_ILT_METHOD)
       ├─ configuration.py::load_config（[layout][partition][lithography]
       │    [simple_ilt][output]；不读取 [edge]）

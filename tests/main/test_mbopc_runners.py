@@ -8,7 +8,7 @@ import klayout.db as kdb
 import numpy as np
 import pytest
 
-import main._simple_mbopc_workflow as workflow
+import main.run_mbopc as workflow
 from layout import DbuBox, LayerSpec, LayoutDB
 
 _TARGET_LAYER = LayerSpec(1, 0)  # 生成式版图唯一目标层

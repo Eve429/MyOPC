@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import main._ilt_workflow as ilt_workflow
-import main._levelset_ilt_workflow as levelset_workflow
+import main.run_levelset_ilt as levelset_workflow
 import opc.iteration.ilt.levelset as levelset_module
 from main import configuration
 

@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import main._ilt_workflow as ilt_workflow
-import main._simple_ilt_workflow as simple_workflow
+import main.run_simple_ilt as simple_workflow
 from layout import DbuBox, LayerSpec, LayoutDB
 from main import configuration
 from main.configuration import load_config

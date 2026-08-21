@@ -153,7 +153,8 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
                 [layer], macro.query_box).materialize_intersecting()
             # 一次完成提边/分段/切线分裂/ownership
             problem = prepare_macro_problem(
-                batch, layer, layout.polarity, runtime.fragmentation, macro)
+                batch, layer, layout.polarity, runtime.fragmentation, macro,
+                dark_box=layer_bounds)
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
             problem_bytes = problem_path.stat().st_size  # 文件字节数即持久字节数
             segment_count_sum += problem.segments.segment_count  # 累计段数
@@ -183,6 +184,8 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         "dbu_um": float(dbu_nm / 1000),
         "layer": [layer.layer, layer.datatype],
         "polarity": layout.polarity.value,
+        "dark_box": [layer_bounds.left, layer_bounds.bottom,
+                     layer_bounds.right, layer_bounds.top],
         "core_size_dbu": runtime.grid.core_dbu,
         "context_dbu": runtime.grid.context_dbu,
         "pixel_dbu": runtime.grid.pixel_dbu,
@@ -333,6 +336,7 @@ def save_final_lithography(
     canvas_pixels = int(plan["canvas_pixels"])  # 画布
     core_dbu = int(plan["core_size_dbu"])  # tile 尺寸
     context_dbu = int(plan["context_dbu"])  # tile 上下文
+    dark_box = DbuBox(*plan["dark_box"])  # 光学暗界与迭代期 mask 同源
     with LayoutDB.open(final_layout) as database:  # 打开一次，全程在内物化消费
         bounds = database.layer_bbox(layer)  # 目标层真实包络（不用魔法框）
         if bounds is None:  # 空层无法出图
@@ -362,7 +366,8 @@ def save_final_lithography(
                 # 每 tile 窗口就地栅格
                 masks = np.stack([rasterize_mask_canvas(
                     _window_region(spec), spec.context_box, pixel_dbu,
-                    canvas_pixels, polarity=polarity) for spec in specs])
+                    canvas_pixels, polarity=polarity,
+                    dark_box=dark_box) for spec in specs])
                 mask_tensor = torch.from_numpy(masks).to(model.device)  # 送设备
                 # 一次标称前向
                 printed = model.forward_many(

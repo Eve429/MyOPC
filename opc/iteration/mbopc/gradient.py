@@ -409,14 +409,16 @@ def _evaluate_state(
             if cached is None:  # 未命中：参考几何栅格化并回填缓存
                 cached = np.rint(rasterize_mask_canvas(
                     ctx.reference_region, spec.context_box, ctx.pixel_dbu,
-                    ctx.canvas_pixels, polarity=problem.polarity)
+                    ctx.canvas_pixels, polarity=problem.polarity,
+                    dark_box=problem.dark_box)
                     * 255.0).astype(np.uint8)
                 target_cache.put(ctx.macro_id, core_index, cached)
             targets[slot] = cached
             # 当前候选直接栅格
             masks[slot] = rasterize_mask_canvas(
                 current_region, spec.context_box, ctx.pixel_dbu,
-                ctx.canvas_pixels, polarity=problem.polarity)
+                ctx.canvas_pixels, polarity=problem.polarity,
+                dark_box=problem.dark_box)
             # 唯一计分像素
             ownership[slot] = ownership_canvas(
                 spec.ownership_box, spec.context_box, ctx.pixel_dbu,

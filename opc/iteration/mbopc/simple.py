@@ -167,14 +167,16 @@ def evaluate_and_propose(
                 # 参考透光率 → uint8
                 cached = np.rint(rasterize_mask_canvas(
                     reference_region, spec.context_box, pixel_dbu,
-                    canvas_pixels, polarity=problem.polarity) * 255.0
+                    canvas_pixels, polarity=problem.polarity,
+                    dark_box=problem.dark_box) * 255.0
                 ).astype(np.uint8)
                 target_cache.put(macro_id, core_index, cached)  # 回填缓存
             targets[slot] = cached  # 批内拷贝
             # 当前候选直接栅格
             masks[slot] = rasterize_mask_canvas(
                 current_region, spec.context_box, pixel_dbu,
-                canvas_pixels, polarity=problem.polarity)
+                canvas_pixels, polarity=problem.polarity,
+                dark_box=problem.dark_box)
             # 唯一计分像素
             ownership[slot] = ownership_canvas(
                 spec.ownership_box, spec.context_box, pixel_dbu, canvas_pixels)

@@ -34,7 +34,8 @@ def _macros():
 def _problem(region, macro):
     """把原生 Region 直接包装为 RegionBatch 并生成 macro problem。"""
     batch = RegionBatch({LAYER: region}, macro.query_box)
-    return prepare_macro_problem(batch, LAYER, "clear", CFG, macro)
+    return prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
+                                 dark_box=BOUNDS)
 
 
 def _assert_problem_invariants(problem, source):
@@ -265,7 +266,8 @@ class TestGeometryMatrix:
         for macro in _macros():
             with LayoutDB.open(path) as database:
                 batch = database.query([LAYER], macro.query_box).materialize_intersecting()
-            problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro)
+            problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
+                                      dark_box=BOUNDS)
             _assert_problem_invariants(problem, batch.region(LAYER))
 
     def test_two_by_two_aref_spreads_across_macros(self, tmp_path):
@@ -283,7 +285,8 @@ class TestGeometryMatrix:
         for macro in _macros():
             with LayoutDB.open(path) as database:
                 batch = database.query([LAYER], macro.query_box).materialize_intersecting()
-            problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro)
+            problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
+                                      dark_box=BOUNDS)
             _assert_problem_invariants(problem, batch.region(LAYER))
             owners_per_macro[macro.macro_id] = int((problem.owner_indices >= 0).sum())
         # occurrence 中心分别位于 (80,40)、(120,40)、(80,100)、(120,100)：
@@ -435,7 +438,8 @@ class TestReconstructionMidpoints:
                                    miter_limit=1.0)  # 最小合法阈值强制 bevel
         macro = _macros()[0]
         batch = RegionBatch({LAYER: self.RECT}, macro.query_box)
-        problem = prepare_macro_problem(batch, LAYER, "clear", cfg, macro)
+        problem = prepare_macro_problem(batch, LAYER, "clear", cfg, macro,
+                               dark_box=BOUNDS)
         displacements = np.zeros(problem.segments.segment_count)
         geometry = problem.segments.materialize(None)
         bottom_ids = self._edge_mask(geometry, 1, 10)
@@ -495,7 +499,8 @@ class TestTopologyPreservation:
         macro = _macros()[0]
         with LayoutDB.open(path) as database:
             batch = database.query([LAYER], macro.query_box).materialize_intersecting()
-        problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro)
+        problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
+                                      dark_box=BOUNDS)
         assert problem.segments.segment_count > 0
         zeros = np.zeros(problem.segments.segment_count)
         assert np.all(problem.owner_indices >= -1)
@@ -511,7 +516,8 @@ class TestPreparationValidation:
         batch = RegionBatch({LAYER: kdb.Region(kdb.Box(0, 0, 10, 10))},
                             DbuBox(0, 0, 20, 20))
         with pytest.raises(ValueError, match="query_box"):
-            prepare_macro_problem(batch, LAYER, "clear", CFG, _macros()[0])
+            prepare_macro_problem(batch, LAYER, "clear", CFG,
+                                      _macros()[0], dark_box=BOUNDS)
 
     def test_unknown_polarity_rejected(self):
         """未知极性字符串在准备入口即失败。"""
@@ -519,7 +525,22 @@ class TestPreparationValidation:
         macro = _macros()[0]
         batch = RegionBatch({LAYER: region}, macro.query_box)
         with pytest.raises(ValueError, match="极性"):
-            prepare_macro_problem(batch, LAYER, "reverse", CFG, macro)
+            prepare_macro_problem(batch, LAYER, "reverse", CFG, macro,
+                                      dark_box=BOUNDS)
+
+
+    def test_dark_box_roundtrip_and_version_bump(self, tmp_path):
+        """dark_box 随 NPZ 往返一致；版本 2 旧版（1）显式拒绝。"""
+        problem = _problem(kdb.Region(kdb.Box(20, 20, 140, 60)), _macros()[0])
+        path = problem.save(tmp_path / "p.npz")
+        loaded = MacroProblem.load(path)
+        assert loaded.dark_box == problem.dark_box == BOUNDS
+        with np.load(path, allow_pickle=False) as data:
+            arrays = {key: data[key] for key in data.files}
+        arrays["format_version"] = np.array([1], dtype=np.int32)
+        np.savez(tmp_path / "old.npz", **arrays)
+        with pytest.raises(ValueError, match="format version"):
+            MacroProblem.load(tmp_path / "old.npz")
 
     def test_own_missing_from_owner_membership_rejected(self):
         """owner 不在该 core membership 时构造期拒绝（own⊆membership）。"""
@@ -538,7 +559,8 @@ class TestPreparationValidation:
         broken[segment] = outsider
         with pytest.raises(ValueError, match="membership"):
             MacroProblem(macro, problem.layer, problem.polarity,
-                         problem.fragmentation, problem.segments,
+                         problem.fragmentation, problem.dark_box,
+                         problem.segments,
                          owner_indices=broken,
                          core_offsets=problem.core_offsets,
                          member_segment_indices=problem.member_segment_indices)
@@ -552,7 +574,8 @@ class TestPreparationValidation:
         owners[owners >= 0] = 0
         with pytest.raises(ValueError, match="membership"):
             MacroProblem(macro, problem.layer, problem.polarity,
-                         problem.fragmentation, problem.segments,
+                         problem.fragmentation, problem.dark_box,
+                         problem.segments,
                          owner_indices=owners,
                          core_offsets=np.zeros(macro.core_count + 1, dtype=np.int64),
                          member_segment_indices=np.empty(0, dtype=np.int32))
@@ -562,7 +585,8 @@ class TestPreparationValidation:
         macro = _macros()[0]
         problem = _problem(kdb.Region(kdb.Box(20, 20, 140, 60)), macro)
         empty = MacroProblem(macro, problem.layer, problem.polarity,
-                             problem.fragmentation, problem.segments,
+                             problem.fragmentation, problem.dark_box,
+                             problem.segments,
                              owner_indices=np.full(
                                  problem.segments.segment_count, -1, dtype=np.int32),
                              core_offsets=np.zeros(macro.core_count + 1, dtype=np.int64),

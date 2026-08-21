@@ -61,7 +61,8 @@ def _problem(region, macro=None, polarity="clear", frag=FRAG):
     """把原生 Region 直接包装为 RegionBatch 并生成单 macro problem。"""
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
-    return prepare_macro_problem(batch, LAYER, polarity, frag, macro)
+    return prepare_macro_problem(batch, LAYER, polarity, frag, macro,
+                                 dark_box=BOUNDS)
 
 
 def _config(**overrides):
@@ -688,7 +689,8 @@ class TestGeometryMatrix:
         results = []
         for macro in macros:
             batch = RegionBatch({LAYER: region}, macro.query_box)
-            problem = prepare_macro_problem(batch, LAYER, "clear", FRAG, macro)
+            problem = prepare_macro_problem(batch, LAYER, "clear", FRAG, macro,
+                                           dark_box=BOUNDS)
             results.append(_optimize(problem, _LinearModel(), _config()))
         for macro, result in zip(macros, results):
             self._assert_valid_publication(
@@ -972,7 +974,8 @@ class TestEpeLoss:
             region.insert(kdb.Box(20, 20, 56, 40))  # 光学沿线变化的邻特征
             macro = _macro()
             batch = RegionBatch({LAYER: region}, macro.query_box)
-            return prepare_macro_problem(batch, LAYER, "clear", frag, macro)
+            return prepare_macro_problem(batch, LAYER, "clear", frag, macro,
+                                        dark_box=BOUNDS)
 
         losses = []
         for corner, segment in ((8.0, 16.0), (4.0, 32.0), (2.0, 30.0)):

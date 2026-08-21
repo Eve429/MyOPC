@@ -21,7 +21,7 @@ Int32Array = NDArray[np.int32]
 Int64Array = NDArray[np.int64]
 
 # NPZ 格式版本号；不兼容的结构变更必须递增并在 load 中显式拒绝旧版本。
-_FORMAT_VERSION = 1
+_FORMAT_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +39,10 @@ class MacroProblem:
 
     fragmentation: FragmentationConfig
     # 参考边段长度、最大允许位移和 miter 限制；阶段二不得重新计算。
+
+    dark_box: DbuBox
+    # 光学暗边界（layer 数据包络）：mask canvas 像素中心在其外恒 0，
+    # 两极性统一；与 ILT 像素路径的 dark_bounds 同一语义。
 
     segments: SegmentBatch
     # 完整候选 polygon 的轮廓拓扑、数学边和控制边段，是参考几何唯一数组真源。
@@ -129,6 +133,9 @@ class MacroProblem:
             "layer": np.array([self.layer.layer], dtype=np.int32),
             "datatype": np.array([self.layer.datatype], dtype=np.int32),
             "polarity": np.array([self.polarity.value]),
+            "dark_box": np.array(
+                [self.dark_box.left, self.dark_box.bottom,
+                 self.dark_box.right, self.dark_box.top], dtype=np.int64),
             "corner_length_dbu": np.array(
                 [self.fragmentation.corner_length_dbu], dtype=np.float64),
             "max_segment_length_dbu": np.array(
@@ -195,7 +202,8 @@ class MacroProblem:
             # 构造即校验：MacroProblem.__post_init__ 会复查 owner 范围、CSR
             # 边界与 own⊆membership；损坏或被篡改的 NPZ 在这里直接失败。
             return cls(macro, layer, MaskPolarity(str(data["polarity"][0])),
-                       fragmentation, segments,
+                       fragmentation, DbuBox(*[int(v) for v in data["dark_box"]]),
+                       segments,
                        owner_indices=data["owner_indices"],
                        core_offsets=data["core_offsets"],
                        member_segment_indices=data["member_segment_indices"])
@@ -372,6 +380,8 @@ def prepare_macro_problem(
         polarity: MaskPolarity | str,
         fragmentation: FragmentationConfig,
         macro: MacroSpec,
+        *,
+        dark_box: DbuBox,
 ) -> MacroProblem:
     """从完整相交图形一次生成可供多轮迭代复用的 macro 参考问题。"""
     if batch.query_box != macro.query_box:
@@ -390,6 +400,7 @@ def prepare_macro_problem(
     segments = _split_segments_at_ownership_cuts(segments, macro.x_cuts, macro.y_cuts)
     owners, core_offsets, members = _build_macro_ownership(segments, macro)
     return MacroProblem(
-        macro=macro, layer=layer, polarity=normalized, fragmentation=fragmentation,
+        macro=macro, layer=layer, polarity=normalized,
+        fragmentation=fragmentation, dark_box=dark_box,
         segments=segments, owner_indices=owners, core_offsets=core_offsets,
         member_segment_indices=members)

@@ -2,7 +2,12 @@
 
 > 2026-08-21 · 基线 `13cf41e` · 审查方式：全链路源码逐文件通读（约 3700 行）
 > + 单项微基准 + 端到端实测。发现按 C（算法正确性）/A（架构）/P（性能）
-> 编号与严重度标注，**全部仅立案未实施**，优化方向由用户决策。
+> 编号与严重度标注，优化方向由用户决策。
+>
+> **处理状态（同日更新）**：C1 已修 `c948166`；C6 已修 `ff4e625`；
+> A1/A2/P4 已修 `b0ca9e6`（golden A/B 12 例逐位一致）；A3/A4 已修
+> `3b50764`；A5 维持观察项（修复即接口污染）。待决策：C2、P1、P2；
+> 立案不改：C3/C4/C5。
 
 ## 1. 审查范围（完整调用链）
 
@@ -82,27 +87,29 @@ ambiguous 段（inner|outer 违规并集，metrics.py:20-24）；contracts/mbopc
 鸭子契约（三属性 + best_displacements）文档化；适配器并入入口与 ILT 系
 一致；plan/problem/result 三级产物全部版本化并在 load 显式拒绝旧版。
 
-**A1（中 · 重复且已漂移）** simple 与 gradient 的批量评价段 ~80 行同构
-重复：target 缓存 miss 回填、mask 栅格、ownership 画布、forward_many、
-离散诊断、进度回调（simple.py:143-248 vs gradient.py:385-563）。且两份
-**已经漂移**：gradient 以 `_GradientMacroContext` 预计算探针坐标/参考
-几何/ownership 计数，simple 每态重算探针坐标与 ownership。建议镜像 ILT
-`_skeleton.py`（P3 批次先例）抽 `mbopc/_batching.py`：静态画布 per macro
-打包一次（BatchPack 模式）+ 批组装 + 离散诊断复用。两个真实调用方，
-不属投机抽象；须以 golden A/B（位移与记录逐位一致）保护迁移。
+**A1（中 · 重复且已漂移 · 已修 `b0ca9e6`）** simple 与 gradient 的批量
+评价段 ~80 行同构重复：target 缓存 miss 回填、mask 栅格、ownership 画布、
+forward_many、离散诊断、进度回调。且两份**已经漂移**：gradient 以
+`_GradientMacroContext` 预计算探针坐标/参考几何/ownership 计数，simple
+每态重算探针坐标与 ownership。**修复**：新增 `mbopc/_batching.py`
+（MacroStaticPack 静态打包 + cached_target_canvas + assemble_probe_batch +
+discrete_batch_diagnostics）；被测试 monkeypatch 的函数由求解器模块注入
+（锚点不迁移）；golden A/B（5 几何 × 双求解器 × batch/weight_epe 共 12 例，
+真实 ICCAD13 CPU）逐位一致，全量 683+1 绿，双入口 smoke 通过；P4 随之消除。
 
-**A2（低）** `evaluate_and_propose`（~160 行）与 `_evaluate_state`
-（~210 行）均多功能混合；A1 落地时自然拆分，不建议单独动。
+**A2（低 · 已随 A1 拆分）** `evaluate_and_propose` 与 `_evaluate_state`
+的多功能混合经批组装/诊断下沉后各缩减约 40 行，未单独拆动。
 
-**A3（低 · CLI 一致性）** gradient 入口打印峰值 RSS/CUDA，simple 不打印
-（run_mbopc.py:103-115 vs run_mbopc_gradient.py:123-129）；summary 公共键
-两者都有，simple 补两行打印即齐。
+**A3（低 · 已修 `3b50764`）** simple 入口补峰值 RSS/CUDA 两行打印，
+与 gradient 同款（summary 公共键本就提供）。
 
-**A4（低）** `opc/input/_fragmentation.py`（17 行共享计数公式）与
-`edge/fragmentation.py` 同名易混；可降为后者的私有函数再 re-export。
+**A4（低 · 已修 `3b50764`）** `opc/input/_fragmentation.py` 并入
+`edge/fragmentation.py` 私有函数 `_count_edge_fragments`（唯一调用方即
+fragment_edges），旧模块删除。
 
-**A5（信息）** `_solve_macro` 对 best 再重构一次（solver 不返回几何是
-接口简洁的代价；每 macro 一次，量级可忽略）。
+**A5（信息 · 维持不改）** `_solve_macro` 对 best 再重构一次：solver 返回
+几何需把 kdb.Region 塞进结果契约，接口污染大于每 macro 一次重构的微收益。
+2026-08-21 用户指派"把 A 都修了"时维持观察项判定。
 
 ## 5. 性能
 
@@ -134,8 +141,8 @@ context 带被邻窗重复计算。例：1024 macro、2×2 个 512 core、ctx 25
 共享一次 mask FFT（iccad13.py:320-340）已是最优形态；ILT 审查结论适用
 （backward 占 60-65%、batch_size 扫描未做）。simple 为 no_grad 前向。
 
-**P4（微 · 随 A1 顺带）** simple 逐态重算探针/ownership 实测全程 ~0.2s
-（bench_30um 量级），不单独立项，A1 的静态打包顺带消除。
+**P4（微 · 已随 A1 消除 `b0ca9e6`）** simple 逐态重算探针/ownership 实测
+全程 ~0.2s（bench_30um 量级），未单独立项，已由 A1 的静态打包顺带消除。
 
 内存上界复查通过：LRU 字节上限与驱逐语义正确（_cache.py）、批张量 del
 后报进度、参数 O 级、problem 逐 macro 加载即弃。
@@ -153,19 +160,20 @@ context 带被邻窗重复计算。例：1024 macro、2×2 个 512 core、ctx 25
 
 **缺口**（均为低价值或随 A1 补）：切线近切微碎段（1e-9 量级）无专门用例；
 membership 超集语义无断言（设计上不可见）；Adam 动量下 no_update 时序
-未钉；simple 与 gradient 探针坐标一致性（A1 漂移的回归锚）；
-final_lithography tile 网格在 clear 输出（包络=图形区）与 opaque 输出
-（包络=整版）间的覆盖差异未断言。
+未钉；simple 与 gradient 探针坐标一致性（A1 漂移的回归锚——**已随 A1
+统一为 `_batching` 同一实现，漂移不可能复现**）；final_lithography tile
+网格在 clear 输出（包络=图形区）与 opaque 输出（包络=整版）间的覆盖差异
+未断言。
 
-## 7. 决策清单（按建议优先级）
+## 7. 决策清单（按建议优先级；含 2026-08-21 处理状态）
 
-| 编号 | 项 | 收益 | 风险/前置 | 工作量 |
-|---|---|---|---|---|
-| A1(+P4) | 批量段骨架化（BatchPack 模式） | 消除漂移 + 微性能 + 为 P1 铺路 | golden A/B 逐位保护 | 中 |
-| C1/C2/A3/C6 | 注释矛盾、停止判词、CLI、契约口径 | 一致性 | 零行为变化 | 小 |
-| P1 | macro 级一次栅格化 + 对齐切片 | CPU 侧 ~1.5-1.7× | pixel 对齐校验 + 逐位一致 golden | 中大 |
-| P2 | hole 拓扑校验降频/预筛 | 孔阵版图可感知 | 低 | 小 |
-| — | C3/C4/C5/A4/A5 | 立案不改 | — | — |
+| 编号 | 项 | 收益 | 风险/前置 | 工作量 | 状态 |
+|---|---|---|---|---|---|
+| A1(+P4) | 批量段骨架化（BatchPack 模式） | 消除漂移 + 微性能 + 为 P1 铺路 | golden A/B 逐位保护 | 中 | **已修 b0ca9e6** |
+| C1/C2/A3/C6 | 注释矛盾、停止判词、CLI、契约口径 | 一致性 | 零行为变化 | 小 | C1/C6/A3 已修；C2 待决策 |
+| P1 | macro 级一次栅格化 + 对齐切片 | CPU 侧 ~1.5-1.7× | pixel 对齐校验 + 逐位一致 golden | 中大 | 待决策 |
+| P2 | hole 拓扑校验降频/预筛 | 孔阵版图可感知 | 低 | 小 | 待决策 |
+| — | C3/C4/C5/A5 | 立案不改 | — | — | 维持（A4 已修） |
 
 ## 8. 顺带实证（输入 doc 清扫）
 

@@ -1142,3 +1142,22 @@
   语义）；contracts/opc_input（rasterize_mask_canvas dark_box 参数语义、
   pixel prepare 双边界参数）；data_model（v2 两处）；INDEX（review/ 目录
   与 dataflow 六文件，随报告 commit）。
+
+## MB-OPC 审查 A 项修复（2026-08-21，用户指派"把 A 都修了"）
+
+- **A1+A2（b0ca9e6）**：新增 `mbopc/_batching.py`（MacroStaticPack /
+  cached_target_canvas / assemble_probe_batch / discrete_batch_diagnostics），
+  simple 与 gradient 批量评价段共用；被 monkeypatch 的函数
+  （rasterize_mask_canvas/points_to_canvas/evaluate_*）由求解器模块注入，
+  补丁锚点零迁移（ilt/_skeleton 同款纪律）。simple 探针/ownership 由逐态
+  重算改为每 macro 打包（P4 消除）；baseline mask 与 target 源共用同一次
+  零位移重构。golden A/B：5 几何 × 双求解器 × batch/weight_epe 共 12 例
+  真实 ICCAD13 CPU 逐位一致（A/A 自检先行确认确定性）。
+- **A3+A4（3b50764）**：run_mbopc 补峰值 RSS/CUDA 打印；
+  `opc/input/_fragmentation.py` 并入 edge/fragmentation.py 私有函数。
+- **A5 维持观察项**：solver 返回几何 = 结果契约塞 kdb.Region 的接口污染。
+- 实施事实：空 owner 批需返回空探针数组（旧 if probes 守卫的等价物，
+  首轮 golden 即抓出）；dataflow gradient 文档存在更早的过期描述
+  （反向 np.add.at——现行实现是 autograd 边自动累加）已顺带修正。
+- config/gradient_mbopc.toml 的 final_layout 文件名仍为 gcd_45nm_*（输入
+  已是 gcd_30um）——config 属用户实验领地，仅立案提醒。

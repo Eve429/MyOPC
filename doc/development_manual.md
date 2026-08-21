@@ -137,9 +137,9 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
 
 - **算法**：`evaluate_and_propose()` 评价一个状态（target/current/ownership
   三画布 → no_grad 三条件一次 forward_many → L2/PVBand 只在 ownership 像素
-  → owner 探针 `edge_probe_points` + `points_to_canvas` 批量 EPE →
-  next = current + {-1,0,+1}×step，批后释放张量再报进度；参考几何由
-  `reference` 参数在整迭代内复用一份）；
+  → owner 探针批量 EPE → next = current + {-1,0,+1}×step，批后释放张量再报
+  进度；计分画布与参考探针坐标经 `_batching.pack_macro_statics` 每 macro
+  打包一次、`pack` 参数整迭代复用，参考几何同由 `reference` 参数复用一份）；
   `optimize_macro()` baseline（records[0]）起每轮一次评价同时产生下轮提案
   （末轮纯评价不提案、无变化提案直接停止），步长按 `decay_every` 减半，
   EPE 严格更小才更新 best（平局保留早轮）。

@@ -27,7 +27,7 @@ SimpleMBOPCResult(best_displacements, records, best_round,
 ```python
 def evaluate_and_propose(problem, current_region, current_displacements,
                          model, config, step_dbu, target_cache, *,
-                         can_update, reference=None,
+                         can_update, reference=None, pack=None,
                          on_tiles_completed=None) -> SimpleMBOPCStep
 
 def optimize_macro(problem, model, config, target_cache, *,
@@ -35,10 +35,16 @@ def optimize_macro(problem, model, config, target_cache, *,
 ```
 
 - **入口契约**：位移长度=段数、有限、context 段=0；模型画布=问题画布；
-  step≥0。reference 参数复用整迭代一次物化的参考几何（None 现算）。
+  step≥0。reference 参数复用整迭代一次物化的参考几何（None 现算）；
+  pack（2026-08-21 A1 起）复用 `_batching.pack_macro_statics` 的静态打包
+  （计分画布/参考探针坐标/零位移参考候选），optimize_macro 预打包逐状态
+  复用，直接调用缺省现算；pack 优先时 reference 不参与本调用。
 - **批语义**：每批一次三条件 forward_many（no_grad）；方向 = current +
   {-1,0,+1}×step 只写 owner 段（written 恰一次守卫）；EPE 回切整批一次
-  .cpu()；批后释放张量再报 on_tiles_completed(batch_count)。
+  .cpu()；批后释放张量再报 on_tiles_completed(batch_count)。计分画布/
+  探针坐标/target 缓存 miss 回填与批后离散诊断由 `mbopc/_batching.py`
+  承载（rasterize/points_to_canvas/evaluate_* 由求解器模块注入，
+  monkeypatch 锚点保持在 simple/gradient 模块）。
 - **轮次语义**：records[0]=baseline；Round N 指标属于第 N 次位移后状态，
   评价同时产生下轮提案（末轮纯评价不提案）；无变化提案直接停止不重复评价
   （no_update 时 records 只含 baseline）。

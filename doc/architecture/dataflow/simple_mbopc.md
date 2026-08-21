@@ -25,19 +25,23 @@ main/run_mbopc.py::main
       │  ├─ _mbopc_workflow.py::_solve_macro（tqdm total=(iterations+1)×core_count）
       │  │  └─ opc/iteration/mbopc/simple.py::optimize_macro
       │  │     ├─ segments.materialize()（参考几何整迭代一次）
+      │  │     ├─ _batching.pack_macro_statics（计分画布/参考探针坐标/零位移
+      │  │     │    参考候选，每 macro 一次；探针/ownership 逐态不再重算）
       │  │     ├─ reconstruct_region(零位移) → baseline 评价 + Round1 提案
       │  │     └─ 逐轮：候选 reconstruct 守卫 → evaluate_and_propose（末轮纯评价）
       │  │        └─ evaluate_and_propose 批循环：
-      │  │           ├─ CPU 逐 tile 组批：TargetCanvasCache.get/put
-      │  │           │    （miss → 零位移参考栅格化 uint8 回填）
-      │  │           ├─ rasterize_mask_canvas（当前候选）+ ownership_canvas
-      │  │           ├─ edge/sampling.py::edge_probe_points（参考中点±法向）
-      │  │           │    → opc/input/raster.py::points_to_canvas（居中换算）
+      │  │           ├─ CPU 逐 tile 组批：_batching.cached_target_canvas
+      │  │           │    （TargetCanvasCache miss → 零位移参考栅格化 uint8 回填）
+      │  │           ├─ rasterize_mask_canvas（当前候选）+ 静态打包
+      │  │           │    ownership 画布
+      │  │           ├─ _batching.assemble_probe_batch（静态参考探针坐标
+      │  │           │    = 参考中点±法向经 points_to_canvas 居中换算）
       │  │           ├─ lithography.forward_many(nominal, dose_max, defocus_min)
       │  │           │    （no_grad；一次 mask FFT 共享）
-      │  │           ├─ evaluation.evaluate_binary_l2 / evaluate_pvband
-      │  │           │    （只在 ownership 像素）+ evaluate_edge_probes
-      │  │           │    （全批探针一次；阈值跟随模型 PrintThresh）
+      │  │           ├─ _batching.discrete_batch_diagnostics
+      │  │           │    （evaluate_binary_l2 / evaluate_pvband 只在 ownership
+      │  │           │    像素 + evaluate_edge_probes 全批探针一次；
+      │  │           │    阈值跟随模型 PrintThresh；补丁锚在 simple 模块）
       │  │           └─ direction×step 只写 next_values（owner 唯一写；
       │  │                整批一次 .cpu()）→ 写集核对 → clip ±max
       │  │     出口：records[0]=baseline；best 位移 → reconstruct_region

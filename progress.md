@@ -530,3 +530,9 @@
   环带旧注释单独修复（c948166）。随后全库 doc 过期信息清扫：计数/迁移
   进度/门禁范围/gcd_45nm 历史标注/MacroProblem v2 与 dark_box 契约/
   reticle 计划 P1-2 与 config 提醒关闭。全量 683+1 门禁绿。
+
+- MB-OPC 审查 A 项全修（用户指派）：A1+A2 骨架化 _batching（钩子注入保
+  monkeypatch 锚点，golden A/B 12 例逐位一致 + 全量 683+1 + 双入口 smoke）
+  → A3 CLI 资源打印对齐 + A4 分段公式模块归位 → 文档同步（contracts
+  pack 参数、dataflow 双文件含 np.add.at 旧描述修正、审查报告处理状态
+  标注、两手册）。A5 维持观察项判定并说明理由。

@@ -24,21 +24,24 @@ main/run_mbopc_gradient.py::main
       │     ├─ 无 owner 段 → no_owned_segments 空结果（不建 optimizer）
       │     ├─ _prepare_macro_context → _GradientMacroContext（静态，一次）
       │     │    owner_ids / segment_to_parameter / 参考几何（materialize 一次）
-      │     │    零位移 Region+采样中点 / 逐 core sampling+owner membership
-      │     │    / EPE 探针坐标 / EPE profile+段长+L_sum（仅启用时）
+      │     │    零位移 Region+采样中点 / _batching.pack_macro_statics
+      │     │    （计分画布/EPE 探针坐标/target 源，每 macro 一次）
+      │     │    / 逐 core sampling membership / EPE profile+段长+L_sum（仅启用时）
       │     ├─ parameters[O]（device，requires_grad）+ Adam（固定超参）
       │     └─ for state in 0..iterations:
       │        ├─ _evaluate_state（同参数快照的全部 core 批）
-      │        │  ├─ 组批：TargetCanvasCache.get/put + rasterize_mask_canvas
-      │        │  │    （当前候选）+ ownership_canvas + 已发布段中点
+      │        │  ├─ 组批：_batching.cached_target_canvas
+      │        │  │    + rasterize_mask_canvas（当前候选）+ 静态打包
+      │        │  │    ownership 画布（逐态不重算）+ 已发布段中点
       │        │  ├─ gradient.py::_EdgeGradientMask.apply（STE：forward 数值
       │        │  │    =hard 栅格，backward 在段中点双线性采样 2·g_mid/pixel_dbu）
       │        │  ├─ forward_many(nominal, dose_max, defocus_min)（一次 FFT）
       │        │  ├─ owned 三 loss + weight_epe>0 时：
       │        │  │    _profile_d_s(nominal_error, slots, xy)
       │        │  │    → penalty=2(σ(γ·d_s)−0.5) → 批 L_epe=Σlen·pen/Σlen
-      │        │  ├─ weighted batch_loss.backward() → np.add.at scatter-add
-      │        │  │    回 CPU 宏梯度（求和不平均）→ 诊断（L2/PV/EPE 探针）
+      │        │  ├─ weighted batch_loss.backward()（梯度经 _EdgeGradientMask
+      │        │  │    的 autograd 边自动 scatter-add 累加进 parameters.grad）
+      │        │  │    → _batching.discrete_batch_diagnostics（L2/PV/EPE 探针）
       │        │  └─ 释放批张量 → on_tiles_completed
       │        ├─ 非有限检查 → record（epe_loss 字段）→ best 严格更低
       │        │    → zero_loss / iteration_limit 判断 → 梯度有限检查

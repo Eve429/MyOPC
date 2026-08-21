@@ -275,6 +275,50 @@ class TestPaths:
         assert layout.layout == (tmp_path / "reticle.gds").resolve()  # 展开正确
 
 
+
+class TestFieldBoxSection:
+    """[layout] 处理框字段：双写法解析与互斥（field_box/field_size）。"""
+
+    def test_field_box_parses_four_decimals(self, tmp_path):
+        """field_box_nm 四元 Decimal 定长元组解析。"""
+        text = _FULL_TOML.replace(
+            'polarity = "clear"',
+            'polarity = "clear"\nfield_box_nm = [-512.0, -512.0, 1536.0, 1536.0]')
+        layout, = load_config(_write(tmp_path, text), LayoutConfig)
+        assert layout.field_box_nm == (Decimal("-512.0"), Decimal("-512.0"),
+                                       Decimal("1536.0"), Decimal("1536.0"))
+
+    def test_field_size_parses_two_decimals(self, tmp_path):
+        """field_size_nm 二元 Decimal 定长元组解析。"""
+        text = _FULL_TOML.replace(
+            'polarity = "clear"',
+            'polarity = "clear"\nfield_size_nm = [2048.0, 2048.0]')
+        layout, = load_config(_write(tmp_path, text), LayoutConfig)
+        assert layout.field_size_nm == (Decimal("2048.0"), Decimal("2048.0"))
+
+    def test_both_fields_rejected(self, tmp_path):
+        """双填即意图不明，构造期拒绝。"""
+        text = _FULL_TOML.replace(
+            'polarity = "clear"',
+            'polarity = "clear"\nfield_box_nm = [0.0, 0.0, 1.0, 1.0]\n'
+            'field_size_nm = [2048.0, 2048.0]')
+        with pytest.raises(ValueError, match="至多填写一个"):
+            load_config(_write(tmp_path, text), LayoutConfig)
+
+    def test_neither_field_keeps_defaults(self, tmp_path):
+        """双空 = 现行 layer bbox 行为，字段为 None。"""
+        layout, = load_config(_write(tmp_path), LayoutConfig)
+        assert layout.field_box_nm is None and layout.field_size_nm is None
+
+    def test_field_box_length_strict(self, tmp_path):
+        """三元组按定长形状拒绝（防漏写坐标）。"""
+        text = _FULL_TOML.replace(
+            'polarity = "clear"',
+            'polarity = "clear"\nfield_box_nm = [0.0, 0.0, 1.0]')
+        with pytest.raises(ValueError, match="列表"):
+            load_config(_write(tmp_path, text), LayoutConfig)
+
+
 class TestGridRuntime:
     """IF-001：算法无关网格解析与 PrepareRuntime 组合结构。"""
 

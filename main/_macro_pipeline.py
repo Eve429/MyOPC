@@ -4,6 +4,7 @@ import os  # 原子替换与文件系统操作
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import tempfile  # 创建与目标同目录的临时文件
 import time  # perf_counter 阶段计时
+import warnings  # 处理框大于 layer bbox 的风险提示
 from collections.abc import Mapping  # merge 映射参数的只读类型
 from decimal import Decimal  # nm→DBU 的精确十进制换算
 from pathlib import Path  # 全部路径统一使用 Path 对象
@@ -21,6 +22,7 @@ if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
 from common.io import atomic_write_json  # JSON 原子写出
+from common.units import exact_dbu  # 处理框 nm→DBU 精确换算
 from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
 from layout import (  # 版图打开、层规格与坐标框
     DbuBox,
@@ -48,6 +50,61 @@ from opc.input import (
 from opc.input.edge import prepare_macro_problem  # problem 构造
 
 _PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
+
+
+def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
+                         dbu_nm: Decimal) -> DbuBox:
+    """解析处理框：双 None 用 layer bbox；box 直用；size 以 layer bbox 居中推导。
+
+    环带（field 减 layer bbox 的无图形区）光学语义 = 极性背景外推
+    （clear→不透光、opaque→透光），由 prepare 的 transmission/coverage
+    变换天然给出；处理框绝不作为图形进入 Region（00_PAST field_box
+    契约——不产生虚假可动边）。严格大于 layer bbox 时给出 warning。
+    """
+    if layout.field_box_nm is not None:
+        left, bottom, right, top = (
+            exact_dbu(value, dbu_nm, f"field_box_nm[{index}]")
+            for index, value in enumerate(layout.field_box_nm))
+        field = DbuBox(left, bottom, right, top)
+    elif layout.field_size_nm is not None:
+        width = exact_dbu(layout.field_size_nm[0], dbu_nm, "field_size_nm[0]")
+        height = exact_dbu(layout.field_size_nm[1], dbu_nm, "field_size_nm[1]")
+        # 逐轴居中：slack//2 归低侧、余量归高侧（与 _center_padding 的奇数
+        # 余量约定一致）；宽高小于 layer 尺寸时 slack 为负，交由下方包含性
+        # 校验统一报错，不在此重复分支。
+        slack_x = width - layer_bounds.width
+        slack_y = height - layer_bounds.height
+        low_x, low_y = slack_x // 2, slack_y // 2
+        field = DbuBox(
+            layer_bounds.left - low_x, layer_bounds.bottom - low_y,
+            layer_bounds.right + (slack_x - low_x),
+            layer_bounds.top + (slack_y - low_y))
+    else:
+        return layer_bounds  # 未配置：保持 layer bbox 现行行为，零行为变化
+    if (field.left > layer_bounds.left or field.bottom > layer_bounds.bottom
+            or field.right < layer_bounds.right
+            or field.top < layer_bounds.top):
+        raise ValueError(
+            f"处理框 ({field.left},{field.bottom})-({field.right},{field.top}) DBU"
+            " 必须四向包含 layer bbox "
+            f"({layer_bounds.left},{layer_bounds.bottom})-"
+            f"({layer_bounds.right},{layer_bounds.top}) DBU"
+            "——配置比版图小或偏移出界")
+    if (field.left < layer_bounds.left or field.bottom < layer_bounds.bottom
+            or field.right > layer_bounds.right
+            or field.top > layer_bounds.top):
+        scale = Decimal(dbu_nm)
+        warnings.warn(
+            "处理框大于 layer bbox：field "
+            f"({Decimal(field.left) * scale},{Decimal(field.bottom) * scale})"
+            f"-({Decimal(field.right) * scale},{Decimal(field.top) * scale}) nm"
+            " ⊃ layer "
+            f"({Decimal(layer_bounds.left) * scale},"
+            f"{Decimal(layer_bounds.bottom) * scale})-"
+            f"({Decimal(layer_bounds.right) * scale},"
+            f"{Decimal(layer_bounds.top) * scale}) nm；"
+            "环带按极性背景处理（clear 不透光 / opaque 透光）", stacklevel=2)
+    return field
 
 
 def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,

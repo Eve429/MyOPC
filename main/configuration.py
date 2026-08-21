@@ -44,6 +44,18 @@ class LayoutConfig:
     datatype: int                                 # 目标 datatype（严格 int）
     polarity: MaskPolarity                        # clear=图形透光 / opaque=图形材料
     top_cell: str | None = None                   # 显式顶层；缺省要求版图唯一顶层
+    field_box_nm: tuple[Decimal, Decimal, Decimal, Decimal] | None = None
+    # 精确处理框 [left, bottom, right, top]（绝对 GDS 坐标，nm）——
+    # 00_PAST --box 的迁移等价；省略时用 layer bbox
+    field_size_nm: tuple[Decimal, Decimal] | None = None
+    # 处理框尺寸 [width, height]（nm），layer bbox 居中放置——精确坐标
+    # 难以获取时的省心写法
+
+    def __post_init__(self) -> None:
+        """处理框两种写法至多一个：双空=layer bbox 现行行为，双填即意图不明。"""
+        if (self.field_box_nm is not None
+                and self.field_size_nm is not None):
+            raise ValueError("field_box_nm 与 field_size_nm 至多填写一个")
 
 
 @dataclass(frozen=True, slots=True)

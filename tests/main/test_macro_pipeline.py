@@ -1,5 +1,7 @@
 """双轮 macro-core 迭代管线的配置校验与端到端生成式测试。"""
 
+import warnings  # resolve warning 捕获
+from decimal import Decimal  # nm/DBU 精确十进制
 from pathlib import Path
 
 import klayout.db as kdb
@@ -8,6 +10,8 @@ import pytest
 
 import main.run_macro_pipeline as pipeline
 from layout import DbuBox, LayerSpec, LayoutDB
+from main._macro_pipeline import resolve_field_bounds  # 处理框解析
+from main.configuration import LayoutConfig  # [layout] 段
 from opc.input.edge import MacroProblem, reconstruct_region
 
 # 测试版图：DBU=1nm，bar 图形使目标层 bbox 为 (20,20)-(140,60)，
@@ -579,3 +583,83 @@ class TestSaveFinalLithography:
             assert (out_dir / tile["nominal_png"]).is_file()  # 连续 PNG
             assert (out_dir / tile["binary_png"]).is_file()  # 二值 PNG
             assert len(tile["ownership_box"]) == 4  # 计分框四元组
+
+
+class TestResolveFieldBounds:
+    """处理框 resolve：默认透传/居中推导/包含校验/warning 分支。"""
+
+    @staticmethod
+    def _layout(**overrides):
+        """以最小 [layout] 字段构造配置。"""
+        base = {"layout": Path("x.gds"), "layer": 1, "datatype": 0,
+                "polarity": "clear"}
+        base.update(overrides)
+        return LayoutConfig(**base)
+
+    LAYER = DbuBox(0, 0, 100, 60)
+    UNIT = Decimal(1)  # 1 nm/DBU，数值即 DBU
+
+    def test_default_passthrough_without_warning(self):
+        """双 None：原样返回 layer bbox 且不发 warning。"""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = resolve_field_bounds(
+                self._layout(), self.LAYER, self.UNIT)
+        assert result == self.LAYER and not caught
+
+    def test_field_box_exact_equal_no_warning(self):
+        """精确等于 layer bbox：合法且静默。"""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = resolve_field_bounds(
+                self._layout(field_box_nm=(Decimal(0), Decimal(0),
+                                          Decimal(100), Decimal(60))),
+                self.LAYER, self.UNIT)
+        assert result == self.LAYER and not caught
+
+    def test_field_box_strictly_larger_warns(self):
+        """严格大于：返回扩展框并 warning（含极性背景提示）。"""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = resolve_field_bounds(
+                self._layout(field_box_nm=(Decimal(-30), Decimal(-15),
+                                          Decimal(130), Decimal(75))),
+                self.LAYER, self.UNIT)
+        assert (result.left, result.bottom, result.right, result.top) == (
+            -30, -15, 130, 75)
+        assert len(caught) == 1 and "极性背景" in str(caught[0].message)
+
+    def test_field_box_not_containing_rejected(self):
+        """不包含 layer bbox（偏移出界/更小）：ValueError。"""
+        with pytest.raises(ValueError, match="四向包含"):
+            resolve_field_bounds(
+                self._layout(field_box_nm=(Decimal(10), Decimal(10),
+                                          Decimal(120), Decimal(70))),
+                self.LAYER, self.UNIT)
+
+    def test_field_size_centered_even_and_odd(self):
+        """居中推导：偶 slack 对半；奇 slack 归高侧（判别 30/31）。"""
+        even = resolve_field_bounds(
+            self._layout(field_size_nm=(Decimal(160), Decimal(90))),
+            self.LAYER, self.UNIT)
+        assert (even.left, even.bottom, even.right, even.top) == (
+            -30, -15, 130, 75)
+        odd = resolve_field_bounds(
+            self._layout(field_size_nm=(Decimal(161), Decimal(90))),
+            self.LAYER, self.UNIT)
+        assert (odd.left, odd.right) == (-30, 131)  # slack 61 = 低 30 + 高 31
+
+    def test_field_size_smaller_than_layer_rejected(self):
+        """尺寸小于 layer 尺寸：包含性校验统一拒绝。"""
+        with pytest.raises(ValueError, match="四向包含"):
+            resolve_field_bounds(
+                self._layout(field_size_nm=(Decimal(50), Decimal(90))),
+                self.LAYER, self.UNIT)
+
+    def test_exact_dbu_fraction_rejected(self):
+        """非 dbu 整数倍的坐标在换算层拒绝。"""
+        with pytest.raises(ValueError, match="field_box_nm"):
+            resolve_field_bounds(
+                self._layout(field_box_nm=(Decimal("0.5"), Decimal(0),
+                                          Decimal(100), Decimal(60))),
+                self.LAYER, Decimal(1))

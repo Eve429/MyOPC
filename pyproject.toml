@@ -7,3 +7,4 @@ addopts = "-ra"
 # （用户领地，待整理后移除）。规则集用默认，刻意不配置
 # [tool.ruff.format]——项目纪律禁止自动格式化、保持紧凑排版。
 extend-exclude = ["00_PAST", "geometry/contour.py"]
+line-length = 120

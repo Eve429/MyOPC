@@ -61,18 +61,17 @@ class ILTMethod:
     定义由 build_fixed_context_canvas 策略注入，本层不读任何方法数学字段。
     """
 
-    method_name: str                  # summary/产物稳定标识
-    config_type: type                 # load_config 请求的算法段 Config
-    optimize_macro: Callable          # (problem, model, config, *, on_tiles_completed)
-    evaluated_states: Callable        # (config) -> 每 macro 评价状态数（进度 total）
+    method_name: str  # summary/产物稳定标识
+    config_type: type  # load_config 请求的算法段 Config
+    optimize_macro: Callable  # (problem, model, config, *, on_tiles_completed)
+    evaluated_states: Callable  # (config) -> 每 macro 评价状态数（进度 total）
     build_fixed_context_canvas: Callable
     # (problem, core_index, config) -> 固定 context 画布（方法数学所在地）
 
 
-def prepare_pixel_problems(layout: LayoutConfig,
-                           partition: PartitionConfig,
-                           litho: LithographyConfig,
-                           output: OutputConfig) -> dict:
+def prepare_pixel_problems(
+    layout: LayoutConfig, partition: PartitionConfig, litho: LithographyConfig, output: OutputConfig
+) -> dict:
     """像素 ILT 阶段 0/1：逐 macro 一次栅格化并写出 ilt_plan.json。"""
     if output.work_dir is None:  # 本流程要求工作目录
         raise ValueError("此流程要求 [output].work_dir")
@@ -85,15 +84,18 @@ def prepare_pixel_problems(layout: LayoutConfig,
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
         bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生，不物化）
         if bounds is None:  # 目标层无图形
-            raise ValueError(
-                f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
+            raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
         # 网格换算不含边段参数；像素整除与画布容量在 plan_macros 内校验
         grid = resolve_grid_config(partition, litho, dbu_nm)
         macros = plan_macros(
-            bounds, macro_grid=partition.macro_grid,
+            bounds,
+            macro_grid=partition.macro_grid,
             macro_size_dbu=grid.macro_size_dbu,
-            core_size_dbu=grid.core_dbu, context_dbu=grid.context_dbu,
-            pixel_dbu=grid.pixel_dbu, canvas_pixels=litho.canvas_pixels)
+            core_size_dbu=grid.core_dbu,
+            context_dbu=grid.context_dbu,
+            pixel_dbu=grid.pixel_dbu,
+            canvas_pixels=litho.canvas_pixels,
+        )
         # ownership 复核：面积和恰等于父框即无正面积重叠
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
@@ -103,22 +105,24 @@ def prepare_pixel_problems(layout: LayoutConfig,
         pixel_count_sum = 0  # macro ownership 像素总数（summary 规模键）
         for macro in macros:  # 行优先顺序逐 macro 准备
             # 完整相交物化一次；实际 box 整像素校验在 problem 构造内前置
-            batch = database.query(
-                [layer], macro.query_box).materialize_intersecting()
-            problem = prepare_pixel_macro_problem(
-                batch, layer, layout.polarity, macro, layout_bounds=bounds)
+            batch = database.query([layer], macro.query_box).materialize_intersecting()
+            problem = prepare_pixel_macro_problem(batch, layer, layout.polarity, macro, layout_bounds=bounds)
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")
-            pixel_count_sum += int(problem.ownership_shape[0]
-                                   * problem.ownership_shape[1])
-            entries.append({
-                "macro_id": macro.macro_id,
-                "ownership_box": [macro.ownership_box.left,
-                                  macro.ownership_box.bottom,
-                                  macro.ownership_box.right,
-                                  macro.ownership_box.top],
-                "core_count": macro.core_count,
-                "problem_file": str(problem_path),
-                "problem_bytes": problem_path.stat().st_size})
+            pixel_count_sum += int(problem.ownership_shape[0] * problem.ownership_shape[1])
+            entries.append(
+                {
+                    "macro_id": macro.macro_id,
+                    "ownership_box": [
+                        macro.ownership_box.left,
+                        macro.ownership_box.bottom,
+                        macro.ownership_box.right,
+                        macro.ownership_box.top,
+                    ],
+                    "core_count": macro.core_count,
+                    "problem_file": str(problem_path),
+                    "problem_bytes": problem_path.stat().st_size,
+                }
+            )
             peak_rss = max(peak_rss, process.memory_info().rss)  # 采样峰值
             del batch, problem  # 立即释放当前 macro 大对象
     # 全部 problem 成功且 LayoutDB 已关闭才写出"准备完成"的 plan；
@@ -143,14 +147,15 @@ def prepare_pixel_problems(layout: LayoutConfig,
         "final_cell_mode": output.final_cell_mode,
         "macros": entries,
         "prepare_seconds": prepare_seconds,
-        "prepare_peak_rss_bytes": peak_rss}
+        "prepare_peak_rss_bytes": peak_rss,
+    }
     atomic_write_json(output.work_dir / "ilt_plan.json", plan)
     return plan
 
 
-def _binary_canvas(problem: PixelMacroProblem, binary_mask: np.ndarray,
-                   core_index: int, build_context: Callable,
-                   config) -> np.ndarray:
+def _binary_canvas(
+    problem: PixelMacroProblem, binary_mask: np.ndarray, core_index: int, build_context: Callable, config
+) -> np.ndarray:
     """组装终评画布：trainable 像素取 best 二值，context 由方法策略提供。
 
     本函数不含任何方法数学：σ(β(2T−1))、hard target 等固定 context 的
@@ -159,44 +164,40 @@ def _binary_canvas(problem: PixelMacroProblem, binary_mask: np.ndarray,
     trainable = problem.trainable_index_canvas(core_index)
     values = binary_mask.reshape(-1)[np.maximum(trainable, 0)]
     context = build_context(problem, core_index, config)
-    return np.where(trainable >= 0, values,
-                    context).astype(np.float32)
+    return np.where(trainable >= 0, values, context).astype(np.float32)
 
 
-def _evaluate_best_binary(problem: PixelMacroProblem, result,
-                          model: ICCAD13Lithography, config,
-                          conditions,
-                          build_context: Callable) -> tuple[int, int]:
+def _evaluate_best_binary(
+    problem: PixelMacroProblem, result, model: ICCAD13Lithography, config, conditions, build_context: Callable
+) -> tuple[int, int]:
     """在 best 二值掩膜上执行最终前向并按 ownership 统计 L2/PVBand。"""
     core_count = problem.macro.core_count
     binary_l2 = 0  # 二值 L2 累计
     pvband = 0  # 二值 PVBand 累计
     with torch.no_grad():  # 纯推理终评
         for batch_start in range(0, core_count, config.batch_size):
-            core_indices = list(range(
-                batch_start,
-                min(batch_start + config.batch_size, core_count)))
-            masks = np.stack([
-                _binary_canvas(problem, result.binary_mask, c,
-                               build_context, config)
-                for c in core_indices])
-            targets = np.stack(
-                [problem.target_canvas(c) for c in core_indices])
-            ownerships = np.stack(
-                [problem.ownership_canvas(c) for c in core_indices])
-            target_tensor = torch.from_numpy(targets).to(
-                device=model.device, dtype=torch.float32).div_(255.0)
+            core_indices = list(range(batch_start, min(batch_start + config.batch_size, core_count)))
+            masks = np.stack(
+                [_binary_canvas(problem, result.binary_mask, c, build_context, config) for c in core_indices]
+            )
+            targets = np.stack([problem.target_canvas(c) for c in core_indices])
+            ownerships = np.stack([problem.ownership_canvas(c) for c in core_indices])
+            target_tensor = torch.from_numpy(targets).to(device=model.device, dtype=torch.float32).div_(255.0)
             ownership_tensor = torch.from_numpy(ownerships).to(model.device)
             mask_tensor = torch.from_numpy(masks).to(model.device)
             printed = model.forward_many(mask_tensor, conditions)
             binary_l2 += evaluate_binary_l2(
-                target_tensor, printed["nominal"],
+                target_tensor,
+                printed["nominal"],
                 threshold=float(model.config.print_threshold),
-                ownership_mask=ownership_tensor)
+                ownership_mask=ownership_tensor,
+            )
             pvband += evaluate_pvband(
-                printed["dose_max"], printed["defocus_min"],
+                printed["dose_max"],
+                printed["defocus_min"],
                 threshold=float(model.config.print_threshold),
-                ownership_mask=ownership_tensor)
+                ownership_mask=ownership_tensor,
+            )
             # 释放：每批写完立即失去引用
             del printed, mask_tensor, target_tensor, ownership_tensor
     return binary_l2, pvband
@@ -208,20 +209,18 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     process = psutil.Process()  # RSS 采样进程句柄
     rss_start = process.memory_info().rss  # 起点 RSS
     layout, partition, litho, algo, output = load_config(
-        config_path, LayoutConfig, PartitionConfig, LithographyConfig,
-        method.config_type, OutputConfig)
+        config_path, LayoutConfig, PartitionConfig, LithographyConfig, method.config_type, OutputConfig
+    )
     plan = prepare_pixel_problems(layout, partition, litho, output)
     rss_after_prepare = process.memory_info().rss  # 准备后 RSS
     peak_rss = max(rss_start, rss_after_prepare)  # 峰值初值
     device = resolve_device(litho.device)  # 设备解析（auto→实际）
     # CUDA 峰值统计设备必须显式指定（与 MB-OPC 工作流同款约束）
-    cuda_stats_device = (torch.device(device)
-                         if device.startswith("cuda") else None)
+    cuda_stats_device = torch.device(device) if device.startswith("cuda") else None
     model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
     if cuda_stats_device is not None:  # 从模型加载后开始计量
         torch.cuda.reset_peak_memory_stats(cuda_stats_device)
-    conditions = (model.condition("nominal"), model.condition("dose_max"),
-                  model.condition("defocus_min"))
+    conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))
     layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
     dbu_um = float(plan["dbu_um"])  # 源版图 DBU
     macro_count = plan["macro_count"]  # macro 总数
@@ -232,8 +231,8 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     outer_bar = None  # 多 macro 外层进度条
     if macro_count > 1 and output.show_progress:
         from tqdm import tqdm  # 进度显示库
-        outer_bar = tqdm(total=macro_count, desc="macros",
-                         unit="macro", position=0)
+
+        outer_bar = tqdm(total=macro_count, desc="macros", unit="macro", position=0)
     try:  # 异常路径也要收尾外层进度条
         for entry in plan["macros"]:  # 稳定顺序逐 macro 独立求解
             macro_id = entry["macro_id"]  # macro 编号
@@ -242,44 +241,41 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
             bar = None  # 内层 tile 进度条
             if output.show_progress:
                 from tqdm import tqdm  # 进度显示库
+
                 # 求解进度 = 评价状态数 × core 数（终评批次不计入求解 total）
                 bar = tqdm(
-                    total=(method.evaluated_states(algo)
-                           * problem.macro.core_count),
-                    desc=f"macro {macro_id}", unit="tile",
+                    total=(method.evaluated_states(algo) * problem.macro.core_count),
+                    desc=f"macro {macro_id}",
+                    unit="tile",
                     position=1 if outer_bar is not None else 0,
-                    leave=outer_bar is None)
+                    leave=outer_bar is None,
+                )
             on_tiles = None if bar is None else bar.update  # 批完成回调
             try:  # 异常路径同样收尾内层条
-                result = method.optimize_macro(
-                    problem, model, algo, on_tiles_completed=on_tiles)
+                result = method.optimize_macro(problem, model, algo, on_tiles_completed=on_tiles)
             finally:
                 if bar is not None:
                     bar.close()
             # best 二值终评（REQ-010：独立于训练的最终前向）
             binary_l2, binary_pvband = _evaluate_best_binary(
-                problem, result, model, algo, conditions,
-                method.build_fixed_context_canvas)
+                problem, result, model, algo, conditions, method.build_fixed_context_canvas
+            )
             macro_dir = macros_dir / macro_id  # 产物目录
             macro_dir.mkdir(parents=True, exist_ok=True)
             # 像素 → Region → best GDS（RESULT Cell，完整 macro 候选）
             region = reconstruct_pixel_region(problem, result.binary_mask)
-            best_gds = write_macro_gds(
-                layer, region, macro_dir / "best.gds", dbu_um)
+            best_gds = write_macro_gds(layer, region, macro_dir / "best.gds", dbu_um)
             # 结果 NPZ（独立于 MB-OPC 命名空间）
             atomic_write_npz(
                 macro_dir / f"{method.method_name}_result.npz",
                 format_version=np.array([_ILT_RESULT_FORMAT_VERSION], np.int32),
                 macro_id=np.array([macro_id]),
                 ownership_box=np.array(entry["ownership_box"], np.int64),
-                best_parameters=np.ascontiguousarray(
-                    result.best_parameters, dtype=np.float32),
-                soft_mask=np.ascontiguousarray(
-                    result.soft_mask, dtype=np.float32),
-                binary_mask=np.ascontiguousarray(
-                    result.binary_mask).astype(np.uint8),
-                best_state_index=np.array(
-                    [result.best_state_index], np.int32))
+                best_parameters=np.ascontiguousarray(result.best_parameters, dtype=np.float32),
+                soft_mask=np.ascontiguousarray(result.soft_mask, dtype=np.float32),
+                binary_mask=np.ascontiguousarray(result.binary_mask).astype(np.uint8),
+                best_state_index=np.array([result.best_state_index], np.int32),
+            )
             best_record = result.records[result.best_state_index]
             metrics = {
                 "macro_id": macro_id,
@@ -288,25 +284,29 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
                 "records": [asdict(record) for record in result.records],
                 "binary_l2": binary_l2,
                 "binary_pvband": binary_pvband,
-                "core_count": problem.macro.core_count}
+                "core_count": problem.macro.core_count,
+            }
             atomic_write_json(macro_dir / "metrics.json", metrics)
             elapsed = time.perf_counter() - started  # 单 macro 耗时
             peak_rss = max(peak_rss, process.memory_info().rss)  # 逐 macro 采峰
-            macro_summaries.append({
-                "macro_id": macro_id,
-                "best_state_index": result.best_state_index,
-                "state_count": len(result.records),
-                "best_total_loss": best_record.total_loss,
-                "best_nominal_l2": best_record.nominal_l2,
-                "best_process_l2": best_record.process_l2,
-                "best_pvband_loss": best_record.pvband_loss,
-                "best_curvature_loss": best_record.curvature_loss,
-                "binary_l2": binary_l2,
-                "binary_pvband": binary_pvband,
-                "best_gds": str(best_gds),
-                "result_npz": str(macro_dir / f"{method.method_name}_result.npz"),
-                "metrics_json": str(macro_dir / "metrics.json"),
-                "elapsed_seconds": elapsed})
+            macro_summaries.append(
+                {
+                    "macro_id": macro_id,
+                    "best_state_index": result.best_state_index,
+                    "state_count": len(result.records),
+                    "best_total_loss": best_record.total_loss,
+                    "best_nominal_l2": best_record.nominal_l2,
+                    "best_process_l2": best_record.process_l2,
+                    "best_pvband_loss": best_record.pvband_loss,
+                    "best_curvature_loss": best_record.curvature_loss,
+                    "binary_l2": binary_l2,
+                    "binary_pvband": binary_pvband,
+                    "best_gds": str(best_gds),
+                    "result_npz": str(macro_dir / f"{method.method_name}_result.npz"),
+                    "metrics_json": str(macro_dir / "metrics.json"),
+                    "elapsed_seconds": elapsed,
+                }
+            )
             macro_gds[macro_id] = best_gds  # 记录显式映射
             if outer_bar is not None:
                 outer_bar.update(1)
@@ -316,18 +316,13 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
             outer_bar.close()
     # 全部 macro 完成后只合并一次（独立 macro 策略）
     merge_started = time.perf_counter()
-    final_path = merge_macro_results(
-        plan, macro_gds, output.final_layout,
-        cell_mode=output.final_cell_mode)
+    final_path = merge_macro_results(plan, macro_gds, output.final_layout, cell_mode=output.final_cell_mode)
     merge_seconds = time.perf_counter() - merge_started
     manifest = None  # 最终光刻留档
     if output.save_final_lithography:  # 只对最终合并 GDS 运行一次
-        manifest = save_final_lithography(
-            plan, final_path, model, algo.batch_size,
-            work_dir / "final_lithography")
+        manifest = save_final_lithography(plan, final_path, model, algo.batch_size, work_dir / "final_lithography")
     peak_rss = max(peak_rss, process.memory_info().rss)  # 收尾前采峰
-    cuda_peak = (int(torch.cuda.max_memory_allocated(cuda_stats_device))
-                 if cuda_stats_device is not None else None)
+    cuda_peak = int(torch.cuda.max_memory_allocated(cuda_stats_device)) if cuda_stats_device is not None else None
     summary = {
         "method": method.method_name,
         "macro_count": macro_count,
@@ -347,7 +342,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
         "rss_after_prepare_bytes": rss_after_prepare,
         "peak_rss_bytes": peak_rss,
         "cuda_peak_bytes": cuda_peak,
-        "final_lithography_tiles": (None if manifest is None
-                                    else manifest["tile_count"])}
+        "final_lithography_tiles": (None if manifest is None else manifest["tile_count"]),
+    }
     atomic_write_json(work_dir / "summary.json", summary)
     return summary

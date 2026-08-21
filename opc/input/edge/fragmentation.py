@@ -10,12 +10,26 @@ from numpy.typing import NDArray
 
 from common.arrays import as_matrix, as_vector
 from geometry import ContourBatch
-from opc.input._fragmentation import count_edge_fragments
 from opc.input.mask import MaskPolarity
 
 IntArray = NDArray[np.int64]
 Int32Array = NDArray[np.int32]
 FloatArray = NDArray[np.float64]
+
+
+def _count_edge_fragments(lengths: np.ndarray, corner_dbu: float,
+                          maximum_dbu: float) -> np.ndarray:
+    """按角部短段和均衡中段策略计算每条数学边的切分数量。
+
+    纯 O(edge) 向量公式，唯一调用方是 fragment_edges 的真实切分——
+    旧"物化前估算"调用方已随 00_PAST 归档消失，2026-08-21 自
+    opc/input/_fragmentation.py 并入为私有函数（消除两同名模块混淆）。
+    """
+    counts = np.ceil(lengths / maximum_dbu).astype(np.int64)
+    long_edges = lengths > 2.0 * maximum_dbu
+    counts[long_edges] = 2 + np.ceil(
+        (lengths[long_edges] - 2.0 * corner_dbu) / maximum_dbu).astype(np.int64)
+    return counts
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +212,7 @@ def fragment_edges(contours: ContourBatch, config: FragmentationConfig,
     if np.any(lengths <= 0.0):
         raise ValueError("physical boundary contains zero-length edges")
     maximum, corner = config.max_segment_length_dbu, config.corner_length_dbu
-    counts = count_edge_fragments(lengths, corner, maximum)
+    counts = _count_edge_fragments(lengths, corner, maximum)
     long_edges = lengths > 2.0 * maximum
     if len(counts) and (int(counts.max()) > np.iinfo(np.int32).max or
                         int(counts.sum()) > np.iinfo(np.int32).max):

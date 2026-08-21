@@ -110,6 +110,13 @@ def main() -> int:
     # 耗时
     print(f"  合并 {summary['merge_seconds']:.2f}s，总计 "
           f"{summary['total_seconds']:.2f}s")
+    cuda_peak = summary["cuda_peak_bytes"]  # CUDA 峰值字节数
+    # CPU 运行无 CUDA 峰值
+    cuda_text = ("N/A" if cuda_peak is None
+                 else f"{cuda_peak / 1024 / 1024:.0f} MiB")
+    # 资源（与 gradient 入口同款，summary 键公共层本就提供）
+    print(f"  峰值 RSS：{summary['peak_rss_bytes'] / 1024 / 1024:.0f} MiB，"
+          f"CUDA 峰值：{cuda_text}")
     if summary["final_lithography_tiles"] is not None:  # 光刻留档
         print(f"  最终光刻 PNG：{summary['final_lithography_tiles']} 个 tile")  # 数量
     print(f"  最终版图：{summary['final_layout']}（{summary['final_cell_mode']}）")  # 输出

@@ -600,14 +600,16 @@ class TestLossesCurvatureAndRealModel:
                                                           monkeypatch):
         """weight=0 不构建卷积；weight>0 曲率作用于 hard mask 可复算。"""
         calls = {"n": 0}
-        real = levelset_module.curvature_loss
+        # 曲率调用已上提到公共骨架（P3），spy 宿主随之迁移
+        import opc.iteration.ilt._skeleton as ilt_skeleton
+        real = ilt_skeleton.curvature_loss
 
         def spy(*args, **kwargs):
             """计数透传。"""
             calls["n"] += 1
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(levelset_module, "curvature_loss", spy)
+        monkeypatch.setattr(ilt_skeleton, "curvature_loss", spy)
         problem = _problem(kdb.Region(kdb.Box(8, 8, 41, 48)))
         optimize_levelset_macro(problem, _IdentityModel(), _ls_config())
         assert calls["n"] == 0  # weight=0：一次都不调用

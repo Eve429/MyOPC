@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
 
@@ -14,16 +13,16 @@ from scipy.ndimage import distance_transform_edt
 from lithography import LithographyModel
 from opc.input.pixel import PixelMacroProblem
 
-from ._common import (
-    ILTMacroResult,
-    ILTStateRecord,
-    curvature_loss,
-    owned_continuous_losses,
-    weighted_macro_loss,
+from ._common import ILTMacroResult, ILTStateRecord
+from ._skeleton import (
+    BatchPack,
+    OnTilesCompleted,
+    SlotForward,
+    check_common_entry,
+    pack_batches,
+    run_state_batches,
+    total_loss_of,
 )
-
-# 进度回调类型：参数是本批真正完成评价、backward 与释放的 tile 数（与 Simple 同契约）。
-OnTilesCompleted = Callable[[int], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,20 +180,15 @@ def optimize_levelset_macro(
     if not isfinite(pixel_nm) or pixel_nm <= 0.0:
         raise ValueError("pixel_nm 必须是正有限数")
     pixel_nm = float(pixel_nm)
-    # 入口契约：批量前向的画布必须一致
-    canvas_pixels = int(problem.macro.canvas_pixels)
-    if int(model.config.canvas) != canvas_pixels:
-        raise ValueError("模型画布与 problem 画布不一致")
+    # 入口契约：中心差分至少需要一圈真实物理 context（replicate padding 会让
+    # 边缘参数系数依赖 core 切分，网格切分不应改变算法语义），故无条件要求。
+    check_common_entry(problem, model, require_context_pixel=True,
+                       reason="LevelSet ")
     pixel_dbu = int(problem.macro.pixel_dbu)
-    if int(problem.macro.context_dbu) < pixel_dbu:
-        # 中心差分至少需要一圈真实物理 context；replicate padding 会让
-        # 边缘参数系数依赖 core 切分（网格切分不应改变算法语义）。
-        raise ValueError(
-            "LevelSet 要求 context 不小于 1 像素（context_dbu >= pixel_dbu）")
+    canvas_pixels = int(problem.macro.canvas_pixels)
     query = problem.macro.query_box
     box = problem.macro.ownership_box
     hm, wm = problem.ownership_shape
-    core_count = problem.macro.core_count
     # macro ownership 在 query 栅格中的位置（SDF crop 与 halo 差分共用）
     mrow0 = (box.bottom - query.bottom) // pixel_dbu
     mcol0 = (box.left - query.left) // pixel_dbu
@@ -211,8 +205,9 @@ def optimize_levelset_macro(
         weight_decay=0.0, amsgrad=False)  # 超参与 REQ-008 契约锁定
     conditions = (model.condition("nominal"), model.condition("dose_max"),
                   model.condition("defocus_min"))
-    use_curvature = config.curvature_weight > 0.0
     device = model.device
+    # 静态画布每 macro 打包一次；state 循环只做 phi 快照 gather 与更新
+    packs = pack_batches(problem, config.batch_size)
     best_loss = float("inf")  # 严格更小才更新（平局保留较早状态）
     best_state_index = 0
     best_phi = macro_phi.detach().clone()
@@ -229,88 +224,54 @@ def optimize_levelset_macro(
                     f"{problem.macro.macro_id} state {state_index} "
                     "grad magnitude 非有限")
             macro_gradient = np.zeros_like(phi_flat)
-        sums = {"nominal": 0.0, "process": 0.0, "pvband": 0.0,
-                "curvature": 0.0}
         started = time.perf_counter()  # 本状态全部 core 评价计时
-        for batch_start in range(0, core_count, config.batch_size):
-            core_indices = list(range(
-                batch_start,
-                min(batch_start + config.batch_size, core_count)))
-            batch_count = len(core_indices)
-            # CPU 组批：target/计分/trainable/valid 四种画布一次取出
-            targets = np.stack(
-                [problem.target_canvas(c) for c in core_indices])
-            ownerships = np.stack(
-                [problem.ownership_canvas(c) for c in core_indices])
-            trainables = np.stack(
-                [problem.trainable_index_canvas(c) for c in core_indices])
-            valid_canvases = np.stack(
-                [problem.context_valid_canvas(c) for c in core_indices])
-            trainable_flat = trainables.reshape(batch_count, -1)  # [B,P]
-            owned = trainable_flat >= 0  # trainable 槽位（区别于窗口掩码）
-            safe = np.where(owned, trainable_flat, 0)
-            # 同一 state 全部批读同一宏参数快照：numpy 取值即快照，无
-            # autograd 直通；梯度经 local 叶子张量回散（与 Simple 同机制）。
-            local_values = phi_flat[safe]
-            target_tensor = torch.from_numpy(targets).to(
-                device=device, dtype=torch.float32).div_(255.0)
-            ownership_tensor = torch.from_numpy(ownerships).to(device=device)
-            index_tensor = torch.from_numpy(trainable_flat).to(device=device)
-            index3 = index_tensor.view(batch_count, canvas_pixels, canvas_pixels)
-            valid_tensor = torch.from_numpy(valid_canvases).to(device=device)
-            local = torch.from_numpy(local_values).to(
+
+        def slot_values(pack: BatchPack,
+                        _build: bool = build_gradient,
+                        _phi=phi_flat,
+                        _coefficient=grad_magnitude if build_gradient else None,
+                        _macro_gradient=macro_gradient
+                        ) -> SlotForward:
+            """同一 state 全部批读同一宏参数快照：numpy 取值即快照，无
+            autograd 直通；STE 前向 hard、backward −系数×上游，梯度经
+            local 叶子回散宏梯度（与 Simple 同机制）。"""
+            local = torch.from_numpy(_phi[pack.safe]).to(
                 device=device, dtype=torch.float32)
-            if build_gradient:
+            if _build:
                 local.requires_grad_(True)
-            # STE：forward 数值 = hard phi<0，backward = -系数×上游
-            local_grad = (torch.from_numpy(grad_magnitude[safe]).to(
+            local_grad = (torch.from_numpy(_coefficient[pack.safe]).to(
                 device=device, dtype=torch.float32)
-                if build_gradient else None)
-            hard = _LevelSetBinarize.apply(
-                local.view(batch_count, canvas_pixels, canvas_pixels),
+                if _build else None)
+            values = _LevelSetBinarize.apply(
+                local.view(pack.count, canvas_pixels, canvas_pixels),
                 None if local_grad is None else local_grad.view(
-                    batch_count, canvas_pixels, canvas_pixels))
-            # 固定 context 是 hard target（窗口内），数值 padding 恒 0
-            context_hard = (target_tensor >= 0.5).to(torch.float32)
-            context = torch.where(valid_tensor, context_hard,
-                                  torch.zeros_like(context_hard))
-            mask = torch.where(index3 >= 0, hard, context)
-            printed = model.forward_many(mask, conditions)  # 一次共享 FFT
-            nominal_l2, process_l2, pvband_loss = owned_continuous_losses(
-                printed["nominal"], printed["dose_max"],
-                printed["defocus_min"], target_tensor, ownership_tensor)
-            curvature_value = (curvature_loss(mask, ownership_tensor)
-                               if use_curvature else 0.0)
-            sums["nominal"] += float(nominal_l2.detach())
-            sums["process"] += float(process_l2.detach())
-            sums["pvband"] += float(pvband_loss.detach())
-            if use_curvature:
-                sums["curvature"] += float(curvature_value.detach())
-            if build_gradient:
-                batch_total = weighted_macro_loss(
-                    nominal_l2, process_l2, pvband_loss, curvature_value,
-                    weight_process_l2=config.weight_process_l2,
-                    weight_pvband=config.weight_pvband,
-                    curvature_weight=config.curvature_weight)
-                batch_total.backward()  # 批间梯度直接累加（同一参数快照）
-                grad_np = local.grad.detach().cpu().numpy()
-                # scatter-add raw sum：同一像素出现在多个 core context 时
-                # 梯度相加，绝不按出现次数平均（REQ-007）。
-                np.add.at(macro_gradient, trainable_flat[owned],
-                          grad_np[owned])
-            # 释放：批结束只保留标量与宏梯度，画布与 autograd 图失去引用
-            del printed, mask, hard, local, local_grad, context, context_hard
-            del valid_tensor, target_tensor, ownership_tensor
-            del index_tensor, index3, nominal_l2, process_l2, pvband_loss
-            if use_curvature:
-                del curvature_value
-            if on_tiles_completed is not None:  # backward 且释放后才报进度
-                on_tiles_completed(batch_count)
-        total_loss = float(weighted_macro_loss(
-            sums["nominal"], sums["process"], sums["pvband"],
-            sums["curvature"], weight_process_l2=config.weight_process_l2,
+                    pack.count, canvas_pixels, canvas_pixels))
+
+            def collect(finished: BatchPack, _local=local,
+                        _macro_gradient=_macro_gradient) -> None:
+                """scatter-add raw sum：同一像素出现在多个 core context 时
+                梯度相加，绝不按出现次数平均（REQ-007）。"""
+                grad_np = _local.grad.detach().cpu().numpy()
+                np.add.at(_macro_gradient,
+                          finished.trainable_flat[finished.owned],
+                          grad_np[finished.owned])
+
+            return SlotForward(
+                values=values,
+                collect_gradient=collect if _build else None)
+
+        sums = run_state_batches(
+            model, packs, conditions, slot_values=slot_values,
+            context_mode="hard", curvature_source="mask",
+            weight_process_l2=config.weight_process_l2,
             weight_pvband=config.weight_pvband,
-            curvature_weight=config.curvature_weight))
+            curvature_weight=config.curvature_weight,
+            build_gradient=build_gradient,
+            on_tiles_completed=on_tiles_completed)
+        total_loss = total_loss_of(
+            sums, weight_process_l2=config.weight_process_l2,
+            weight_pvband=config.weight_pvband,
+            curvature_weight=config.curvature_weight)
         if not (isfinite(total_loss) and isfinite(sums["nominal"])
                 and isfinite(sums["process"]) and isfinite(sums["pvband"])
                 and isfinite(sums["curvature"])):

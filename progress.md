@@ -508,3 +508,11 @@
   （15 测试，两 runner 直跑）→ D contracts/system/dataflow/两手册/两报告/
   active→completed。审查三观察（scipy 前置、门禁 scope、smoke 值）随批
   处理；步长与 0 等值线事实入 contract。全量 603 passed + 1 skipped。
+
+- 50nm 定尺寸测试掩膜组（计划评审通过，两项用户裁定 + 边框内缩）：
+  扩展 build_reticles.py（档位表 dense/mid/loose、结构族 helper、组 1
+  综合采样与组 2 复刻式 builder、设计区框成对写出、--p50 CLI、写前
+  包络/互不接触 + 写后读回/互补终检自检），生成 p50_1024/p50_2048 ×
+  3 档 × 正负板 12 份；双板 target_u8 逐位等价、环带两极性恒 0、ILT
+  单宏 + MB-OPC 四宏双极性 smoke。规格入 reticle_build_plan.md §10，
+  CLAUDE.md 测试与数据节同步（含 gcd_45nm→gcd_30um 过期项修正）。

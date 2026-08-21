@@ -75,7 +75,7 @@ cd 00_PAST && python main/run_layout_geometry.py TestReticle/simple.gds --layer 
 
 ## 测试与数据
 
-- `TestReticle/*.gds`（simple / gcd_45nm / JustPoly / test1）是用户可编辑回归数据：测试不得硬编码其坐标/计数，新测试用生成式 GDS；gcd_45nm 供 smoke（layer 11/0、TOP）。
+- `TestReticle/`：`build_reticles.py` 参数化生成测试版图集（10 场景 × 正负板，2026-08-17 起；50nm 定尺寸组 `p50_1024/`、`p50_2048/` 各 3 间距档 × 正负板，2026-08-21 起），规格与再生成依据见同目录 `reticle_build_plan.md`；simple / JustPoly / test1 / gcd_30um 为用户可编辑回归数据。测试不得硬编码其坐标/计数，新测试用生成式 GDS；gcd_30um 供 smoke（layer 11/0、TOP）。
 - 旧测试套件（`00_PAST/tests/`）是迁移的规格书：实现迁移时对照移植测试，测试先行或同行。
 - 新几何逻辑必须成组断言：零位移 XOR == 0、segment key 唯一、法向单位向量、owner 唯一；阶段边界行为用 monkeypatch 调用计数证明，不用注释或口头约定。
 - 套件职责表与 smoke 验收标准见 `doc/test_manual.md`（当前全量 445）。

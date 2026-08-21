@@ -18,11 +18,17 @@ from evaluation import (
 )
 from lithography import LithographyModel
 from opc.errors import ReconstructionError
-from opc.input import ownership_canvas, points_to_canvas, rasterize_mask_canvas
+from opc.input import points_to_canvas, rasterize_mask_canvas
 from opc.input.edge import MacroProblem, reconstruct_region
 from opc.input.edge.fragmentation import SegmentGeometry
-from opc.input.edge.sampling import edge_probe_points
 
+from ._batching import (
+    MacroStaticPack,
+    assemble_probe_batch,
+    cached_target_canvas,
+    discrete_batch_diagnostics,
+    pack_macro_statics,
+)
 from ._cache import TargetCanvasCache
 
 # 进度回调类型：参数是本批真正完成评价与释放的 tile 数。
@@ -107,9 +113,16 @@ def evaluate_and_propose(
         *,
         can_update: bool,
         reference: SegmentGeometry | None = None,
+        pack: MacroStaticPack | None = None,
         on_tiles_completed: OnTilesCompleted | None = None,
 ) -> SimpleMBOPCStep:
-    """评价一个 macro 当前状态，并产生同步 owner 位移提案。"""
+    """评价一个 macro 当前状态，并产生同步 owner 位移提案。
+
+    pack 是每 macro 打包一次的静态评价输入（计分画布/参考探针坐标/
+    零位移参考候选），optimize_macro 预打包后逐状态复用；直接调用缺省
+    时现算（reference 同理，两条 None 路径等价）。pack 优先时 reference
+    参数不参与本调用。
+    """
     # 入口契约：位移形状/有限性/context 归零与 canvas 一致性。MacroProblem 构造
     # 已保证 owner/CSR 不变量，这里不重复校验。
     segment_count = problem.segments.segment_count  # 段数 S
@@ -124,20 +137,24 @@ def evaluate_and_propose(
         raise ValueError("模型画布与 problem 画布不一致")
     if not np.isfinite(step_dbu) or step_dbu < 0.0:
         raise ValueError("step_dbu 必须是非负有限数")
-    # 固定几何：参考（零位移）端点与法向只物化一次，探针始终围绕参考边定义；
-    # 多轮迭代经 reference 参数复用同一物化结果（默认 None 时本调用自算）。
-    if reference is None:  # 独立调用方未提供
-        reference = problem.segments.materialize()  # 现算参考几何
-    macro_id = problem.macro.macro_id  # cache 键的 macro 部分
-    pixel_dbu = int(problem.macro.pixel_dbu)  # 栅格像素
+    # 固定几何：参考（零位移）端点/法向与探针坐标、计分画布均每 macro 一次。
+    if pack is None:  # 直接调用方未预打包
+        if reference is None:
+            reference = problem.segments.materialize()  # 现算参考几何
+        pack = pack_macro_statics(
+            problem, epe_distance_dbu=config.epe_distance_dbu,
+            reference_geometry=reference,
+            reference_region=reconstruct_region(
+                problem, np.zeros(segment_count, dtype=np.float64)),
+            to_canvas=points_to_canvas)
+    pixel_dbu = pack.pixel_dbu  # 栅格像素
     max_displacement = float(problem.fragmentation.max_displacement_dbu)  # 位移上限
     next_values = current.copy()  # 提案缓冲（can_update=False 时不写方向）
     written = np.zeros(segment_count, dtype=np.bool_)  # 方向唯一写标记
     # 批间标量累计
     totals = {"epe": 0, "l2": 0, "pvband": 0,
               "valid": 0, "ambiguous": 0}
-    reference_region: kdb.Region | None = None  # cache miss 时才重建参考 Region
-    core_count = problem.macro.core_count  # tile 总数
+    core_count = pack.core_count  # tile 总数
     threshold = float(model.config.print_threshold)  # 像素指标二值阈值
     device = model.device  # 目标设备
     for batch_start in range(0, core_count, config.batch_size):  # 分批评价
@@ -154,47 +171,24 @@ def evaluate_and_propose(
         # 计分像素批
         ownership = np.empty((batch_count, canvas_pixels, canvas_pixels),
                              dtype=np.bool_)
-        probes: list[tuple[int, np.ndarray]] = []  # (batch 槽位, owner 全局索引)
-        inner_parts: list[np.ndarray] = []  # 各 core inner canvas 坐标
-        outer_parts: list[np.ndarray] = []  # 各 core outer canvas 坐标
         for slot, core_index in enumerate(core_indices):  # 逐 core 组批
             spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
-            cached = target_cache.get(macro_id, core_index)  # LRU 查询
-            if cached is None:  # 未命中：首次用零位移参考几何栅格化
-                if reference_region is None:  # 参考候选只重建一次
-                    reference_region = reconstruct_region(
-                        problem, np.zeros(segment_count, dtype=np.float64))
-                # 参考透光率 → uint8
-                cached = np.rint(rasterize_mask_canvas(
-                    reference_region, spec.context_box, pixel_dbu,
-                    canvas_pixels, polarity=problem.polarity,
-                    dark_box=problem.dark_box) * 255.0
-                ).astype(np.uint8)
-                target_cache.put(macro_id, core_index, cached)  # 回填缓存
-            targets[slot] = cached  # 批内拷贝
+            # target：缓存命中直接用，miss 栅格化参考几何并回填
+            targets[slot] = cached_target_canvas(
+                problem, pack, target_cache, core_index,
+                rasterize=rasterize_mask_canvas)
             # 当前候选直接栅格
             masks[slot] = rasterize_mask_canvas(
                 current_region, spec.context_box, pixel_dbu,
                 canvas_pixels, polarity=problem.polarity,
                 dark_box=problem.dark_box)
-            # 唯一计分像素
-            ownership[slot] = ownership_canvas(
-                spec.ownership_box, spec.context_box, pixel_dbu, canvas_pixels)
-            owner_indices = problem.owner_segments_for_core(core_index)  # 唯一可写段
-            if len(owner_indices):  # 空 owner core 无探针，但仍计入完成 tile
-                # 参考边中点 ± 法向
-                inner_dbu, outer_dbu = edge_probe_points(
-                    reference.starts[owner_indices], reference.ends[owner_indices],
-                    reference.normals[owner_indices], config.epe_distance_dbu)
-                # DBU → 居中 canvas 连续坐标
-                inner_parts.append(points_to_canvas(
-                    inner_dbu, spec.context_box, pixel_dbu, canvas_pixels))
-                outer_parts.append(points_to_canvas(
-                    outer_dbu, spec.context_box, pixel_dbu, canvas_pixels))
-                probes.append((slot, owner_indices))  # 记录探针归属
+            # 唯一计分像素（静态打包，逐态不重算）
+            ownership[slot] = pack.ownership[core_index]
+        # 本批 owner 探针（静态坐标）槽位与 canvas 坐标一次拼接
+        probe_slots, inner_xy, outer_xy = assemble_probe_batch(
+            pack, core_indices)
         # 光刻：target 送设备转 float32/255，一次 forward_many 出三工艺角。
         with torch.no_grad():  # 离散方法不需要梯度图
-            # uint8 → float32/255
             target_tensor = torch.from_numpy(targets).to(
                 device=device, dtype=torch.float32).div_(255.0)
             mask_tensor = torch.from_numpy(masks).to(device=device)
@@ -204,26 +198,15 @@ def evaluate_and_propose(
                           model.condition("dose_max"),
                           model.condition("defocus_min"))
             printed = model.forward_many(mask_tensor, conditions)  # 共享一次 FFT
-            nominal = printed["nominal"]  # 标称胶图
-            # 像素指标：L2/PVBand 只在 ownership 像素累计，context/padding 不重复计分。
-            totals["l2"] += evaluate_binary_l2(
-                target_tensor, nominal, threshold=threshold,
-                ownership_mask=ownership_tensor)
-            totals["pvband"] += evaluate_pvband(
-                printed["dose_max"], printed["defocus_min"],
-                threshold=threshold, ownership_mask=ownership_tensor)
-            # EPE：本批全部 owner 探针一次批量评价（batch 索引指向各自 core 图）。
-            if probes:
-                # 每个探针的 batch 槽位
-                batch_index_tensor = torch.cat([
-                    torch.full((len(idx),), slot, dtype=torch.long)
-                    for slot, idx in probes])
-                inner_xy = torch.from_numpy(np.concatenate(inner_parts))
-                outer_xy = torch.from_numpy(np.concatenate(outer_parts))
-                # 阈值跟随模型 PrintThresh
-                epe_result = evaluate_edge_probes(
-                    target_tensor, nominal, batch_index_tensor, inner_xy,
-                    outer_xy, threshold=threshold)
+            # 像素指标与 EPE：公共离散诊断（evaluate_* 补丁锚在本模块）
+            l2, pvband, epe_result = discrete_batch_diagnostics(
+                target_tensor, printed, ownership_tensor, threshold,
+                probe_slots, inner_xy, outer_xy,
+                binary_l2=evaluate_binary_l2, pvband=evaluate_pvband,
+                edge_probes=evaluate_edge_probes)
+            totals["l2"] += l2
+            totals["pvband"] += pvband
+            if epe_result is not None:
                 totals["epe"] += epe_result.violation_count  # 违规段数
                 # 回切整 batch 化：每张小张量只做一次设备→主机搬运，随后全部
                 # 统计与写回在 numpy 侧切片完成，避免逐 core 的 GPU 同步。
@@ -236,14 +219,17 @@ def evaluate_and_propose(
                     moves = (
                         epe_result.directions.cpu().numpy()
                         .astype(np.float64) * step_dbu)
-                    cursor = 0  # 探针游标（按 core 顺序回切）
-                    for _, idx in probes:
+                    cursor = 0  # 探针游标（按批内 core 顺序回切）
+                    for core_index in core_indices:
+                        idx = pack.owner_members[core_index]
+                        if not len(idx):  # 空 owner core 无探针
+                            continue
                         piece = slice(cursor, cursor + len(idx))  # 该 core 段
                         cursor += len(idx)
                         next_values[idx] += moves[piece]  # 在 current 基础上移动
                         written[idx] = True  # 唯一写标记
             # 释放：批结束只保留标量与方向，GPU 张量立即失去引用。
-            del printed, nominal, mask_tensor, target_tensor, ownership_tensor
+            del printed, mask_tensor, target_tensor, ownership_tensor
         if on_tiles_completed is not None:  # 释放后才报告进度
             on_tiles_completed(batch_count)
     # 出口：核对方向写集与 context 归零，提案裁到位移上限。
@@ -289,14 +275,20 @@ def optimize_macro(
     # 参考几何整个迭代只物化一次：baseline 与每个移动后状态的评价复用同一
     # 份端点/法向（探针始终围绕参考边定义，与位移状态无关）。
     reference = problem.segments.materialize()  # 唯一物化
-    # baseline：零位移重建并评价；它同时产生 Round 1 提案。
+    # 静态打包每 macro 一次：计分画布/参考探针坐标/零位移参考候选。target
+    # 缓存 miss 源与 baseline mask 共用同一次零位移重构（重构是纯函数，
+    # 确定性成立）；此前探针与计分画布逐状态重算，属结构性浪费。
     started = time.perf_counter()  # baseline 计时
     baseline_region = reconstruct_region(problem, zeros)  # 零位移候选
+    pack = pack_macro_statics(
+        problem, epe_distance_dbu=config.epe_distance_dbu,
+        reference_geometry=reference, reference_region=baseline_region,
+        to_canvas=points_to_canvas)
     pending_step = step_for(1)  # baseline 提案使用的步长
     # 评价 + Round 1 提案
     proposal = evaluate_and_propose(
         problem, baseline_region, zeros, model, config, pending_step,
-        target_cache, can_update=True, reference=reference,
+        target_cache, can_update=True, reference=reference, pack=pack,
         on_tiles_completed=on_tiles_completed)
     # records[0] 固定是 baseline
     records = [IterationRecord(
@@ -348,7 +340,7 @@ def optimize_macro(
             proposal = evaluate_and_propose(
                 problem, candidate_region, candidate, model, config,
                 pending_next, target_cache, can_update=can_propose,
-                reference=reference,
+                reference=reference, pack=pack,
                 on_tiles_completed=on_tiles_completed)
             # Round N 指标属第 N 次位移后状态；moved 为产生本状态时移动的段数
             records.append(IterationRecord(

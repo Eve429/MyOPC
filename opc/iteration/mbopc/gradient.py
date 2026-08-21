@@ -19,10 +19,16 @@ from evaluation import (
 )
 from lithography import LithographyModel, ProcessCondition
 from opc.errors import ReconstructionError
-from opc.input import ownership_canvas, points_to_canvas, rasterize_mask_canvas
+from opc.input import points_to_canvas, rasterize_mask_canvas
 from opc.input.edge import MacroProblem, reconstruct_region_with_midpoints
-from opc.input.edge.sampling import edge_probe_points
 
+from ._batching import (
+    MacroStaticPack,
+    assemble_probe_batch,
+    cached_target_canvas,
+    discrete_batch_diagnostics,
+    pack_macro_statics,
+)
 from ._cache import TargetCanvasCache
 
 # 进度回调类型：参数是本批真正完成评价、backward 与释放的 tile 数。
@@ -129,6 +135,7 @@ class _GradientMacroContext:
     device: torch.device            # 参数与批张量的目标设备
     threshold: float                # 离散诊断二值阈值
     conditions: tuple[ProcessCondition, ...]  # 三工艺角一次前向
+    pack: MacroStaticPack           # 共享静态打包（计分画布/探针坐标/target 源）
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +277,11 @@ def _prepare_macro_context(
     reference_region, reference_segment_midpoints = (
         reconstruct_region_with_midpoints(
             problem, np.zeros(segment_count, dtype=np.float64)))
-    core_owner_members = []  # 每 core 的 owner 段号（EPE 探针/profile 专用）
+    # 共享静态打包（A1）：计分画布/参考探针坐标每 macro 一次，全状态复用
+    pack = pack_macro_statics(
+        problem, epe_distance_dbu=config.epe_distance_dbu,
+        reference_geometry=reference, reference_region=reference_region,
+        to_canvas=points_to_canvas)
     core_sampling_members = []  # 每 core 全部可见段中的 owner 段（梯度采样）
     # EPE profile 静态预计算（weight_epe>0 时）：固定在参考段中点/法向，
     # 与位移状态无关；Q = 2R 个对称半像素中心槽位。
@@ -285,33 +296,15 @@ def _prepare_macro_context(
     epe_profiles: list = []  # 每 core [E_c,Q,2] canvas 坐标（无 owner 段为 None）
     epe_lengths: list = []  # 每 core [E_c] 参考段长（DBU；无 owner 段为 None）
     epe_length_sum = 0.0  # L_epe 分母 L_sum = Σ len_s（macro 常量）
-    probe_inner_xy = []  # 每 core 的参考探针 canvas 坐标（None=无 owner 段）
-    probe_outer_xy = []
-    total_pixels = 0  # loss 归一分母 P：全部 core ownership 像素数
     for core_index in range(core_count):
         spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
-        total_pixels += int(ownership_canvas(
-            spec.ownership_box, spec.context_box, pixel_dbu,
-            canvas_pixels).sum())
         # 梯度采样按 membership：该 core 可见的所有段中，凡 owner
         # 段都在本 core 的 canvas 采样一次并累加到同一参数——跨 core 边界段
         # 的邻 tile 贡献不丢弃；采样与 owner（发布归属）职责分离。
         members = np.asarray(problem.segments_for_core(core_index))
         core_sampling_members.append(
             members[segment_to_parameter[members] >= 0])
-        owner_members = problem.owner_segments_for_core(core_index)
-        core_owner_members.append(owner_members)
-        if len(owner_members):  # 探针围绕参考边定义，坐标与状态无关
-            inner_dbu, outer_dbu = edge_probe_points(
-                reference.starts[owner_members], reference.ends[owner_members],
-                reference.normals[owner_members], config.epe_distance_dbu)
-            probe_inner_xy.append(points_to_canvas(
-                inner_dbu, spec.context_box, pixel_dbu, canvas_pixels))
-            probe_outer_xy.append(points_to_canvas(
-                outer_dbu, spec.context_box, pixel_dbu, canvas_pixels))
-        else:
-            probe_inner_xy.append(None)
-            probe_outer_xy.append(None)
+        owner_members = pack.owner_members[core_index]
         if epe_enabled and len(owner_members):
             # EPE profile 固定在参考段（不随 current mask 移动）：中点沿
             # 单位法向的 2R 个半像素中心；每段恰在本 owner core 建一条。
@@ -339,7 +332,7 @@ def _prepare_macro_context(
             epe_profiles.append(None)
             epe_lengths.append(None)
     del reference  # 探针已提取，释放全量段几何数组
-    if total_pixels == 0:
+    if pack.total_pixels == 0:
         # 有 owner 段却算不出任何计分像素，属于数据损坏，不能静默除零。
         raise ValueError("存在 owner 段但 ownership 计分像素为 0（数据不一致）")
     device = model.device  # 参数与批张量的目标设备
@@ -355,13 +348,15 @@ def _prepare_macro_context(
         reference_region=reference_region,
         reference_segment_midpoints=reference_segment_midpoints,
         core_sampling_members=core_sampling_members,
-        core_owner_members=core_owner_members,
-        probe_inner_xy=probe_inner_xy, probe_outer_xy=probe_outer_xy,
-        total_pixels=total_pixels,
+        core_owner_members=pack.owner_members,
+        probe_inner_xy=pack.probe_inner_xy,
+        probe_outer_xy=pack.probe_outer_xy,
+        total_pixels=pack.total_pixels,
         epe_profiles=epe_profiles, epe_lengths=epe_lengths,
         epe_length_sum=epe_length_sum,
         device=device, threshold=threshold,
-        conditions=conditions)
+        conditions=conditions,
+        pack=pack)
 
 
 def _evaluate_state(
@@ -399,30 +394,22 @@ def _evaluate_state(
         member_slots = []  # 梯度采样条目的 batch 槽位（int64）
         member_params = []  # 梯度采样条目指向的参数索引（int64）
         member_mids = []  # 梯度采样条目的当前中点 canvas 坐标
-        probe_slots = []  # EPE 探针条目的 batch 槽位（与梯度条目独立）
         epe_slots = []  # EPE profile 条目的 batch 槽位（仅 owner core 语义）
         epe_xy_parts = []  # EPE profile 画布坐标 [E_c,Q,2]
         epe_len_parts = []  # EPE 段参考长度 [E_c]
         for slot, core_index in enumerate(core_indices):  # 逐 core 组批
             spec = problem.macro.core(core_index)
-            cached = target_cache.get(ctx.macro_id, core_index)
-            if cached is None:  # 未命中：参考几何栅格化并回填缓存
-                cached = np.rint(rasterize_mask_canvas(
-                    ctx.reference_region, spec.context_box, ctx.pixel_dbu,
-                    ctx.canvas_pixels, polarity=problem.polarity,
-                    dark_box=problem.dark_box)
-                    * 255.0).astype(np.uint8)
-                target_cache.put(ctx.macro_id, core_index, cached)
-            targets[slot] = cached
+            # target：缓存命中直接用，miss 栅格化参考几何并回填
+            targets[slot] = cached_target_canvas(
+                problem, ctx.pack, target_cache, core_index,
+                rasterize=rasterize_mask_canvas)
             # 当前候选直接栅格
             masks[slot] = rasterize_mask_canvas(
                 current_region, spec.context_box, ctx.pixel_dbu,
                 ctx.canvas_pixels, polarity=problem.polarity,
                 dark_box=problem.dark_box)
-            # 唯一计分像素
-            ownership[slot] = ownership_canvas(
-                spec.ownership_box, spec.context_box, ctx.pixel_dbu,
-                ctx.canvas_pixels)
+            # 唯一计分像素（静态打包，逐态不重算）
+            ownership[slot] = ctx.pack.ownership[core_index]
             sampling_members = ctx.core_sampling_members[core_index]
             if len(sampling_members):  # 梯度采样：全部 membership 中 owner 段
                 # 采样中点由当前已发布的重构几何提供（corner miter 后含
@@ -437,15 +424,12 @@ def _evaluate_state(
                 member_params.append(ctx.segment_to_parameter[
                     sampling_members].astype(np.int64))
             owner_members = ctx.core_owner_members[core_index]  # 探针语义
-            if len(owner_members):  # 无 owner 段的 core 仍计完成 tile
-                # 探针槽位独立于梯度条目
-                probe_slots.append(np.full(
+            if len(owner_members) and ctx.epe_length_sum > 0.0:
+                # EPE 只由 owner core 计一次（探针坐标经静态打包批量拼接）
+                epe_slots.append(np.full(
                     len(owner_members), slot, dtype=np.int64))
-                if ctx.epe_length_sum > 0.0:  # EPE 只由 owner core 计一次
-                    epe_slots.append(np.full(
-                        len(owner_members), slot, dtype=np.int64))
-                    epe_xy_parts.append(ctx.epe_profiles[core_index])
-                    epe_len_parts.append(ctx.epe_lengths[core_index])
+                epe_xy_parts.append(ctx.epe_profiles[core_index])
+                epe_len_parts.append(ctx.epe_lengths[core_index])
         trainable = bool(member_params)  # 本批是否有可训练 membership
         build_graph = trainable and build_gradient  # 末状态纯评价不建图
         # uint8→float32/255
@@ -532,25 +516,18 @@ def _evaluate_state(
             sums["process"] += float(triple[1]) / ctx.total_pixels
             sums["pvband"] += float(triple[2]) / ctx.total_pixels
             sums["epe"] += epe_value
-            diag["l2"] += evaluate_binary_l2(
-                target_tensor, nominal, threshold=ctx.threshold,
-                ownership_mask=ownership_tensor)
-            diag["pvband"] += evaluate_pvband(
-                dose_max, defocus_min, threshold=ctx.threshold,
-                ownership_mask=ownership_tensor)
-            if probe_slots:  # 本批 owner 探针一次批量评价（owner-core 语义）
-                batch_index_tensor = torch.from_numpy(
-                    np.concatenate(probe_slots))
-                inner_xy = torch.from_numpy(np.concatenate(
-                    [ctx.probe_inner_xy[c] for c in core_indices
-                     if len(ctx.core_owner_members[c])]))
-                outer_xy = torch.from_numpy(np.concatenate(
-                    [ctx.probe_outer_xy[c] for c in core_indices
-                     if len(ctx.core_owner_members[c])]))
-                # 阈值跟随模型 PrintThresh
-                epe_result = evaluate_edge_probes(
-                    target_tensor, nominal, batch_index_tensor,
-                    inner_xy, outer_xy, threshold=ctx.threshold)
+            # 本批 owner 探针（静态坐标）与 L2/PVBand/EPE 公共离散诊断
+            # （evaluate_* 补丁锚在本模块）
+            probe_slots_np, inner_np, outer_np = assemble_probe_batch(
+                ctx.pack, core_indices)
+            l2, pvband, epe_result = discrete_batch_diagnostics(
+                target_tensor, printed, ownership_tensor, ctx.threshold,
+                probe_slots_np, inner_np, outer_np,
+                binary_l2=evaluate_binary_l2, pvband=evaluate_pvband,
+                edge_probes=evaluate_edge_probes)
+            diag["l2"] += l2
+            diag["pvband"] += pvband
+            if epe_result is not None:
                 diag["epe"] += epe_result.violation_count
                 diag["valid"] += int(epe_result.valid.cpu().numpy().sum())
                 diag["ambiguous"] += int(

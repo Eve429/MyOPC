@@ -13,7 +13,9 @@ main/run_mbopc.py::main
    └─ main/_mbopc_workflow.py::run_mbopc_workflow(SIMPLE_METHOD)
       ├─ configuration.py::load_config（[mbopc] 段）
       ├─ _macro_pipeline.py::prepare_problems（共享生命周期，见 macro_pipeline.md；
-   │    bounds 经 resolve_field_bounds 处理 [layout] field_box/field_size）
+   │    bounds 经 resolve_field_bounds 处理 [layout] field_box/field_size；
+   │    problem 持久化 dark_box=数据包络，solver 栅格化经
+   │    rasterize_mask_canvas(dark_box) 使包络外恒不透光）
       ├─ configuration.py::resolve_mbopc_config（跨段校验 + nm→DBU；入口导入）
       │    → SimpleMBOPCConfig
       ├─ lithography.ICCAD13Lithography(device)（auto；资源统计起量）

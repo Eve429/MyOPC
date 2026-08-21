@@ -17,7 +17,8 @@ main/run_simple_ilt.py::main（可选位置参数，默认 config/simple_ilt.tom
       ├─ _ilt_workflow.py::prepare_pixel_problems
       │  ├─ layout.LayoutDB.open（单次）→ layer_bbox
       │  │    → resolve_field_bounds（[layout] field_box/field_size；
-      │  │       双空即 layer bbox）
+      │  │       双空即 layer bbox；暗边界恒为数据包络——环带两极性
+      │  │       统一恒 0）
       │  ├─ configuration.py::resolve_grid_config（无 edge 的网格换算）
       │  ├─ opc/input/grid.py::plan_macros（面积守恒复核）
       │  └─ 逐 macro：query(query_box).materialize_intersecting

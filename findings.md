@@ -1,5 +1,20 @@
 # MyOPC 迁移研究发现
 
+## 2026-08-21 环带恒暗修订（用户裁定：正负板环带都不透光）
+
+- 用户实测处理框后指出 opaque 环带透光不符需求；裁定**光学开孔边界 =
+  layer 数据包络**：环带（field−数据包络）与 field 外扩张带两极性统一
+  恒 0；field 只剩规划语义。数据包络内极性变换不变（opaque 背景 255）。
+- 实施（17e9e2c/0e7d0c9）：ILT prepare 拆 planning_bounds/dark_bounds
+  双参数；MB-OPC rasterize_mask_canvas 增 dark_box（像素中心判据，与
+  ownership_canvas 同布局），MacroProblem 持久化（格式版本 2），mbopc
+  双 solver/单遍入口/最终光刻留档全贯通——**顺带关闭此前搁置的
+  "MB-OPC 无 field 概念"缺陷**（00_PAST test_opaque_context_outside_
+  field_stays_dark 的画布级镜像回归入档）。
+- 关键教训：暗界判据用像素中心（与 ownership_canvas 一致）而非 00_PAST
+  的边缘覆盖栅格减法——对齐像素格时两者等价，测试期望值须按中心语义
+  校准（首次照抄 00_PAST 断言差半像素而红）。
+
 ## 2026-08-21 处理框（field_box/field_size）：版图大于 layer 的规划范围
 
 - 用户场景：layer 内容 1×1 µm、reticle 2.048²——两条 prepare 路径以

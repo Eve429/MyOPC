@@ -329,14 +329,16 @@ class TestSolverSemantics:
     def test_curvature_zero_weight_skips_conv(self, monkeypatch):
         """curvature_weight=0：不构建曲率卷积。"""
         calls = {"count": 0}
-        real = curvmulti_module.curvature_loss
+        # 曲率调用已上提到公共骨架（P3），spy 宿主随之迁移
+        import opc.iteration.ilt._skeleton as ilt_skeleton
+        real = ilt_skeleton.curvature_loss
 
         def spy(*args, **kwargs):
             """计数后透传。"""
             calls["count"] += 1
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(curvmulti_module, "curvature_loss", spy)
+        monkeypatch.setattr(ilt_skeleton, "curvature_loss", spy)
         problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
         result = optimize_curvmulti_macro(problem, _DoseModel(), _config())
         assert calls["count"] == 0

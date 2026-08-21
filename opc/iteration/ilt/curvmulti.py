@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
 
@@ -16,15 +15,18 @@ from opc.input.pixel import PixelMacroProblem
 from ._common import (
     ILTMacroResult,
     ILTStateRecord,
-    curvature_loss,
-    owned_continuous_losses,
     resize_image,
     smooth_sigmoid_mask,
-    weighted_macro_loss,
 )
-
-# 进度回调类型：参数是本批真正完成评价、backward 与释放的 tile 数。
-OnTilesCompleted = Callable[[int], None]
+from ._skeleton import (
+    BatchPack,
+    OnTilesCompleted,
+    SlotForward,
+    check_common_entry,
+    pack_batches,
+    run_state_batches,
+    total_loss_of,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,27 +93,21 @@ def optimize_curvmulti_macro(
     state 全部 core/batch 经同一控制张量前向、梯度跨批累加，屏障后
     恰一次 step；stage 切换只以 nearest 带走本 stage best 参数。
     """
-    # 入口契约：进入批量前向前挡住画布不一致。
-    canvas_pixels = int(problem.macro.canvas_pixels)
-    if int(model.config.canvas) != canvas_pixels:
-        raise ValueError("模型画布与 problem 画布不一致")
+    # 入口契约：画布一致 + 曲率启用的 context≥1px 联合约束统一走骨架
+    # （3×3 valid 卷积的 ownership 边缘一圈不计曲率，context < 1 像素时
+    # 曲率随 core 切分方式变化——网格切分不应改变损失语义）。
+    check_common_entry(problem, model,
+                       curvature_weight=config.curvature_weight,
+                       reason="curvature_weight > 0 ")
     beta = float(config.sigmoid_steepness)
     offset = float(config.sigmoid_offset)
     kernel = int(config.smoothing_kernel)
     device = model.device
     pixel_dbu = int(problem.macro.pixel_dbu)
-    if (config.curvature_weight > 0.0
-            and int(problem.macro.context_dbu) < pixel_dbu):
-        # 3×3 valid 卷积的 ownership 边缘一圈不计曲率：context < 1 像素时
-        # 该边缘落在画布边界，曲率损失随 core 切分方式变化（网格切分不应
-        # 改变损失语义），在入口拒绝而不是静默给出切分相关结果。
-        raise ValueError(
-            "curvature_weight > 0 要求 context 不小于 1 像素"
-            "（context_dbu >= pixel_dbu），当前 context=0")
+    canvas_pixels = int(problem.macro.canvas_pixels)
     query = problem.macro.query_box
     box = problem.macro.ownership_box
     hm, wm = problem.ownership_shape
-    core_count = problem.macro.core_count
     # 多尺度契约：宏参数域必须能整除全部 scale，且最粗控制网格放得下平滑核。
     if any(hm % scale or wm % scale for scale in config.scales):
         raise ValueError(
@@ -133,7 +129,8 @@ def optimize_curvmulti_macro(
     # 三工艺角一次前向（同一 state 全部 batch 共享同一 FFT 约定）
     conditions = (model.condition("nominal"), model.condition("dose_max"),
                   model.condition("defocus_min"))
-    use_curvature = config.curvature_weight > 0.0
+    # 静态画布每 macro 打包一次；stage/state 循环只做控制链 gather 与更新
+    packs = pack_batches(problem, config.batch_size)
     best_loss = float("inf")  # 全局严格更小才更新（平局保留较早状态）
     best_state_index = 0
     best_control: torch.Tensor | None = None  # 全局 best 的控制网格（CPU）
@@ -158,88 +155,39 @@ def optimize_curvmulti_macro(
             control.requires_grad_(build_gradient)
             if build_gradient:
                 optimizer.zero_grad(set_to_none=True)
-            sums = {"nominal": 0.0, "process": 0.0, "pvband": 0.0,
-                    "curvature": 0.0}
             started = time.perf_counter()  # 本状态全部 core 评价计时
-            for batch_start in range(0, core_count, config.batch_size):
-                core_indices = list(range(
-                    batch_start,
-                    min(batch_start + config.batch_size, core_count)))
-                batch_count = len(core_indices)
-                # CPU 组批：target/计分/trainable 索引三种画布一次取出
-                targets = np.stack(
-                    [problem.target_canvas(c) for c in core_indices])
-                ownerships = np.stack(
-                    [problem.ownership_canvas(c) for c in core_indices])
-                trainables = np.stack(
-                    [problem.trainable_index_canvas(c) for c in core_indices])
-                valid_canvases = np.stack(
-                    [problem.context_valid_canvas(c) for c in core_indices])
-                trainable_flat = trainables.reshape(batch_count, -1)  # [B,P]
-                owned = trainable_flat >= 0  # trainable 槽位（区别于窗口掩码）
-                safe = np.where(owned, trainable_flat, 0)
-                target_tensor = torch.from_numpy(targets).to(
-                    device=device, dtype=torch.float32).div_(255.0)
-                ownership_tensor = torch.from_numpy(ownerships).to(device=device)
-                index_tensor = torch.from_numpy(safe).to(device=device)
-                index3 = torch.from_numpy(trainable_flat).to(device=device).view(
-                    batch_count, canvas_pixels, canvas_pixels)
-                # 可微链：控制网格 -> 平滑 sigmoid -> nearest 上采样 -> 槽位
-                # gather。控制张量在同一 state 内不被修改，全部 batch 因此
-                # 读同一快照；backward 梯度经链路自然累加进 control.grad。
+
+            def slot_values(pack: BatchPack,
+                            _control=control) -> SlotForward:
+                """可微链：控制网格 -> 平滑 sigmoid -> nearest 上采样 -> 槽位
+                gather。控制张量在同一 state 内不被修改，全部 batch 因此
+                读同一快照；backward 梯度经链路自然累加进 control.grad
+                （无需叶子收集器）。"""
                 mask_control = smooth_sigmoid_mask(
-                    control, kernel, beta, offset)  # [1,hc,wc]
+                    _control, kernel, beta, offset)  # [1,hc,wc]
                 full_mask = resize_image(
                     mask_control, (hm, wm), "nearest").view(-1)
-                local = full_mask[index_tensor]  # [B,P] 可微 gather
-                soft_canvas = local.view(
-                    batch_count, canvas_pixels, canvas_pixels)
-                # 固定 context 统一为初始版图的 state0 transmission σ(β(2T−1))：
-                # 由常量 target 推导、无梯度边，与 Simple 同一套定义，保证邻宏
-                # 在本宏画布中的初始值恰为其自身 state0（监督目标仍是 raw T）。
-                context_soft = torch.sigmoid(
-                    beta * (target_tensor * 2.0 - 1.0)).detach()
-                # 三值语义：window 外的数值 padding 不是物理 T=0 像素，必须恒 0
-                # ——对整个画布 sigmoid 会人为加一圈 σ(−β) 透光环。
-                valid_tensor = torch.from_numpy(valid_canvases).to(device=device)
-                context = torch.where(
-                    valid_tensor, context_soft, torch.zeros_like(context_soft))
-                mask = torch.where(index3 >= 0, soft_canvas, context)
-                printed = model.forward_many(mask, conditions)  # 一次共享 FFT
-                nominal_l2, process_l2, pvband_loss = owned_continuous_losses(
-                    printed["nominal"], printed["dose_max"],
-                    printed["defocus_min"], target_tensor, ownership_tensor)
-                # CurvMulti 曲率作用于 nominal wafer（printed）而非输入 mask
-                # ——与 Simple/LevelSet 的 mask 曲率是本方法的算法差异所在。
-                curvature_value = (curvature_loss(
-                    printed["nominal"], ownership_tensor)
-                    if use_curvature else 0.0)
-                sums["nominal"] += float(nominal_l2.detach())
-                sums["process"] += float(process_l2.detach())
-                sums["pvband"] += float(pvband_loss.detach())
-                if use_curvature:
-                    sums["curvature"] += float(curvature_value.detach())
-                if build_gradient:
-                    batch_total = weighted_macro_loss(
-                        nominal_l2, process_l2, pvband_loss, curvature_value,
-                        weight_process_l2=config.weight_process_l2,
-                        weight_pvband=config.weight_pvband,
-                        curvature_weight=config.curvature_weight)
-                    batch_total.backward()  # 批间梯度直接累加（同一参数快照）
-                # 释放：批结束只保留标量与控制梯度，画布与 autograd 图失引用
-                del printed, mask, soft_canvas, local, context
-                del valid_tensor, context_soft, mask_control, full_mask
-                del target_tensor, ownership_tensor
-                del index_tensor, index3, nominal_l2, process_l2, pvband_loss
-                if use_curvature:
-                    del curvature_value
-                if on_tiles_completed is not None:  # backward 且释放后才报进度
-                    on_tiles_completed(batch_count)
-            total_loss = float(weighted_macro_loss(
-                sums["nominal"], sums["process"], sums["pvband"],
-                sums["curvature"], weight_process_l2=config.weight_process_l2,
+                gathered = full_mask[torch.from_numpy(pack.safe).to(
+                    device=device)]  # [B,P] 可微 gather
+                values = gathered.view(
+                    pack.count, canvas_pixels, canvas_pixels)
+                return SlotForward(values=values, collect_gradient=None)
+
+            # CurvMulti 曲率作用于 nominal wafer（printed）而非输入 mask
+            # ——与 Simple/LevelSet 的 mask 曲率是本方法的算法差异所在。
+            sums = run_state_batches(
+                model, packs, conditions, slot_values=slot_values,
+                context_mode="soft", context_beta=beta,
+                curvature_source="nominal_wafer",
+                weight_process_l2=config.weight_process_l2,
                 weight_pvband=config.weight_pvband,
-                curvature_weight=config.curvature_weight))
+                curvature_weight=config.curvature_weight,
+                build_gradient=build_gradient,
+                on_tiles_completed=on_tiles_completed)
+            total_loss = total_loss_of(
+                sums, weight_process_l2=config.weight_process_l2,
+                weight_pvband=config.weight_pvband,
+                curvature_weight=config.curvature_weight)
             if not (isfinite(total_loss) and isfinite(sums["nominal"])
                     and isfinite(sums["process"]) and isfinite(sums["pvband"])
                     and isfinite(sums["curvature"])):

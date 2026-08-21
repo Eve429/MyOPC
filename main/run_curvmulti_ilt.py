@@ -47,9 +47,7 @@ def main() -> int:
               else str(_REPO_ROOT / "config" / "curvmulti_ilt.toml"))
     summary = run_curvmulti_ilt(config)  # 完整像素 ILT 流程
     print("CurvMulti ILT 执行完成：")  # 摘要标题
-    # summary 的 iterations 键取自方法的 iterations 字段，CurvMulti 无该字段
-    # （多尺度语义下逐 macro 的 stop_state 已含总状态数），此处不打印占位值。
-    print(f"  device：{summary['device']}")
+    print(f"  device：{summary['device']}，评价状态数：{summary['states_total']}")
     print(f"  macro 数：{summary['macro_count']}，core 数：{summary['core_count']}，"
           f"宏像素总数：{summary['pixel_count_sum']}")
     for macro in summary["macros"]:  # 逐 macro 摘要

@@ -1,5 +1,23 @@
 # MyOPC 迁移研究发现
 
+## 2026-08-21 P3：ILT 求解器公共骨架上提（审查报告 A1/C5 裁定）
+
+- 三求解器 state×batch 循环体（~90 行×3：四画布组批、三值 context 组装、
+  损失聚合、backward、释放、进度、records 样板）上提 _skeleton.py：
+  BatchPack（静态画布每 macro 打包一次，顺带消除 state 维度 1-6% 重复
+  构造）、SlotForward 钩子（可微槽位值 + 梯度收集器）、
+  check_common_entry（三份入口检查语义参数化：LevelSet 无条件
+  context≥1px、Simple/CurvMulti 曲率触发）、run_state_batches/total_loss_of。
+- 行为逐位验证：golden A/B 29 case（双极性×曲率×batch×真 ICCAD13 CPU），
+  Simple/LevelSet 全部逐位一致；净删 ~190 行重复。
+- **新发现（先于 P3 的既有问题）**：CurvMulti+曲率 CPU 路径存在运行间
+  非确定性（同进程两次运行即不同，浮点归约次序随线程调度漂移，经 SGD
+  放大到 records）——golden 该子集改紧容差；候选 stabilization
+  （torch 线程/确定性开关）留待独立决定，未在 P3 处理。
+- summary 增 states_total（多尺度方法 iterations=None 的状态数事实源）。
+- 白盒测试影响：仅 2 处 curvature spy 的 patch 宿主随调用点上移迁移到
+  _skeleton；np.add.at（ufunc 方法级）与 warm-start/SDF spy 不受影响。
+
 ## 2026-08-21 CurvMulti ILT 交付（CHG-20260818-curvmulti-ilt）
 
 - 审查（HEAD 5a4bf5f 基线）：规格 3 处事实错误（ILTBatchResult/workflow.py

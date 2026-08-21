@@ -21,7 +21,7 @@ main/run_curvmulti_ilt.py::main（可选位置参数，默认 config/curvmulti_i
       │        ├─ stage0 参考 _common.resize_image(area)；
       │        │    后续 stage 初值 = resize_image(上一 stage best, nearest)
       │        └─ 逐 state（评价→屏障 step→评价…共 N+1 态）：
-      │           └─ 逐 core batch（CPU 组批四画布一次取出）：
+      │           └─ 逐 core batch（_skeleton.run_state_batches，静态画布每 macro 打包一次）：
       │              ├─ _common.smooth_sigmoid_mask(control, k, β, offset)
       │              ├─ _common.resize_image(nearest) 上采样回 [Hm,Wm]
       │              ├─ trainable 索引 gather → 三值画布组装

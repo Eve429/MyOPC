@@ -32,7 +32,7 @@ main/run_simple_ilt.py::main（可选位置参数，默认 config/simple_ilt.tom
       │  │  ├─ 初始化：params = 2·T − 1（OpenILT 方案；σ(β(2T−1)) ≥ 0.5
       │  │  │    ⟺ T ≥ 0.5，二值化与目标逐格一致且内部像素可优化）
       │  │  ├─ for state in 0..N（N+1 已评价宏状态）：
-      │  │  │  ├─ 组批：target_canvas / ownership_canvas /
+      │  │  │  ├─ _skeleton.pack_batches（每 macro 打包一次；组批四画布：target_canvas / ownership_canvas /
       │  │  │  │    trainable_index_canvas / context_valid_canvas
       │  │  │  ├─ 快照参数 → leaf 张量（requires_grad 仅 state<N）
       │  │  │  │    → soft = σ(β·local)

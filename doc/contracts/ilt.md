@@ -23,6 +23,25 @@ workflow 契约供后续 Multilevel 复用。
   + `curvature_loss`（3×3 零和核 valid 卷积）+ `weighted_macro_loss`
   （nominal 权重恒 1）。
 
+## 公共求解骨架（`opc/iteration/ilt/_skeleton.py`，2026-08-21 P3 上提）
+
+三方法共享的 state×batch 循环体：`BatchPack`（四画布 + 派生索引，
+**每 macro 打包一次**、CPU 常驻，state 维度不再重复构造；GPU 每 batch
+只保留当前张量的纪律不变）、`check_common_entry`（画布一致 + context≥1px
+联合约束；LevelSet 以 `require_context_pixel=True` 无条件要求，
+Simple/CurvMulti 由 curvature_weight>0 触发——原三份入口检查的语义以
+参数显式化）、`SlotForward(values, collect_gradient)` 方法钩子（可微
+槽位值 + backward 后梯度收集；Simple/LevelSet 在闭包里 local 叶子
+scatter-add 回宏梯度，CurvMulti 为 None——梯度经 autograd 链直接累加进
+控制张量）、`run_state_batches`（组装/forward/损失/backward/释放/进度
+固定次序；context_mode soft σ(β(2T−1))|hard target≥0.5，
+curvature_source mask|nominal_wafer）、`total_loss_of`（四项和聚合）。
+state/stage 循环、优化器、best/records 坐标、best 物化与方法专属校验
+留在各方法模块；multilevel 新方法只需实现钩子与更新器。
+迁移以 golden A/B 保障逐位一致（29 case：双极性×曲率×batch 切分×
+真 ICCAD13 CPU；已知 curvmulti+曲率 CPU 反传归约存在先于 P3 的
+非确定性，该子集用紧容差）。
+
 ## Simple 求解器（`opc/iteration/ilt/simple.py`）
 
 ```python

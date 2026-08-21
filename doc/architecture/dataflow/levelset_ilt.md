@@ -32,7 +32,7 @@ main/run_levelset_ilt.py::main（可选位置参数，默认 config/levelset_ilt
       │  │     ├─ state<N：macro_gradient_magnitude（恰一次/state：
       │  │     │    [Hm+2,Wm+2] halo，外围=initial 固定 context、
       │  │     │    中心=当前快照，中心差分 /2 → sqrt(dx²+dy²)）
-      │  │     ├─ 组批：target/ownership/trainable_index/
+      │  │     ├─ _skeleton.pack_batches（每 macro 打包一次；组批 target/ownership/trainable_index/
       │  │     │    context_valid 四画布
       │  │     ├─ 快照 gather → local 叶子（requires_grad 仅 state<N）
       │  │     │    → _LevelSetBinarize.apply(local_phi, local_grad)

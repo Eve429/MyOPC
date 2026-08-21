@@ -330,6 +330,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
         "pixel_count_sum": plan["pixel_count_sum"],
         "device": str(model.device),
         "iterations": getattr(algo, "iterations", None),
+        "states_total": method.evaluated_states(algo),  # 多尺度方法无 iterations 字段时的状态数事实源
         "macros": macro_summaries,
         "final_layout": str(final_path),
         "final_cell_mode": output.final_cell_mode,

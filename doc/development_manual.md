@@ -245,6 +245,13 @@ lr ≤ 1 时边界像素需多状态累积才可能越过 0 等值线（同输�
 可降至 binary_l2 1720，对照事实见 CHG-20260818-levelset-ilt
 development_report）。
 
+## 9a2. ILT 公共求解骨架（opc/iteration/ilt/_skeleton.py，2026-08-21 P3）
+
+三求解器共享的 state×batch 循环体上提为骨架（BatchPack 每宏打包一次、
+SlotForward 方法钩子、统一入口检查、run_state_batches 固定组装/forward/
+损失/backward/释放次序）；方法只保留参数化、更新器与 best 物化。
+行为经 golden A/B 逐位验证（详见 contracts/ilt.md 骨架节）。
+
 ## 9b. CurvMulti ILT（opc/iteration/ilt/curvmulti.py，2026-08-21 迁移）
 
 多尺度控制网格参数化：per-stage 控制 [Hm/s,Wm/s] 独立 SGD（scales 严格

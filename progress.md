@@ -1,5 +1,14 @@
 # MyOPC 迁移进度日志
 
+## 2026-08-21（会话：ILT 三方法审查 + P3 骨架合并）
+
+- 用户要求三方法审查（正确性/架构/性能），产出报告（cProfile 实测：
+  backward ~60-65%、forward ~30%、参数化 <5%；推翻画布冗余与 np.add.at
+  两个疑似热点）。用户裁定执行 P3（骨架合并）。
+- 批次 0/A/B/C/D：golden 基线 29 case → _skeleton + Simple → LevelSet →
+  CurvMulti → states_total + 文档；每批 golden 逐位对比 + 门禁 + 独立
+  commit（3d4c99c/14e0373/2b56baf/本批）。
+
 ## 2026-08-21（会话：CurvMulti ILT 审查与交付）
 
 - 用户要求审查 CurvMulti 规格；按既定模式产出审查报告（3 事实错误/5 契约

@@ -522,3 +522,11 @@
   并补三个 ILT 入口）、10 份活跃文档（dataflow 五文件/system/data_model/
   contracts.ilt/两手册）；doc/changes、doc/archive、.planning 与 findings
   历史条目按规则保留旧名。全量门禁恢复 683 passed + 1 skipped。
+
+- MB-OPC（simple+gradient）全链路三角度审查（用户指派，范围=整条调用
+  链）：入口/编排/配置/输入层/双求解器/评价/光刻消费面/缓存约 3700 行
+  逐文件通读 + 微基准 + sparse_6um 实测，报告入 doc/review/（13 项不变
+  量核对表、C/A/P 分级发现与决策清单、250 例测试覆盖盘点）；审查 C1
+  环带旧注释单独修复（c948166）。随后全库 doc 过期信息清扫：计数/迁移
+  进度/门禁范围/gcd_45nm 历史标注/MacroProblem v2 与 dark_box 契约/
+  reticle 计划 P1-2 与 config 提醒关闭。全量 683+1 门禁绿。

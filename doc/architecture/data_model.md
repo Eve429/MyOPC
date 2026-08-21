@@ -8,7 +8,7 @@
 |---|---|---|---|---|---|
 | `kdb.Region`（源/候选） | layout 查询 / `reconstruct_region` | 调用方 | 查询窗口内 / 单次重建 | CPU | 只读消费 |
 | `MacroSpec`/`CoreSpec` | `opc/input/grid.py` | plan（无状态值对象） | 进程 | CPU | frozen |
-| `MacroProblem` | `opc/input/edge/problem.py` | NPZ ↔ 内存 | 持久化（format v1） | CPU | 构造后只读 |
+| `MacroProblem` | `opc/input/edge/problem.py` | NPZ ↔ 内存 | 持久化（format v2，含 dark_box） | CPU | 构造后只读 |
 | `SegmentGeometry` | `fragmentation.py::materialize` | 单次物化调用方 | 一次评价~整迭代（reference 复用） | CPU | 不可变（按值消费） |
 | `displacements` | 求解器局部 | `optimize_macro` | 单 macro 迭代 | CPU numpy | 唯一可写迭代态 |
 | target uint8 画布 | `TargetCanvasCache` | 跨状态复用 | macro 内多轮 | CPU | 只读 |
@@ -42,7 +42,7 @@
 
 | 产物 | 生产者 | 内容要点 |
 |---|---|---|
-| `problems/<macro_id>.npz` | `MacroProblem.save` | 全参考数组，format v1，无 dbu_um |
+| `problems/<macro_id>.npz` | `MacroProblem.save` | 全参考数组，format v2（含 dark_box），无 dbu_um |
 | `macros/<id>/result.npz`、`gradient_result.npz` | `run_mbopc.py` / `run_mbopc_gradient.py` 入口（适配器已并入） | best_round/best_state_index、best_displacements、stop_reason |
 | `macros/<id>/metrics.json`、`gradient_metrics.json` | 同上 | 逐轮/逐状态标量 + stop_detail |
 | `round_*/results/*.npz` | `run_round` | 累计位移 + 每核 transmission（验证管线） |

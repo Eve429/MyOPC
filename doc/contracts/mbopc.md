@@ -44,6 +44,8 @@ def optimize_macro(problem, model, config, target_cache, *,
   （no_update 时 records 只含 baseline）。
 - **步长衰减**：产生 Round r 的步长 = initial × 0.5^((r−1)//decay_every)。
 - **best 选择**：EPE 严格更小才更新，平局保留较早轮；L2/PVBand 只诊断。
+  EPE 违规计数 **包含 ambiguous 段**（inner/outer 违规并集；ambiguous 段
+  方向恒 0 并单独计数，metrics.py::violation_count）。
 - **五种停止**：zero_epe / no_update / invalid_geometry（重建守卫，含
   KLayout ValueError 退化形态，原因进 stop_detail 不吞错）/
   insufficient_probes（有 owner 段但 valid_probes==0——"无法评价"不是
@@ -71,8 +73,8 @@ save_final_lithography(plan, final_layout, model, batch_size, output_dir)
 
 - **独立 macro**：macro 间不交换中间状态；全部完成后恰一次
   `merge_macro_results`（显式 macro_id→GDS 映射）；这不是全局同步最优，
-  差异须量化（gcd_45nm：single 总 EPE 比 multi 之和小 236 段、覆盖 XOR
-  34650860 DBU²）。
+  差异须量化（历史实测：gcd_45nm——版图已退役——single 总 EPE 比 multi
+  之和小 236 段、覆盖 XOR 34650860 DBU²）。
 - **macro 数量**：不加人为约束——macro_grid/macro_size_nm 是几就按几求解
   （单/多共用一个入口，数量模式配置层校验、size 模式 plan 后兜底）。
 - **产物**：macros/<id>/{result.npz(format v1), best.gds, metrics.json} +
@@ -117,8 +119,9 @@ class GradientMBOPCIterationRecord:   # 尾部新增
 ## 事实核对锚点
 
 `tests/opc/iteration/test_simple_mbopc.py`（53 例）、
-`tests/main/test_mbopc_runners.py`（23 例）；gcd_45nm smoke 记录于
-`changes/completed/CHG-20260816-simple-mbopc/`；Gradient 与 EPE 契约
+`tests/main/test_mbopc_runners.py`（23 例）；simple smoke 历史记录于
+`changes/completed/CHG-20260816-simple-mbopc/`（时用 gcd_45nm，版图已
+退役）；Gradient 与 EPE 契约
 锚点 `tests/opc/iteration/test_gradient_mbopc.py`、
 `tests/main/test_gradient_mbopc_runner.py`，记录于
 `changes/completed/CHG-20260819-gradient-mbopc-epe-loss/`。

@@ -3,7 +3,7 @@
 ## 1. 运行方式
 
 ```bash
-# 全量（当前 660 用例）
+# 全量（当前 683 用例）
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests
 # 单套件 / 单用例
 D:/app/miniforge/envs/myopc/python.exe -m pytest -q tests/opc/input/test_grid.py
@@ -75,7 +75,8 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
 合并耗时与最终版图；`work_dir` 下 plan.json、problems/、macros/<id>/
 {result.npz,best.gds,metrics.json}、summary.json、final.gds；
 `save_final_lithography=true` 时 final_lithography/ 有逐 tile PNG 与
-manifest。gcd_45nm 默认参数 CUDA 实测约 126s（multi 870 tile，EPE 逐轮下降，
+manifest。历史实测（`gcd_45nm`，版图已退役，现行 config 已切 `bench_30um_clear`）：
+CUDA 约 126s（multi 870 tile，EPE 逐轮下降，
 报告见 `archive/reports/mbopc_test_report.md`）。产物目录不提交。
 
 ### 梯度入口 smoke（2026-08-17）

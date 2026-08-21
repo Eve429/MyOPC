@@ -208,10 +208,10 @@ C: ════════════  (孤悬)
 ```
 
 - `[2,2]` 网格下 **mr1c1（右上）为空 macro**（S=0）；
-- **现状警示**：当前代码会在 merge 阶段抛 `LayerNotFoundError`（审查
-  P1-2，用户裁决暂不修）。本版图即 P1-2 的现成复现与验收素材——修复前
-  预期失败于 merge 并打印裸异常，修复后应产出最终 GDS 且空区为空；
-- 在 P1-2 修复前，用本版图的验证方式 = 确认失败点在 merge（而非求解）。
+- **P1-2 已修复**（2026-08-21 复测）：`merge_macro_results` 已容忍空候选
+  （GDS 无目标层等价零覆盖，空宏读回分支），本版图端到端成功（空宏
+  zero_epe、merge 正常、final 产出），转为空宏路径的常规回归素材；
+  历史失败记录见 §9。
 
 ### 5.8 boundary_6um.gds — 跨界图形
 
@@ -307,12 +307,12 @@ klayout.db，不 import 项目包，任何 cwd 可直跑）。
 
 ## 8. 风险与纪律
 
-- **P1-2**：sparse_6um 在修复前必然失败于 merge——这是设计意图（验收素材），
-  不是脚本缺陷；
-- **gcd_45nm.gds 已被删除**：`config/mbopc_single_macro.toml` 与
-  `config/mbopc_multi_macro.toml` 仍指向它，simple 两入口 smoke 当前会
-  FileNotFoundError——本计划不改这两个 config（用户实验领地），仅在此
-  立案提醒；建议后续把 simple smoke 切到 bench_30um 或恢复 gcd_45nm；
+- **P1-2（已修复，2026-08-21 复测通过）**：sparse_6um 曾必然失败于
+  merge（历史验收素材，记录见 §9）；现行 merge 容忍空候选后转为常规
+  回归素材，不再是风险项；
+- **gcd_45nm.gds 删除事项已关闭**：两个 mbopc config 已切
+  `bench_30um_clear.gds`，simple smoke 不再 FileNotFoundError；
+  gradient config 用 `gcd_30um.gds`；
 - **测试断言纪律**：单测继续用自建生成式 GDS，不引用本目录任何坐标/计数
   （CLAUDE.md 既有规则）；本版图集只服务 smoke 与算法研究；
 - 期望值不写死：smoke 验收用结构性断言（退出码/产物/XOR==0/不劣化）；
@@ -425,3 +425,9 @@ y=1984 撑包络顶。
 - smoke：p50_1024_mid_clear Simple ILT（field_size 联动，环带警告文案
   正确，1 macro / 4 core，5.2s）；p50_2048_mid 正/负板 MB-OPC
   （[2,2] core 1024 pixel 8，4 macro，EPE 各宏收敛，final GDS ✓）。
+
+**2026-08-21 复测（P1-2 关闭）**：sparse_6um_clear 经 run_mbopc（[2,2]、
+2 轮、CUDA）端到端成功——空宏 mr1c1 zero_epe（best_round=0）、三实宏
+正常收敛（best_epe 103/12/11）、合并 0.00s、final.gds 产出正常；历史
+失败点不复现，P1-2 由 merge 空候选容忍逻辑关闭。同日增补 50nm 定尺寸
+组（§10）。

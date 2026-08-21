@@ -31,21 +31,26 @@ class SegmentGeometry:                            # starts/ends/normals 均 floa
 - **切线分裂**：ownership 切线处斜边交点参数由整数端点+整数切线计算；
   分裂碎片沿用原段数学边号；同一切线交点去重（零长碎段回归）。
 
-## MacroProblem（problem.py，NPZ format v1）
+## MacroProblem（problem.py，NPZ format v2）
 
 ```python
 class MacroProblem:                               # frozen，构造期校验全部不变量
     macro / layer / polarity / fragmentation / segments
+    dark_box: DbuBox                              # 光学暗边界=layer 数据包络（2026-08-21）
     owner_indices: Int32Array[S]                  # 唯一可写 core；-1=只读 context
     core_offsets: Int64Array[C+1]                 # CSR
     member_segment_indices: Int32Array[M]         # own ⊆ membership
     def segments_for_core(i) / owner_segments_for_core(i)
-    def save(dir) / MacroProblem.load(path)
-def prepare_macro_problem(batch, layer, polarity, fragmentation, macro) -> MacroProblem
+    def save(dir) / MacroProblem.load(path)       # v2 持久化 dark_box；旧版显式拒绝
+def prepare_macro_problem(batch, layer, polarity, fragmentation, macro,
+                          *, dark_box: DbuBox) -> MacroProblem
 ```
 
 不变量（构造期强制）：owner ∈ [-1,C)；CSR 单调闭合；own ⊆ membership
-（空 membership 不短路）；段中点归属即 owner。
+（空 membership 不短路）；段中点归属即 owner。**暗界语义**：dark_box 是
+光学开孔边界——mask 画布像素中心在其外恒不透光、两极性统一（与 ILT
+像素路径的 dark_bounds 同一语义）；由求解器栅格化时传入
+`rasterize_mask_canvas(dark_box=...)`，绝不作为图形进入 Region。
 
 ## 重建（reconstruction.py）
 

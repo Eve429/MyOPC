@@ -151,8 +151,9 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
   居中 padding 项）；不要手写 `(x-left)/pixel-0.5`。
 - **独立 macro 语义**：macro 间不交换中间状态，边界 core 的 context 固定为
   邻区参考几何；全部 macro 完成后只调用一次 `merge_macro_results`
-  （显式 macro_id→GDS 映射）。这不是全局同步最优，差异需量化（gcd_45nm：
-  single 比 multi 之和小 236 段 EPE，覆盖 XOR 34650860 DBU²）。
+  （显式 macro_id→GDS 映射）。这不是全局同步最优，差异需量化（历史实测：
+  gcd_45nm——版图已退役——single 比 multi 之和小 236 段 EPE，覆盖 XOR
+  34650860 DBU²）。
 - **内存**：target 用有界 uint8 LRU（`TargetCanvasCache`，key 含 macro id）；
   GPU 每 batch 只保留当前张量；不保存整张 reticle tensor；最终光刻 PNG 与
   merge 回读验证均为逐窗口物化（不常驻全量 Region；merge 的 patches 列表
@@ -167,7 +168,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
 `changes/completed/CHG-20260816-gradient-mbopc 两报告`）。
 
 ```bash
-# 单入口、任意 macro 数（config 即 gcd_45nm 2×2 smoke）
+# 单入口、任意 macro 数（config 即 gcd_30um 2×2 smoke）
 D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_gradient.py config/gradient_mbopc.toml
 ```
 

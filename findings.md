@@ -1120,3 +1120,25 @@
   双极性；全量 614 passed + 1 skipped——排除的 4 个测试模块引用旧入口
   名（用户 5f2a964 "tmp" 改名四入口文件未同步测试 import），既有破损、
   非本次引入，待用户指示是否同步。
+
+## MB-OPC 全链路审查与 doc 清扫（2026-08-21）
+
+- 审查报告 `doc/review/2026-08-21-mbopc-fullchain-review.md`（基线
+  13cf41e，约 3700 行逐文件通读 + 微基准 + 实测）：无行为级正确性缺陷，
+  13 项核心不变量逐条核对通过；立项发现 C1（环带旧注释与实现矛盾，已修
+  c948166）、C2（gradient no_update 判词与 Adam 动量不符）、A1（双求解器
+  批量评价段 ~80 行重复且已漂移——gradient 预计算静态量而 simple 逐态
+  重算）、P1（候选栅格化 context 带重复计算，512core+256ctx 档冗余
+  1.78×；实测栅格化 5.8ms/core 为 CPU 绝对主导，ownership 36µs/探针
+  40µs 均可忽略）、P2（hole 拓扑校验逐态逐孔 klayout 布尔循环）。
+- 实证：sparse_6um 端到端成功（空宏 zero_epe、merge 正常）——P1-2 已被
+  merge 空候选容忍逻辑关闭，reticle plan §5.7/§8 警示与 §9 记录同步。
+- doc 清扫：CLAUDE.md（用例数 330→683 三处、迁移进度补 ILT 三方法与
+  field/环带、门禁命令补 common——对齐 development_manual 最宽集合）；
+  test_manual（660→683；gcd_45nm 实测标注历史与 bench_30um 切换）；
+  development_manual（gcd_45nm 量化标注历史、smoke 注释 gcd_30um）；
+  contracts/mbopc（gcd_45nm 历史标注 + violation_count 含 ambiguous 口径）；
+  contracts/edge（MacroProblem 升 v2、dark_box 字段与 prepare 签名、暗界
+  语义）；contracts/opc_input（rasterize_mask_canvas dark_box 参数语义、
+  pixel prepare 双边界参数）；data_model（v2 两处）；INDEX（review/ 目录
+  与 dataflow 六文件，随报告 commit）。

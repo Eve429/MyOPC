@@ -25,6 +25,7 @@ from lithography import ICCAD13Lithography  # 固定 ICCAD13 光刻模型
 # 共用 macro 生命周期（merge/最终光刻留档/GDS 写出）
 from main._macro_pipeline import (
     merge_macro_results,
+    resolve_field_bounds,
     save_final_lithography,
     write_macro_gds,
 )
@@ -82,9 +83,12 @@ def prepare_pixel_problems(
     with LayoutDB.open(layout.layout, layout.top_cell) as database:  # 打开并自动关闭
         top_cell_name = database.top_cell_name  # 在库存活期内捕获顶层名
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
-        bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生，不物化）
-        if bounds is None:  # 目标层无图形
+        layer_bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生，不物化）
+        if layer_bounds is None:  # 目标层无图形
             raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
+        # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化；
+        # 环带（field − layer bbox）transmission 由极性背景外推给出
+        bounds = resolve_field_bounds(layout, layer_bounds, dbu_nm)
         # 网格换算不含边段参数；像素整除与画布容量在 plan_macros 内校验
         grid = resolve_grid_config(partition, litho, dbu_nm)
         macros = plan_macros(

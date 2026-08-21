@@ -36,7 +36,8 @@ def _write_gds(tmp_path):
     return path  # 返回路径
 
 
-def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", **overrides):
+def _write_config(tmp_path, layout_path, macro_grid="[1, 1]",
+                   layout_extra="", **overrides):
     """按默认契约生成 MB-OPC TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值满足全部网格与迭代契约
         "macro_grid": macro_grid, "core_size_nm": 40, "context_nm": 20,
@@ -54,7 +55,7 @@ top_cell = "TOP"
 layer = 1
 datatype = 0
 polarity = "clear"
-
+{layout_extra}
 [partition]
 macro_grid = {values["macro_grid"]}
 core_size_nm = {values["core_size_nm"]}
@@ -395,3 +396,23 @@ class TestConfigValidation:
         """浮点或布尔的整数配置被严格拒绝，不静默截断（审查 P1.3 回归）。"""
         with pytest.raises(ValueError, match=field):
             workflow.run_mbopc(self._config_path(tmp_path, **overrides))
+
+class TestFieldBounds:
+    """MB-OPC 处理框：网格按 field 规划、环带不产生边段。"""
+
+    def test_field_expands_grid_without_new_segments(self, tmp_path):
+        """field 2×：macro 数翻倍、段数和与不扩 field 完全一致（环带无几何无边）。"""
+        layout_path = _write_gds(tmp_path)
+        baseline_config = _write_config(tmp_path, layout_path,
+                                        macro_grid="[2, 2]")
+        field_config = _write_config(
+            tmp_path, layout_path, macro_grid="[2, 2]",
+            layout_extra="field_size_nm = [320.0, 160.0]")
+        baseline = workflow.run_mbopc(baseline_config)
+        with pytest.warns(UserWarning, match="极性背景"):
+            expanded = workflow.run_mbopc(field_config)
+        # 网格数量模式不变（2×2），macro 尺寸随 field 扩为 160×80nm
+        assert expanded["macro_count"] == baseline["macro_count"] == 4
+        # 环带无几何 → 零新边段：段数和与不扩 field 完全一致
+        assert (expanded["segment_count_sum"]
+                == baseline["segment_count_sum"] > 0)

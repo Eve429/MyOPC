@@ -120,11 +120,13 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
     with LayoutDB.open(layout.layout, layout.top_cell) as database:  # 打开并自动关闭
         top_cell_name = database.top_cell_name  # 在库存活期内捕获顶层名
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
-        bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生逐层，不物化）
-        if bounds is None:  # 目标层在顶层子树内无图形
+        layer_bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生逐层，不物化）
+        if layer_bounds is None:  # 目标层在顶层子树内无图形
             # 空层无法规划网格
             raise ValueError(
                 f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
+        # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化
+        bounds = resolve_field_bounds(layout, layer_bounds, dbu_nm)
         # nm→DBU 换算、context 契约与边段配置构造集中在 resolve_prepare_config。
         runtime = resolve_prepare_config(partition, litho, edge, dbu_nm)
         # 两级网格规划（内部完成像素/画布校验）

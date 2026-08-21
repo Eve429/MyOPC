@@ -40,11 +40,12 @@ def _write_gds(tmp_path):
     return path  # 返回路径
 
 
-def _write_config(tmp_path, layout_path, macro_grid="[2, 2]", **overrides):
+def _write_config(tmp_path, layout_path, macro_grid="[2, 2]",
+                   layout_extra="", **overrides):
     """按默认契约生成 Simple ILT TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值满足全部网格与迭代契约
         "macro_grid": macro_grid, "core_size_nm": 40, "context_nm": 20,
-        "pixel_nm": 4, "iterations": 1, "step_size": 10.0,
+        "polarity": "clear", "pixel_nm": 4, "iterations": 1, "step_size": 10.0,
         "sigmoid_steepness": 4.0, "weight_process_l2": 1.0,
         "weight_pvband": 0.5, "curvature_weight": 0.0,
         "mask_threshold": 0.5, "batch_size": 4, "device": "cpu",
@@ -57,8 +58,8 @@ layout = "{layout_path.as_posix()}"
 top_cell = "TOP"
 layer = 1
 datatype = 0
-polarity = "clear"
-
+polarity = "{values["polarity"]}"
+{layout_extra}
 [partition]
 macro_grid = {values["macro_grid"]}
 core_size_nm = {values["core_size_nm"]}
@@ -398,3 +399,63 @@ class TestWorkflowMethodIndependence:
             macro_dir = work / "macros" / macro["macro_id"]
             assert (macro_dir / "fake_ilt_result.npz").is_file()
             assert (macro_dir / "best.gds").is_file()
+
+class TestFieldBounds:
+    """处理框扩充规划范围的端到端语义（field 2×于 layer）。"""
+
+    FIELD = "field_size_nm = [320.0, 160.0]"
+    # 本文件几何 layer bbox (8,8)-(152,96)（三角形顶到 y=96）；
+    # field 居中 → (-80,-28)-(240,132)；mr0c0 ownership (-80,-28)-(80,52)、
+    # query (-100,-48)-(100,72)、pixel 4 → 栅格 50×30；
+    # field 边界在行/列 5，layer 起点在行/列 14/27。
+    RING_ROW_END = 14
+    RING_COL_END = 27
+    FIELD_EDGE = 5
+
+    def _run_with_field(self, tmp_path, polarity):
+        """带处理框跑完整流程，返回 (summary, mr0c0 target_u8)。"""
+        layout_path = _write_gds(tmp_path)
+        config_path = _write_config(
+            tmp_path, layout_path, layout_extra=self.FIELD,
+            polarity=polarity, batch_size=4, device="cpu",
+            save_final_lithography="false")
+        with pytest.warns(UserWarning, match="极性背景"):
+            summary = simple_workflow.run_simple_ilt(config_path)
+        problem = np.load(
+            tmp_path / "work" / "pixel_problems" / "mr0c0.npz")
+        return summary, problem["target_u8"]
+
+    @pytest.mark.parametrize("polarity, ring_value", [
+        ("clear", 0),      # clear 环带不透光
+        ("opaque", 255),   # opaque 环带透光（极性背景外推）
+    ])
+    def test_ring_transmission_follows_polarity(self, tmp_path, polarity,
+                                                ring_value):
+        """环带 target 按极性背景；field 外扩张带两极性恒 0。"""
+        summary, target = self._run_with_field(tmp_path, polarity)
+        assert summary["macro_count"] == 4  # 网格按 field 320×160 规划
+        edge = self.FIELD_EDGE
+        row_end, col_end = self.RING_ROW_END, self.RING_COL_END
+        # field 外扩张带（query 越出 field 的 context）：恒 0（两极性一致）
+        assert not target[:edge, :].any() and not target[:, :edge].any()
+        # 环带（field 内、layer 外）：极性背景
+        assert (target[edge:row_end, edge:] == ring_value).all()
+        assert (target[edge:, edge:col_end] == ring_value).all()
+
+    def test_final_gds_stays_near_layer_within_field(self, tmp_path):
+        """输出几何不越 field；环带远端无图形（边界附近可训练属设计语义）。"""
+        layout_path = _write_gds(tmp_path)
+        config_path = _write_config(
+            tmp_path, layout_path, layout_extra=self.FIELD,
+            save_final_lithography="false")
+        with pytest.warns(UserWarning, match="极性背景"):
+            summary = simple_workflow.run_simple_ilt(config_path)
+        with LayoutDB.open(summary["final_layout"]) as database:
+            merged = database.layer_bbox(LayerSpec(1, 0))
+        assert merged is not None  # layer 图形仍在
+        # 环带是可训练域：优化可在几何边界附近少量移动像素（±6px 预期内），
+        # 但远端环带与 field 边界不得出现图形。
+        assert (merged.left >= 8 - 24 and merged.bottom >= 8 - 24
+                and merged.right <= 152 + 24 and merged.top <= 96 + 24)
+        assert (merged.left >= -80 and merged.bottom >= -28
+                and merged.right <= 240 and merged.top <= 132)  # ⊆ field

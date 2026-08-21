@@ -419,28 +419,46 @@ class TestFieldBounds:
             tmp_path, layout_path, layout_extra=self.FIELD,
             polarity=polarity, batch_size=4, device="cpu",
             save_final_lithography="false")
-        with pytest.warns(UserWarning, match="极性背景"):
+        with pytest.warns(UserWarning, match="恒不透光"):
             summary = simple_workflow.run_simple_ilt(config_path)
         problem = np.load(
             tmp_path / "work" / "pixel_problems" / "mr0c0.npz")
         return summary, problem["target_u8"]
 
-    @pytest.mark.parametrize("polarity, ring_value", [
-        ("clear", 0),      # clear 环带不透光
-        ("opaque", 255),   # opaque 环带透光（极性背景外推）
-    ])
-    def test_ring_transmission_follows_polarity(self, tmp_path, polarity,
-                                                ring_value):
-        """环带 target 按极性背景；field 外扩张带两极性恒 0。"""
+    @pytest.mark.parametrize("polarity", ["clear", "opaque"])
+    def test_ring_transmission_always_dark(self, tmp_path, polarity):
+        """环带两极性恒 0（光学开孔边界=数据包络）；field 外扩张带恒 0。"""
         summary, target = self._run_with_field(tmp_path, polarity)
         assert summary["macro_count"] == 4  # 网格按 field 320×160 规划
         edge = self.FIELD_EDGE
         row_end, col_end = self.RING_ROW_END, self.RING_COL_END
-        # field 外扩张带（query 越出 field 的 context）：恒 0（两极性一致）
+        # field 外扩张带（query 越出 field 的 context）：恒 0
         assert not target[:edge, :].any() and not target[:, :edge].any()
-        # 环带（field 内、layer 外）：极性背景
-        assert (target[edge:row_end, edge:] == ring_value).all()
-        assert (target[edge:, edge:col_end] == ring_value).all()
+        # 环带（field 内、数据包络外）：两极性统一恒 0
+        assert not target[edge:row_end, edge:].any()
+        assert not target[edge:, edge:col_end].any()
+
+    def test_opaque_interior_background_still_transparent(self, tmp_path):
+        """opaque 数据包络内背景仍透光（环带置零不伤包络内极性变换）。"""
+        _, _target = self._run_with_field(tmp_path, "opaque")
+        # mr0c1 的窗口覆盖 hole 区（(112,25)-(136,65) 石英开孔）：
+        # 包络内无材料背景 = 255（load 在 _run_with_field 内已取 mr0c0，
+        # 此处直接读 mr0c1）
+        layout_path = _write_gds(tmp_path)
+        config_path = _write_config(
+            tmp_path, layout_path, layout_extra=self.FIELD,
+            polarity="opaque", batch_size=4, device="cpu",
+            save_final_lithography="false")
+        with pytest.warns(UserWarning, match="恒不透光"):
+            simple_workflow.run_simple_ilt(config_path)
+        data = np.load(tmp_path / "work" / "pixel_problems" / "mr0c1.npz")
+        target = data["target_u8"]
+        box = data["macro_ownership_box"]
+        qleft, qbottom = int(box[0]) - 20, int(box[1]) - 20
+        r0 = (25 - qbottom) // 4  # hole 底 y=25
+        c0 = (112 - qleft) // 4   # hole 左 x=112
+        r1, c1 = (65 - qbottom) // 4, (136 - qleft) // 4
+        assert (target[r0 + 1:r1 - 1, c0 + 1:c1 - 1] == 255).all()  # 开孔透光
 
     def test_final_gds_stays_near_layer_within_field(self, tmp_path):
         """输出几何不越 field；环带远端无图形（边界附近可训练属设计语义）。"""
@@ -448,7 +466,7 @@ class TestFieldBounds:
         config_path = _write_config(
             tmp_path, layout_path, layout_extra=self.FIELD,
             save_final_lithography="false")
-        with pytest.warns(UserWarning, match="极性背景"):
+        with pytest.warns(UserWarning, match="恒不透光"):
             summary = simple_workflow.run_simple_ilt(config_path)
         with LayoutDB.open(summary["final_layout"]) as database:
             merged = database.layer_bbox(LayerSpec(1, 0))

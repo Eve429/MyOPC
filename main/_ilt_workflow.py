@@ -110,7 +110,9 @@ def prepare_pixel_problems(
         for macro in macros:  # 行优先顺序逐 macro 准备
             # 完整相交物化一次；实际 box 整像素校验在 problem 构造内前置
             batch = database.query([layer], macro.query_box).materialize_intersecting()
-            problem = prepare_pixel_macro_problem(batch, layer, layout.polarity, macro, layout_bounds=bounds)
+            problem = prepare_pixel_macro_problem(
+                batch, layer, layout.polarity, macro,
+                planning_bounds=bounds, dark_bounds=layer_bounds)
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")
             pixel_count_sum += int(problem.ownership_shape[0] * problem.ownership_shape[1])
             entries.append(

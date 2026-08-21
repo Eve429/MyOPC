@@ -409,7 +409,7 @@ class TestFieldBounds:
             tmp_path, layout_path, macro_grid="[2, 2]",
             layout_extra="field_size_nm = [320.0, 160.0]")
         baseline = workflow.run_mbopc(baseline_config)
-        with pytest.warns(UserWarning, match="极性背景"):
+        with pytest.warns(UserWarning, match="恒不透光"):
             expanded = workflow.run_mbopc(field_config)
         # 网格数量模式不变（2×2），macro 尺寸随 field 扩为 160×80nm
         assert expanded["macro_count"] == baseline["macro_count"] == 4

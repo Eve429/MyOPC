@@ -48,7 +48,8 @@ def _problem(region, macro=None, polarity="clear"):
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
     return prepare_pixel_macro_problem(
-        batch, LAYER, polarity, macro, layout_bounds=BOUNDS)
+        batch, LAYER, polarity, macro, planning_bounds=BOUNDS,
+        dark_bounds=BOUNDS)
 
 
 def _config(**overrides):
@@ -581,7 +582,9 @@ class TestMacroSeamConsistency:
                 {LAYER: kdb.Region(kdb.Box(20, 20, 140, 60))},
                 macro.query_box)
             problems.append(prepare_pixel_macro_problem(
-                batch, LAYER, "clear", macro, layout_bounds=DbuBox(0, 0, 160, 80)))
+                batch, LAYER, "clear", macro,
+                planning_bounds=DbuBox(0, 0, 160, 80),
+                dark_bounds=DbuBox(0, 0, 160, 80)))
         grid_a = self._state0_raster(problems[0])
         grid_b = self._state0_raster(problems[1])
         pixel = 4

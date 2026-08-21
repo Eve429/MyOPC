@@ -103,7 +103,7 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
             f"{Decimal(layer_bounds.bottom) * scale})-"
             f"({Decimal(layer_bounds.right) * scale},"
             f"{Decimal(layer_bounds.top) * scale}) nm；"
-            "环带按极性背景处理（clear 不透光 / opaque 透光）", stacklevel=2)
+            "环带恒不透光（光学开孔边界=layer 数据包络）", stacklevel=2)
     return field
 
 

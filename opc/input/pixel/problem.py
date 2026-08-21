@@ -230,12 +230,15 @@ class PixelMacroProblem:
 
 def prepare_pixel_macro_problem(
         batch: RegionBatch, layer: LayerSpec, polarity: MaskPolarity | str,
-        macro: MacroSpec, *, layout_bounds: DbuBox) -> PixelMacroProblem:
+        macro: MacroSpec, *, planning_bounds: DbuBox,
+        dark_bounds: DbuBox) -> PixelMacroProblem:
     """从一次完整相交物化构造像素 macro 问题（一次栅格化，不提边）。
 
-    layout_bounds 是 plan_macros 所用的版图层 bbox，即光学场边界（00_PAST
-    field_box 契约的迁移等价）：query 超出 bbox 的环带恒不透光。必填无默认，
-    缺省会静默保留负板透光缺陷，契约必须显式。
+    planning_bounds 是 plan_macros 所用的规划边界（field，未配置处理框时
+    即 layer bbox）：ownership 四向包含校验的依据。dark_bounds 是光学
+    开孔边界（layer 数据包络）：query 超出它的环带恒不透光、两极性统一
+    （00_PAST field_box 契约的迁移等价，2026-08-21 修订：环带不再按极性
+    背景外推）。两参数必填无默认，缺省会静默保留边界缺陷，契约必须显式。
     """
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")
@@ -256,26 +259,26 @@ def prepare_pixel_macro_problem(
             macro.core(core_index).ownership_box, pixel_dbu,
             f"macro {macro.macro_id} core {core_index} ownership")
     ownership = macro.ownership_box
-    if (layout_bounds.left > ownership.left or layout_bounds.bottom > ownership.bottom
-            or layout_bounds.right < ownership.right
-            or layout_bounds.top < ownership.top):
+    if (planning_bounds.left > ownership.left or planning_bounds.bottom > ownership.bottom
+            or planning_bounds.right < ownership.right
+            or planning_bounds.top < ownership.top):
         raise ValueError(
-            "layout_bounds 必须四向包含 macro ownership（应传 plan_macros "
-            "所用的版图层 bbox）")
-    # bounds 与 query 的交叠边必须落在 query 像素格点上：按网格契约 bounds 边
-    # 即 ownership 切线、context 为 pixel 整数倍，天然对齐；余数非零说明调用方
-    # 传了与规划网格不一致的 bounds，静默取整会切掉半个像素。
-    inside_left = max(layout_bounds.left, query.left)
-    inside_right = min(layout_bounds.right, query.right)
-    inside_bottom = max(layout_bounds.bottom, query.bottom)
-    inside_top = min(layout_bounds.top, query.top)
+            "planning_bounds 必须四向包含 macro ownership（应传 plan_macros "
+            "所用的规划边界/处理框）")
+    # 暗边界与 query 的交叠边必须落在 query 像素格点上：按网格契约 layer
+    # bbox 边为整像素（像素 ILT 的整像素契约），余数非零说明调用方传了与
+    # 网格不一致的 bounds，静默取整会切掉半个像素。
+    inside_left = max(dark_bounds.left, query.left)
+    inside_right = min(dark_bounds.right, query.right)
+    inside_bottom = max(dark_bounds.bottom, query.bottom)
+    inside_top = min(dark_bounds.top, query.top)
     row0, rem_y0 = divmod(inside_bottom - query.bottom, pixel_dbu)
     row1, rem_y1 = divmod(inside_top - query.bottom, pixel_dbu)
     col0, rem_x0 = divmod(inside_left - query.left, pixel_dbu)
     col1, rem_x1 = divmod(inside_right - query.left, pixel_dbu)
     if rem_y0 or rem_y1 or rem_x0 or rem_x1:
         raise ValueError(
-            f"layout_bounds 与 query 的交叠边必须是 pixel_dbu={pixel_dbu} "
+            f"dark_bounds 与 query 的交叠边必须是 pixel_dbu={pixel_dbu} "
             "的整像素倍")
     # 完整相交物化合并物理覆盖后栅格化一次：查询框不参与布尔相交，
     # 版图真实边界的覆盖率（斜边/半像素）原样进入 transmission。
@@ -284,10 +287,11 @@ def prepare_pixel_macro_problem(
     # 极性只在此边界出现一次：clear 时图形即透光，opaque 时背景透光。
     transmission = (coverage if normalized is MaskPolarity.CLEAR
                     else 1.0 - coverage)
-    # 版图 bbox 之外恒不透光：外围 macro 的 query 超出 bbox 的环带没有几何，
-    # opaque 的 1−coverage 会把 0 覆盖反成虚假透光环，污染边界 core 的光学
-    # 上下文；clear 该处置零是逐位 no-op。场边界只作用于 transmission 数组、
-    # 绝不作为图形进入 Region，因此不会产生虚假可动边（旧系统明令）。
+    # 数据包络之外恒不透光（两极性统一）：query 超出 dark_bounds 的环带
+    # （含处理框环带与 field 外扩张带）没有几何，opaque 的 1−coverage 会把
+    # 0 覆盖反成虚假透光环；clear 该处置零是逐位 no-op。暗边界只作用于
+    # transmission 数组、绝不作为图形进入 Region，不产生虚假可动边（旧系统
+    # 明令）。
     transmission[:row0, :] = 0.0
     transmission[row1:, :] = 0.0
     transmission[:, :col0] = 0.0

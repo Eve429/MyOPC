@@ -141,6 +141,8 @@ def prepare_pixel_problems(
         "dbu_um": float(dbu_nm / 1000),
         "layer": [layer.layer, layer.datatype],
         "polarity": layout.polarity.value,
+        "dark_box": [layer_bounds.left, layer_bounds.bottom,
+                     layer_bounds.right, layer_bounds.top],
         "core_size_dbu": grid.core_dbu,
         "context_dbu": grid.context_dbu,
         "pixel_dbu": grid.pixel_dbu,

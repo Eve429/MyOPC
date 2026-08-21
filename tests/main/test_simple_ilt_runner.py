@@ -438,6 +438,18 @@ class TestFieldBounds:
         assert not target[edge:row_end, edge:].any()
         assert not target[edge:, edge:col_end].any()
 
+    def test_final_lithography_with_field_writes_artifacts(self, tmp_path):
+        """field + 最终光刻留档：plan 携带 dark_box，留档正常产出（回归）。"""
+        layout_path = _write_gds(tmp_path)
+        config_path = _write_config(
+            tmp_path, layout_path, layout_extra=self.FIELD,
+            save_final_lithography="true")
+        with pytest.warns(UserWarning, match="恒不透光"):
+            summary = simple_workflow.run_simple_ilt(config_path)
+        manifest = tmp_path / "work" / "final_lithography" / "manifest.json"
+        assert manifest.is_file()
+        assert summary["final_lithography_tiles"] > 0
+
     def test_opaque_interior_background_still_transparent(self, tmp_path):
         """opaque 数据包络内背景仍透光（环带置零不伤包络内极性变换）。"""
         _, _target = self._run_with_field(tmp_path, "opaque")

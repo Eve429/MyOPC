@@ -55,8 +55,9 @@ doc/changes/completed/*/test_report.md         → 某次 Change 实际验证结
 ```text
 INDEX.md / glossary.md / implementation_spec_template.md
 development_manual.md · test_manual.md   （活跃手册）
-architecture/  system.md · dataflow/（index + 四工作流文件） · data_model.md
+architecture/  system.md · dataflow/（index + 六工作流文件） · data_model.md
 contracts/     layout · geometry · opc_input · edge · lithography · mbopc · ilt · evaluation
+review/        点时性审查报告（非当前事实源，结论须落 contracts/architecture 才生效）
 adr/           ADR-001 .. ADR-006
 changes/       completed/（active/ 于下一个进行中 CHG 时自建）
 archive/       reports/ · worklogs/ · manuals/

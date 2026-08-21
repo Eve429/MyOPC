@@ -204,6 +204,16 @@ D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradien
 state 新增 `epe_loss`。注意 weight_epe=1.0 下 EPE 项占总目标约 85%
 （gcd_30um 实测），实际使用按 workload 调权。
 
+## 8b. 处理框配置（[layout] field_box/field_size，2026-08-21）
+
+版图尺寸大于 layer 内容 bbox 时（如 layer 1×1 µm、reticle 2.048²），
+`[layout]` 可二选一声明处理框：`field_box_nm = [left, bottom, right, top]`
+（绝对 GDS 坐标）或 `field_size_nm = [width, height]`（layer bbox 居中、
+奇 slack 归高侧）。双空 = layer bbox 现行行为；严格大于 layer bbox 发
+warning；不包含即报错。环带（field − layer bbox 无图形区）按极性背景：
+clear 不透光 / opaque 透光，且属可训练域——物理需要暗环在 GDS 补画。
+MB-OPC 与 ILT 两条 prepare 路径同语义（`resolve_field_bounds`）。
+
 ## 9. Simple ILT（opc/iteration/ilt，2026-08-19 迁移）
 
 像素型 ILT 基础管线 + 首个方法。输入层 `opc/input/pixel`（query box 一次

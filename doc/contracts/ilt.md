@@ -9,11 +9,17 @@ workflow 契约供后续 Multilevel 复用。
 - 问题：`opc/input/pixel.py::PixelMacroProblem`（见
   `doc/contracts/opc_input.md` 像素宏问题节）——query box 一次栅格化的
   uint8 transmission、core 画布/参数索引映射、像素→Region 回写。
-- 场边界：`prepare_pixel_macro_problem` 必填 `layout_bounds`（plan_macros
-  所用版图层 bbox，00_PAST field_box 契约的迁移等价）——query 超出 bbox
-  的环带 transmission 恒置 0（不透光）：opaque 的 1−coverage 不得把无几何
-  环带反成虚假透光；clear 处为逐位 no-op。场边界只作用于 transmission
-  数组，绝不作为图形进入 Region（不产生虚假可动边）。
+- 场边界与处理框：`layout_bounds` 由 `resolve_field_bounds`
+  （`main/_macro_pipeline.py`）解析——`[layout].field_box_nm`（绝对坐标
+  四元组，00_PAST `--box` 的迁移等价）或 `field_size_nm`（尺寸二元组、
+  layer bbox 居中、奇 slack 归高侧），至多填一个、双空即 layer bbox；
+  严格大于 layer bbox 发 warning，不包含即 ValueError。query 超出
+  layout_bounds 的环带 transmission 恒置 0（不透光）：opaque 的 1−coverage
+  不得把无几何环带反成虚假透光；clear 处为逐位 no-op。**处理框内的环带**
+  （field − layer bbox 的无图形区）transmission 按极性背景外推
+  （clear 不透光 / opaque 透光），是可训练域——物理需要暗环时在 GDS
+  补画表达，工具不猜。场边界只作用于 transmission 数组，绝不作为图形
+  进入 Region（不产生虚假可动边）。
 - 记录：`opc/iteration/ilt/_common.py::ILTStateRecord`
   （state_index/stage_index/stage_state_index/scale + 四项损失 + 耗时；
   Simple/LevelSet 恒写 0/state_index/state_index/1）。

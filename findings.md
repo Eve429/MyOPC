@@ -1,5 +1,20 @@
 # MyOPC 迁移研究发现
 
+## 2026-08-21 处理框（field_box/field_size）：版图大于 layer 的规划范围
+
+- 用户场景：layer 内容 1×1 µm、reticle 2.048²——两条 prepare 路径以
+  layer_bbox 规划，版图其余区域不规划不出图。00_PAST --box（可选全局
+  处理范围）机制在新树丢失，本批找回。
+- 用户裁定：环带光学语义=极性背景外推（clear 不透光/opaque 透光，零新
+  机制；暗环需求用 GDS 表达）；配置双写法（field_box_nm 绝对坐标 /
+  field_size_nm 尺寸居中，至多一个）；ILT 与 MB-OPC 两路径同批。
+- 实现（0dcb59d/d50d876）：LayoutConfig 两可选字段（互斥）+
+  resolve_field_bounds（exact_dbu 换算、四向包含校验、严格大于 warning
+  含极性提示、奇 slack 归高侧与 _center_padding 约定一致）；两条
+  prepare 路径 bounds 改经 resolve；环带进入可训练域（输出边界附近可
+  少量移动属设计语义）；MB-OPC 环带零新边段（段数和与不扩 field 一致，
+  e2e 锁定）。16 新测试，全量 676 passed + 1 skipped。
+
 ## 2026-08-21 P3：ILT 求解器公共骨架上提（审查报告 A1/C5 裁定）
 
 - 三求解器 state×batch 循环体（~90 行×3：四画布组批、三值 context 组装、

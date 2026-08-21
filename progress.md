@@ -1,5 +1,14 @@
 # MyOPC 迁移进度日志
 
+## 2026-08-21（会话：处理框 field_box/field_size）
+
+- 用户报告版图 2.048² 大于 layer 1² 的规划问题并给出方案雏形；三轮
+  AskUserQuestion 裁定（环带极性外推/双写法配置/两路径同批）+ 负板边缘
+  语义对账后计划批准。
+- 批次 1/2/3：config+resolve+12 单测 → 双路径接入+4 e2e（双极性环带
+  target 三层判别、输出留 field、MB-OPC 段数和一致）→ 文档（contracts
+  场边界节扩写/development_manual 8b/dataflow 两文件）。
+
 ## 2026-08-21（会话：ILT 三方法审查 + P3 骨架合并）
 
 - 用户要求三方法审查（正确性/架构/性能），产出报告（cProfile 实测：

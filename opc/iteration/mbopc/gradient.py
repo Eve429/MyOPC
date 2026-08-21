@@ -406,8 +406,7 @@ def _evaluate_state(
             # 当前候选直接栅格
             masks[slot] = rasterize_mask_canvas(
                 current_region, spec.context_box, ctx.pixel_dbu,
-                ctx.canvas_pixels, polarity=problem.polarity,
-                dark_box=problem.dark_box)
+                ctx.canvas_pixels, polarity=problem.polarity)
             # 唯一计分像素（静态打包，逐态不重算）
             ownership[slot] = ctx.pack.ownership[core_index]
             sampling_members = ctx.core_sampling_members[core_index]

@@ -84,7 +84,7 @@ def run_single_pass(layout: LayoutConfig, partition: PartitionConfig,
             # 全内存 problem：提边/分段/切线分裂/ownership
             problem = prepare_macro_problem(
                 batch, layer, layout.polarity, runtime.fragmentation, macro,
-                dark_box=bounds)  # 单遍无处理框：暗界即 layer bbox
+                data_bounds=bounds)  # 单遍无处理框：数据包络即 layer bbox
             # 单遍位移：owner 段沿外法向统一移动 displacement，context 段保持零。
             # 法向约定为「材料指向空区」，因此带孔图形的孔壁法向指向孔内——
             # 统一正值位移自动实现「外环外扩、孔壁内收」的双向扩张。

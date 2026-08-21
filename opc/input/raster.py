@@ -54,13 +54,12 @@ def rasterize_mask_canvas(
         region: kdb.Region, context_box: DbuBox, pixel_dbu: int,
         canvas_pixels: int, *,
         polarity: MaskPolarity | str,
-        dark_box: DbuBox | None = None,
 ) -> NDArray[np.float32]:
     """把 context 透光率居中放入固定 canvas，所有外围 padding 填 0。
 
-    dark_box 是光学暗边界（layer 数据包络）：像素中心落在其外的画布
-    位置恒 0（两极性统一——opaque 的 1−coverage 不把无几何区反成透光；
-    clear 天然 no-op）。None = 无暗界约束（独立调用/demo 现状）。
+    窗口外的暗场由几何保证（2026-08-22 起：负板在 prepare 阶段已把数据
+    包络外补画不透光图形，正板包络外无图形天然 coverage=0），本函数只做
+    极性变换与居中 padding，不再有暗界参数。
     """
     try:
         normalized = (polarity if isinstance(polarity, MaskPolarity)
@@ -93,20 +92,6 @@ def rasterize_mask_canvas(
         local = 1.0 - coverage
     h, w = local.shape
     canvas[low_y:low_y + h, low_x:low_x + w] = local
-    if dark_box is not None:
-        # 暗界按像素中心判定，中心换算与 ownership_canvas 同式——mask、
-        # 计分与探针画布永远同布局；padding 侧的中心落在大负坐标，被
-        # 同一比较排除，无需单独分支。
-        columns = np.arange(canvas_pixels, dtype=np.int64)
-        rows = np.arange(canvas_pixels, dtype=np.int64)
-        x_centers = (context_box.left +
-                     (columns - low_x + 0.5) * pixel_dbu).astype(np.float64)
-        y_centers = (context_box.bottom +
-                     (rows - low_y + 0.5) * pixel_dbu).astype(np.float64)
-        lit = (((x_centers >= dark_box.left) & (x_centers < dark_box.right))[None, :]
-               & ((y_centers >= dark_box.bottom)
-                  & (y_centers < dark_box.top))[:, None])
-        canvas *= lit.astype(np.float32)
     return canvas
 
 

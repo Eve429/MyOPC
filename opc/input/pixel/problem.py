@@ -231,14 +231,15 @@ class PixelMacroProblem:
 def prepare_pixel_macro_problem(
         batch: RegionBatch, layer: LayerSpec, polarity: MaskPolarity | str,
         macro: MacroSpec, *, planning_bounds: DbuBox,
-        dark_bounds: DbuBox) -> PixelMacroProblem:
+        data_bounds: DbuBox) -> PixelMacroProblem:
     """从一次完整相交物化构造像素 macro 问题（一次栅格化，不提边）。
 
     planning_bounds 是 plan_macros 所用的规划边界（field，未配置处理框时
-    即 layer bbox）：ownership 四向包含校验的依据。dark_bounds 是光学
-    开孔边界（layer 数据包络）：query 超出它的环带恒不透光、两极性统一
-    （00_PAST field_box 契约的迁移等价，2026-08-21 修订：环带不再按极性
-    背景外推）。两参数必填无默认，缺省会静默保留边界缺陷，契约必须显式。
+    即 layer bbox）：ownership 四向包含校验的依据。data_bounds 是全局
+    数据包络（layer bbox）：负板在栅格化之前补画包络外到查询边界的
+    不透光图形（2026-08-22 几何方案，与 edge 路径同一语义）——环带
+    coverage=1 → transmission=0；clear 包络外无图形天然恒暗、无对应
+    操作。两参数必填无默认，缺省会静默保留边界缺陷，契约必须显式。
     """
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")
@@ -265,37 +266,19 @@ def prepare_pixel_macro_problem(
         raise ValueError(
             "planning_bounds 必须四向包含 macro ownership（应传 plan_macros "
             "所用的规划边界/处理框）")
-    # 暗边界与 query 的交叠边必须落在 query 像素格点上：按网格契约 layer
-    # bbox 边为整像素（像素 ILT 的整像素契约），余数非零说明调用方传了与
-    # 网格不一致的 bounds，静默取整会切掉半个像素。
-    inside_left = max(dark_bounds.left, query.left)
-    inside_right = min(dark_bounds.right, query.right)
-    inside_bottom = max(dark_bounds.bottom, query.bottom)
-    inside_top = min(dark_bounds.top, query.top)
-    row0, rem_y0 = divmod(inside_bottom - query.bottom, pixel_dbu)
-    row1, rem_y1 = divmod(inside_top - query.bottom, pixel_dbu)
-    col0, rem_x0 = divmod(inside_left - query.left, pixel_dbu)
-    col1, rem_x1 = divmod(inside_right - query.left, pixel_dbu)
-    if rem_y0 or rem_y1 or rem_x0 or rem_x1:
-        raise ValueError(
-            f"dark_bounds 与 query 的交叠边必须是 pixel_dbu={pixel_dbu} "
-            "的整像素倍")
     # 完整相交物化合并物理覆盖后栅格化一次：查询框不参与布尔相交，
     # 版图真实边界的覆盖率（斜边/半像素）原样进入 transmission。
     region = normalize_mask(batch, layer)
+    if normalized is MaskPolarity.OPAQUE:
+        # 负板补铬（取代透光率置零方案）：数据包络外到查询边界补画不透光
+        # 图形，补区 coverage=1 → transmission=0；布尔并的输出表示可能保留
+        # 共线内部边，须 merged() 融合（同 edge 路径的实测依据）。
+        region = (region + (kdb.Region(query.to_native())
+                            - kdb.Region(data_bounds.to_native()))).merged()
     coverage = rasterize_region_window(region, query, pixel_dbu)
     # 极性只在此边界出现一次：clear 时图形即透光，opaque 时背景透光。
     transmission = (coverage if normalized is MaskPolarity.CLEAR
                     else 1.0 - coverage)
-    # 数据包络之外恒不透光（两极性统一）：query 超出 dark_bounds 的环带
-    # （含处理框环带与 field 外扩张带）没有几何，opaque 的 1−coverage 会把
-    # 0 覆盖反成虚假透光环；clear 该处置零是逐位 no-op。暗边界只作用于
-    # transmission 数组、绝不作为图形进入 Region，不产生虚假可动边（旧系统
-    # 明令）。
-    transmission[:row0, :] = 0.0
-    transmission[row1:, :] = 0.0
-    transmission[:, :col0] = 0.0
-    transmission[:, col1:] = 0.0
     target_u8 = np.rint(
         np.clip(transmission, 0.0, 1.0) * 255.0).astype(np.uint8)
     return PixelMacroProblem(

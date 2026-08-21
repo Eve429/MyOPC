@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import klayout.db as kdb
 import numpy as np
 from numpy.typing import NDArray
 
@@ -21,7 +22,9 @@ Int32Array = NDArray[np.int32]
 Int64Array = NDArray[np.int64]
 
 # NPZ 格式版本号；不兼容的结构变更必须递增并在 load 中显式拒绝旧版本。
-_FORMAT_VERSION = 2
+# v2 曾含 dark_box（透光率置零方案）；v3 移除该键（2026-08-22 改负板
+# prepare 前补铬几何方案），v1/v2 一并显式拒绝。
+_FORMAT_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +42,6 @@ class MacroProblem:
 
     fragmentation: FragmentationConfig
     # 参考边段长度、最大允许位移和 miter 限制；阶段二不得重新计算。
-
-    dark_box: DbuBox
-    # 光学暗边界（layer 数据包络）：mask canvas 像素中心在其外恒 0，
-    # 两极性统一；与 ILT 像素路径的 dark_bounds 同一语义。
 
     segments: SegmentBatch
     # 完整候选 polygon 的轮廓拓扑、数学边和控制边段，是参考几何唯一数组真源。
@@ -133,9 +132,6 @@ class MacroProblem:
             "layer": np.array([self.layer.layer], dtype=np.int32),
             "datatype": np.array([self.layer.datatype], dtype=np.int32),
             "polarity": np.array([self.polarity.value]),
-            "dark_box": np.array(
-                [self.dark_box.left, self.dark_box.bottom,
-                 self.dark_box.right, self.dark_box.top], dtype=np.int64),
             "corner_length_dbu": np.array(
                 [self.fragmentation.corner_length_dbu], dtype=np.float64),
             "max_segment_length_dbu": np.array(
@@ -202,8 +198,7 @@ class MacroProblem:
             # 构造即校验：MacroProblem.__post_init__ 会复查 owner 范围、CSR
             # 边界与 own⊆membership；损坏或被篡改的 NPZ 在这里直接失败。
             return cls(macro, layer, MaskPolarity(str(data["polarity"][0])),
-                       fragmentation, DbuBox(*[int(v) for v in data["dark_box"]]),
-                       segments,
+                       fragmentation, segments,
                        owner_indices=data["owner_indices"],
                        core_offsets=data["core_offsets"],
                        member_segment_indices=data["member_segment_indices"])
@@ -374,6 +369,18 @@ def _build_macro_ownership(
     return owners, core_offsets, members[order]
 
 
+def _opaque_surround(query: DbuBox, data_bounds: DbuBox) -> kdb.Region:
+    """返回负板数据包络外到查询边界的补铬区（2026-08-22 几何方案）。
+
+    补到查询边界而非处理框边界：铬连续越过 field 边界，该处不产生轮廓
+    （外框边不成为可优化段）；field 外的 context 扩张带同样被覆盖，
+    与透光率置零方案在光学上逐位同值（T=0）。clear 无对应操作——包络外
+    无图形，coverage=0 天然恒暗。
+    """
+    return (kdb.Region(query.to_native())
+            - kdb.Region(data_bounds.to_native()))
+
+
 def prepare_macro_problem(
         batch: RegionBatch,
         layer: LayerSpec,
@@ -381,9 +388,17 @@ def prepare_macro_problem(
         fragmentation: FragmentationConfig,
         macro: MacroSpec,
         *,
-        dark_box: DbuBox,
+        data_bounds: DbuBox,
 ) -> MacroProblem:
-    """从完整相交图形一次生成可供多轮迭代复用的 macro 参考问题。"""
+    """从完整相交图形一次生成可供多轮迭代复用的 macro 参考问题。
+
+    data_bounds 是全局数据包络（layer bbox，须由调用方显式提供——各
+    macro 局部 region 的 bbox 只是包络的局部投影，不可代推）。负板在
+    提边之前补画包络外到查询边界的不透光图形：与既有铬共线相接处在
+    布尔并中融合（不产生虚假可动边）；补区外缘落在查询边界上，恒为
+    context-only 段（owner=-1，不可动、不进输出）；包络边有透光缺口时
+    缺口处形成真实铬|石英边（物理真实边，正常参与优化）。
+    """
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")
     try:
@@ -392,8 +407,15 @@ def prepare_macro_problem(
     except ValueError as exc:
         raise ValueError(f"不支持的 mask 极性：{polarity!r}") from exc
     # 完整相交物化（不裁剪 occurrence）→ 合并物理覆盖 → 提取一次真实轮廓：
-    # 查询框从不参与布尔相交，其四条边不会进入 SegmentBatch 成为虚假 OPC 边。
+    # 查询框从不参与布尔相交，其四条边不会进入 SegmentBatch 成为虚假 OPC 边
+    # （负板补铬外缘虽落在查询边界，它是真实几何的边，属 context-only 段）。
     region = normalize_mask(batch, layer)
+    if normalized is MaskPolarity.OPAQUE:
+        # 布尔并的输出表示可能保留与既有铬共线相接的内部边（物理覆盖已
+        # 融合、ring 表示未融合，实测会多出 48 个虚假段），必须显式
+        # merged() 消除——等价于 normalize_mask 对 GDS cut-line 的处理。
+        region = (region + _opaque_surround(macro.query_box,
+                                            data_bounds)).merged()
     segments = fragment_edges(extract_contour(region), fragmentation, normalized)
     # 先按长度分段、再按 ownership 切线分裂：保证可写段的内部不跨两个 owner，
     # 否则跨界段会被某一侧独占更新而另一侧副本停在旧位置，边界处不一致。
@@ -401,6 +423,6 @@ def prepare_macro_problem(
     owners, core_offsets, members = _build_macro_ownership(segments, macro)
     return MacroProblem(
         macro=macro, layer=layer, polarity=normalized,
-        fragmentation=fragmentation, dark_box=dark_box,
+        fragmentation=fragmentation,
         segments=segments, owner_indices=owners, core_offsets=core_offsets,
         member_segment_indices=members)

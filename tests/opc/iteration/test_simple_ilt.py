@@ -49,7 +49,7 @@ def _problem(region, macro=None, polarity="clear"):
     batch = RegionBatch({LAYER: region}, macro.query_box)
     return prepare_pixel_macro_problem(
         batch, LAYER, polarity, macro, planning_bounds=BOUNDS,
-        dark_bounds=BOUNDS)
+        data_bounds=BOUNDS)
 
 
 def _config(**overrides):
@@ -584,7 +584,7 @@ class TestMacroSeamConsistency:
             problems.append(prepare_pixel_macro_problem(
                 batch, LAYER, "clear", macro,
                 planning_bounds=DbuBox(0, 0, 160, 80),
-                dark_bounds=DbuBox(0, 0, 160, 80)))
+                data_bounds=DbuBox(0, 0, 160, 80)))
         grid_a = self._state0_raster(problems[0])
         grid_b = self._state0_raster(problems[1])
         pixel = 4

@@ -208,36 +208,9 @@ class TestCenteredCanvas:
         assert np.all(canvas[:14] == 0) and np.all(canvas[:, :14] == 0)
 
 
-    def test_opaque_context_outside_dark_box_stays_dark(self):
-        """opaque 反相不得把暗界外的 padding/环带错置为透光（00_PAST 镜像）。"""
-        image = rasterize_mask_canvas(
-            kdb.Region(kdb.Box(20, 20, 80, 80)), DbuBox(-20, -20, 120, 120),
-            10, 16, polarity="opaque", dark_box=DbuBox(0, 0, 100, 100))
-        # 窗口 14×14 居中入 16 画布（低侧偏移 1）；暗界 (0,0,100,100) 对齐
-        # 像素格 → 画布 [3,13)² 为暗界内（像素中心判据与整像素归属一致）。
-        assert not np.any(image[:3, :]) and not np.any(image[13:, :])
-        assert not np.any(image[:, :3]) and not np.any(image[:, 13:])
-        assert image[3, 3] == 1.0  # 暗界内背景透光
-        assert image[5, 5] == 0.0  # 材料不透光（局部 (20,80)² → 画布 [5,11)）
-
-    def test_clear_dark_box_is_bitwise_noop(self):
-        """clear 极性传暗界与不传逐位一致（数据包络外 coverage 本就 0）。"""
-        region = kdb.Region(kdb.Box(20, 20, 80, 80))
-        window = DbuBox(-20, -20, 120, 120)
-        with_dark = rasterize_mask_canvas(
-            region, window, 10, 16, polarity="clear",
-            dark_box=DbuBox(0, 0, 100, 100))
-        without = rasterize_mask_canvas(
-            region, window, 10, 16, polarity="clear")
-        assert np.array_equal(with_dark, without)
-
-    def test_opaque_without_dark_box_keeps_legacy_ring(self):
-        """dark_box=None 保持无约束现状（独立调用/demo 语义锁定）。"""
-        image = rasterize_mask_canvas(
-            kdb.Region(kdb.Box(20, 20, 80, 80)), DbuBox(-20, -20, 120, 120),
-            10, 16, polarity="opaque")
-        assert image[1, 1] == 1.0  # 窗口内背景透光（无暗界）
-        assert image[0, 0] == 0.0  # 数值 padding 恒 0
+    # 2026-08-22 起 rasterize_mask_canvas 不再有 dark_box 参数：环带暗场
+    # 由 prepare 阶段的负板补铬几何保证（锚点移至 test_macro_problem 的
+    # TestOpaqueSurround 与像素/runner 级场边界用例）。
 
     def test_clear_polarity_keeps_one_as_transmission(self):
         """clear 极性下 coverage 直接就是透光率。"""

@@ -62,7 +62,7 @@ def _problem(region, macro=None, polarity="clear", frag=FRAG):
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
     return prepare_macro_problem(batch, LAYER, polarity, frag, macro,
-                                 dark_box=BOUNDS)
+                                 data_bounds=BOUNDS)
 
 
 def _config(**overrides):
@@ -690,7 +690,7 @@ class TestGeometryMatrix:
         for macro in macros:
             batch = RegionBatch({LAYER: region}, macro.query_box)
             problem = prepare_macro_problem(batch, LAYER, "clear", FRAG, macro,
-                                           dark_box=BOUNDS)
+                                           data_bounds=BOUNDS)
             results.append(_optimize(problem, _LinearModel(), _config()))
         for macro, result in zip(macros, results):
             self._assert_valid_publication(
@@ -975,7 +975,7 @@ class TestEpeLoss:
             macro = _macro()
             batch = RegionBatch({LAYER: region}, macro.query_box)
             return prepare_macro_problem(batch, LAYER, "clear", frag, macro,
-                                        dark_box=BOUNDS)
+                                        data_bounds=BOUNDS)
 
         losses = []
         for corner, segment in ((8.0, 16.0), (4.0, 32.0), (2.0, 30.0)):

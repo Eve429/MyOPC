@@ -108,8 +108,8 @@ def cached_target_canvas(
         spec = problem.macro.core(core_index)
         cached = np.rint(rasterize(
             pack.reference_region, spec.context_box, pack.pixel_dbu,
-            pack.canvas_pixels, polarity=problem.polarity,
-            dark_box=problem.dark_box) * 255.0).astype(np.uint8)
+            pack.canvas_pixels, polarity=problem.polarity) * 255.0).astype(
+                np.uint8)
         target_cache.put(pack.macro_id, core_index, cached)
     return cached
 

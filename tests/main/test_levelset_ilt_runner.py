@@ -161,7 +161,7 @@ class TestArtifacts:
         tmp_path, _ = prepared
         work = tmp_path / "work"
         plan = json.loads((work / "ilt_plan.json").read_text(encoding="utf-8"))
-        assert plan["format_version"] == 1
+        assert plan["format_version"] == 2  # v2 起 ilt_plan 不含 dark_box
         assert (tmp_path / "final.gds").is_file()
         assert (work / "summary.json").is_file()
         for entry in plan["macros"]:

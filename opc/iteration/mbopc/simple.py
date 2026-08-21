@@ -180,8 +180,7 @@ def evaluate_and_propose(
             # 当前候选直接栅格
             masks[slot] = rasterize_mask_canvas(
                 current_region, spec.context_box, pixel_dbu,
-                canvas_pixels, polarity=problem.polarity,
-                dark_box=problem.dark_box)
+                canvas_pixels, polarity=problem.polarity)
             # 唯一计分像素（静态打包，逐态不重算）
             ownership[slot] = pack.ownership[core_index]
         # 本批 owner 探针（静态坐标）槽位与 canvas 坐标一次拼接

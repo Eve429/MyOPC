@@ -618,7 +618,7 @@ class TestResolveFieldBounds:
         assert result == self.LAYER and not caught
 
     def test_field_box_strictly_larger_warns(self):
-        """严格大于：返回扩展框并 warning（含环带恒暗提示）。"""
+        """clear 严格大于：返回扩展框并 warning（环带无图形天然暗）。"""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = resolve_field_bounds(
@@ -627,7 +627,20 @@ class TestResolveFieldBounds:
                 self.LAYER, self.UNIT)
         assert (result.left, result.bottom, result.right, result.top) == (
             -30, -15, 130, 75)
-        assert len(caught) == 1 and "恒不透光" in str(caught[0].message)
+        assert len(caught) == 1 and "天然不透光" in str(caught[0].message)
+
+    def test_field_box_larger_opaque_defers_to_prepare(self):
+        """opaque 严格大于：resolve 层不警告（补铬提示归 prepare 一次发出）。"""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = resolve_field_bounds(
+                self._layout(polarity="opaque",
+                             field_box_nm=(Decimal(-30), Decimal(-15),
+                                           Decimal(130), Decimal(75))),
+                self.LAYER, self.UNIT)
+        assert (result.left, result.bottom, result.right, result.top) == (
+            -30, -15, 130, 75)
+        assert len(caught) == 0
 
     def test_field_box_not_containing_rejected(self):
         """不包含 layer bbox（偏移出界/更小）：ValueError。"""

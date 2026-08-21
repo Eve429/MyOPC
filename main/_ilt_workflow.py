@@ -2,6 +2,7 @@
 
 import sys  # 把仓库根加入模块路径，保证免安装直接运行
 import time  # perf_counter 阶段计时
+import warnings  # 负板补铬提示
 from collections.abc import Callable  # 方法钩子类型
 from dataclasses import asdict, dataclass  # 方法描述与记录序列化
 from decimal import Decimal  # nm→DBU 精确换算
@@ -41,14 +42,15 @@ from main.configuration import (
 )
 
 # 像素输入与网格
-from opc.input import plan_macros
+from opc.input import MaskPolarity, plan_macros
 from opc.input.pixel import (
     PixelMacroProblem,
     prepare_pixel_macro_problem,
     reconstruct_pixel_region,
 )
 
-_ILT_PLAN_FORMAT_VERSION = 1  # ilt_plan.json 结构版本
+# v2 移除 dark_box 键（2026-08-22 环带改几何方案）；v1 显式拒绝。
+_ILT_PLAN_FORMAT_VERSION = 2
 _ILT_RESULT_FORMAT_VERSION = 1  # 每 macro 结果 NPZ 结构版本
 
 
@@ -87,7 +89,7 @@ def prepare_pixel_problems(
         if layer_bounds is None:  # 目标层无图形
             raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
         # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化；
-        # 环带（field − layer bbox）恒不透光（dark_bounds=layer 包络给出）
+        # 环带光学处理在 prepare 内按极性完成（opaque 补铬，clear 天然暗）
         bounds = resolve_field_bounds(layout, layer_bounds, dbu_nm)
         # 网格换算不含边段参数；像素整除与画布容量在 plan_macros 内校验
         grid = resolve_grid_config(partition, litho, dbu_nm)
@@ -103,6 +105,26 @@ def prepare_pixel_problems(
         # ownership 复核：面积和恰等于父框即无正面积重叠
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
+        # 负板补铬告知（每运行恰一次；与 _macro_pipeline.prepare_problems
+        # 同款语义，仅 field 严格大于数据包络时提示）
+        if (layout.polarity == MaskPolarity.OPAQUE
+                and (bounds.left < layer_bounds.left
+                     or bounds.bottom < layer_bounds.bottom
+                     or bounds.right > layer_bounds.right
+                     or bounds.top > layer_bounds.top)):
+            scale = Decimal(dbu_nm)
+            warnings.warn(
+                "负板（opaque）：处理框大于数据包络，prepare 阶段已补画包络外"
+                "不透光图形（至各 macro 查询边界）——环带将以真实几何进入"
+                "栅格化与最终输出；field "
+                f"({Decimal(bounds.left) * scale},"
+                f"{Decimal(bounds.bottom) * scale})-"
+                f"({Decimal(bounds.right) * scale},"
+                f"{Decimal(bounds.top) * scale}) nm ⊃ layer "
+                f"({Decimal(layer_bounds.left) * scale},"
+                f"{Decimal(layer_bounds.bottom) * scale})-"
+                f"({Decimal(layer_bounds.right) * scale},"
+                f"{Decimal(layer_bounds.top) * scale}) nm", stacklevel=2)
         problems_dir = output.work_dir / "pixel_problems"  # problem 存放目录
         problems_dir.mkdir(parents=True, exist_ok=True)  # 创建目录结构
         entries = []  # 逐 macro 计划条目
@@ -112,7 +134,7 @@ def prepare_pixel_problems(
             batch = database.query([layer], macro.query_box).materialize_intersecting()
             problem = prepare_pixel_macro_problem(
                 batch, layer, layout.polarity, macro,
-                planning_bounds=bounds, dark_bounds=layer_bounds)
+                planning_bounds=bounds, data_bounds=layer_bounds)
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")
             pixel_count_sum += int(problem.ownership_shape[0] * problem.ownership_shape[1])
             entries.append(
@@ -141,8 +163,6 @@ def prepare_pixel_problems(
         "dbu_um": float(dbu_nm / 1000),
         "layer": [layer.layer, layer.datatype],
         "polarity": layout.polarity.value,
-        "dark_box": [layer_bounds.left, layer_bounds.bottom,
-                     layer_bounds.right, layer_bounds.top],
         "core_size_dbu": grid.core_dbu,
         "context_dbu": grid.context_dbu,
         "pixel_dbu": grid.pixel_dbu,

@@ -212,7 +212,7 @@ class TestArtifacts:
         tmp_path, summary = prepared
         work = tmp_path / "work"
         plan = json.loads((work / "ilt_plan.json").read_text(encoding="utf-8"))
-        assert plan["format_version"] == 1
+        assert plan["format_version"] == 2  # v2 起 ilt_plan 不含 dark_box
         assert {key in plan for key in (
             "layer", "dbu_um", "polarity", "pixel_dbu", "canvas_pixels",
             "core_size_dbu", "context_dbu", "macros")} == {True}
@@ -419,7 +419,7 @@ class TestFieldBounds:
             tmp_path, layout_path, layout_extra=self.FIELD,
             polarity=polarity, batch_size=4, device="cpu",
             save_final_lithography="false")
-        with pytest.warns(UserWarning, match="恒不透光"):
+        with pytest.warns(UserWarning, match="环带"):
             summary = simple_workflow.run_simple_ilt(config_path)
         problem = np.load(
             tmp_path / "work" / "pixel_problems" / "mr0c0.npz")
@@ -427,7 +427,7 @@ class TestFieldBounds:
 
     @pytest.mark.parametrize("polarity", ["clear", "opaque"])
     def test_ring_transmission_always_dark(self, tmp_path, polarity):
-        """环带两极性恒 0（光学开孔边界=数据包络）；field 外扩张带恒 0。"""
+        """环带两极性恒 0（opaque 由补铬 coverage=1 给出、clear 无几何）；field 外扩张带恒 0（补铬覆盖到查询边界）。"""
         summary, target = self._run_with_field(tmp_path, polarity)
         assert summary["macro_count"] == 4  # 网格按 field 320×160 规划
         edge = self.FIELD_EDGE
@@ -439,19 +439,19 @@ class TestFieldBounds:
         assert not target[edge:, edge:col_end].any()
 
     def test_final_lithography_with_field_writes_artifacts(self, tmp_path):
-        """field + 最终光刻留档：plan 携带 dark_box，留档正常产出（回归）。"""
+        """field + 最终光刻留档：留档正常产出（回归；v2 起 plan 不含 dark_box）。"""
         layout_path = _write_gds(tmp_path)
         config_path = _write_config(
             tmp_path, layout_path, layout_extra=self.FIELD,
             save_final_lithography="true")
-        with pytest.warns(UserWarning, match="恒不透光"):
+        with pytest.warns(UserWarning, match="环带"):
             summary = simple_workflow.run_simple_ilt(config_path)
         manifest = tmp_path / "work" / "final_lithography" / "manifest.json"
         assert manifest.is_file()
         assert summary["final_lithography_tiles"] > 0
 
     def test_opaque_interior_background_still_transparent(self, tmp_path):
-        """opaque 数据包络内背景仍透光（环带置零不伤包络内极性变换）。"""
+        """opaque 数据包络内背景仍透光（补铬只发生在包络外）。"""
         _, _target = self._run_with_field(tmp_path, "opaque")
         # mr0c1 的窗口覆盖 hole 区（(112,25)-(136,65) 石英开孔）：
         # 包络内无材料背景 = 255（load 在 _run_with_field 内已取 mr0c0，
@@ -461,7 +461,7 @@ class TestFieldBounds:
             tmp_path, layout_path, layout_extra=self.FIELD,
             polarity="opaque", batch_size=4, device="cpu",
             save_final_lithography="false")
-        with pytest.warns(UserWarning, match="恒不透光"):
+        with pytest.warns(UserWarning, match="环带"):
             simple_workflow.run_simple_ilt(config_path)
         data = np.load(tmp_path / "work" / "pixel_problems" / "mr0c1.npz")
         target = data["target_u8"]
@@ -478,7 +478,7 @@ class TestFieldBounds:
         config_path = _write_config(
             tmp_path, layout_path, layout_extra=self.FIELD,
             save_final_lithography="false")
-        with pytest.warns(UserWarning, match="恒不透光"):
+        with pytest.warns(UserWarning, match="环带"):
             summary = simple_workflow.run_simple_ilt(config_path)
         with LayoutDB.open(summary["final_layout"]) as database:
             merged = database.layer_bbox(LayerSpec(1, 0))

@@ -40,16 +40,16 @@ def _macro(**overrides):
 
 
 def _problem(region, macro=None, polarity="clear", frag=FRAG,
-             dark_box=BOUNDS):
+             data_bounds=BOUNDS):
     """把原生 Region 直接包装为 RegionBatch 并生成单 macro problem。
 
-    dark_box 默认为规划包络 BOUNDS；自定义 bounds 规划的用例须随规划
-    传入同一包络（光学暗界 = 数据包络）。
+    data_bounds 默认为规划包络 BOUNDS（负板补铬的减区基准）；自定义
+    bounds 规划的用例须随规划传入同一包络。
     """
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
     return prepare_macro_problem(batch, LAYER, polarity, frag, macro,
-                                 dark_box=dark_box)
+                                 data_bounds=data_bounds)
 
 
 def _config(**overrides):
@@ -372,17 +372,20 @@ class TestEvaluatePropose:
         assert calls == [3, 3]  # 每批一次、每次三条件
 
 
-    def test_mask_canvas_receives_dark_box(self, monkeypatch):
-        """solver 组批的每次 mask/target 栅格化都携带 problem 暗界。"""
-        problem = _problem(self.RECT)
+    def test_mask_canvas_receives_surround_geometry(self, monkeypatch):
+        """负板组批栅格化的 Region 已含包络外补铬（覆盖到查询边界）。
+
+        2026-08-22 几何方案：暗界参数已移除，环带语义由 prepare 阶段的
+        补铬几何承载——这里断言该几何确实到达每一次栅格化。
+        """
+        problem = _problem(self.RECT, polarity="opaque")
         seen = []
         real = simple.rasterize_mask_canvas
 
-        def spy(region_, box, pixel, canvas, *, polarity, dark_box=None):
-            """记录暗界参数后透传。"""
-            seen.append(dark_box)
-            return real(region_, box, pixel, canvas, polarity=polarity,
-                        dark_box=dark_box)
+        def spy(region_, box, pixel, canvas, *, polarity):
+            """记录栅格化 Region 的包络后透传。"""
+            seen.append(region_.bbox())
+            return real(region_, box, pixel, canvas, polarity=polarity)
 
         monkeypatch.setattr(simple, "rasterize_mask_canvas", spy)
         zeros = np.zeros(problem.segments.segment_count)
@@ -390,7 +393,13 @@ class TestEvaluatePropose:
             problem, reconstruct_region(problem, zeros), zeros,
             _PhaseModel([_identity]), _config(), 2.0,
             TargetCanvasCache(0), can_update=False)
-        assert seen and all(box == problem.dark_box for box in seen)
+        query = problem.macro.query_box
+        # 零位移候选含补铬：Region 包络覆盖到 query 四角（宽高由 context
+        # 扩张与 BOUNDS 规划共同决定），clear 对照仅覆盖图形自身包络。
+        assert seen and all(
+            box.left <= query.left and box.bottom <= query.bottom
+            and box.right >= query.right and box.top >= query.top
+            for box in seen)
 
     def test_cache_hit_avoids_retarget_rasterization(self, monkeypatch):
         """第二次评价命中缓存：target 不再栅格化，只有当前 mask 栅格。"""
@@ -402,11 +411,10 @@ class TestEvaluatePropose:
         counts = []
         real_raster = simple.rasterize_mask_canvas
 
-        def _counting(region_, box, pixel, canvas, *, polarity, dark_box=None):
-            """计数栅格化调用并透传（含暗界参数）。"""
+        def _counting(region_, box, pixel, canvas, *, polarity):
+            """计数栅格化调用并透传。"""
             counts.append(1)
-            return real_raster(region_, box, pixel, canvas, polarity=polarity,
-                               dark_box=dark_box)
+            return real_raster(region_, box, pixel, canvas, polarity=polarity)
         monkeypatch.setattr(simple, "rasterize_mask_canvas", _counting)
         evaluate_and_propose(problem, region, zeros, model, _config(),
                              2.0, cache, can_update=True)
@@ -658,7 +666,7 @@ class TestGeometryMatrix:
         polygon = kdb.Polygon([(10, 10), (150, 10), (10, 150)])  # 斜边跨中心
         region = kdb.Region(polygon)
         for macro in macros:  # 每个 macro 独立跑一轮
-            problem = _problem(region, macro, dark_box=bounds)
+            problem = _problem(region, macro, data_bounds=bounds)
             result = optimize_macro(problem, self._model, _config(
                 iterations=1, batch_size=4), TargetCanvasCache(0))
             self._assert_healthy(result, problem)

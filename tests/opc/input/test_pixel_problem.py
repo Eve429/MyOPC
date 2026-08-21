@@ -30,17 +30,17 @@ def _macro(**overrides):
 
 
 def _prepare(region, macro=None, polarity="clear",
-             planning_bounds=BOUNDS, dark_bounds=BOUNDS):
+             planning_bounds=BOUNDS, data_bounds=BOUNDS):
     """把原生 Region 包装为 RegionBatch 并生成像素 macro 问题。
 
-    默认规划与暗边界同为 BOUNDS（未配处理框时二者天然一致的形态）；
-    传 query_box 可得"不置零任何像素"的无干预参照。
+    默认规划与数据包络同为 BOUNDS（未配处理框时二者天然一致的形态）；
+    传 query_box 可得"无补铬"的无干预参照（clear/负板均成立：补区为空）。
     """
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
     return prepare_pixel_macro_problem(
         batch, LAYER, polarity, macro, planning_bounds=planning_bounds,
-        dark_bounds=dark_bounds)
+        data_bounds=data_bounds)
 
 
 def _binary_over_ownership(problem):
@@ -201,7 +201,7 @@ class TestLayoutBounds:
         bounded = _prepare(region)
         # 暗边界完全盖住 query 时不置零任何像素，作为无干预参照
         reference = _prepare(region, planning_bounds=_macro().query_box,
-                             dark_bounds=_macro().query_box)
+                             data_bounds=_macro().query_box)
         assert np.array_equal(bounded.target_u8, reference.target_u8)
 
     def test_interior_macro_not_zeroed(self):
@@ -213,10 +213,10 @@ class TestLayoutBounds:
         assert macro.query_box == DbuBox(60, 60, 180, 180)  # 全在 bounds 内
         region = kdb.Region(kdb.Box(90, 90, 150, 150))
         problem = _prepare(region, macro=macro, planning_bounds=bounds,
-                           dark_bounds=bounds)
+                           data_bounds=bounds)
         reference = _prepare(region, macro=macro,
                              planning_bounds=macro.query_box,
-                             dark_bounds=macro.query_box)
+                             data_bounds=macro.query_box)
         assert np.array_equal(problem.target_u8, reference.target_u8)
 
     def test_ownership_pixels_never_modified(self):
@@ -226,7 +226,7 @@ class TestLayoutBounds:
             problem = _prepare(region, polarity=polarity)
             reference = _prepare(
                 region, polarity=polarity, planning_bounds=_macro().query_box,
-                dark_bounds=_macro().query_box)
+                data_bounds=_macro().query_box)
             query = problem.macro.query_box
             box = problem.macro.ownership_box
             r0 = (box.bottom - query.bottom) // 4
@@ -241,11 +241,8 @@ class TestLayoutBounds:
             _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)),
                      planning_bounds=DbuBox(0, 0, 40, 80))
 
-    def test_bounds_off_pixel_grid_rejected(self):
-        """bounds 交叠边非整像素：显式失败，不静默取整。"""
-        with pytest.raises(ValueError, match="整像素"):
-            _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)),
-                     dark_bounds=DbuBox(0, 0, 83, 80))
+    # 2026-08-22 移除 dark_bounds 整像素拒绝：几何方案下包络边由补铬的
+    # 真实覆盖表达（非对齐包络产生模拟边界像素），不再要求交叠边落格点。
 
 
 class TestPixelAlignment:
@@ -258,7 +255,7 @@ class TestPixelAlignment:
                             canvas_pixels=CANVAS)[0]
         problem = _prepare(kdb.Region(kdb.Box(10, 10, 90, 70)), macro=macro,
                            planning_bounds=DbuBox(0, 0, 100, 80),
-                           dark_bounds=DbuBox(0, 0, 100, 80))
+                           data_bounds=DbuBox(0, 0, 100, 80))
         assert problem.ownership_shape == (20, 25)  # 100/4 × 80/4
 
     def test_nonaligned_bbox_rejected_before_raster(self, monkeypatch):

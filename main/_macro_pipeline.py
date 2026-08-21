@@ -49,17 +49,18 @@ from opc.input import (
 )
 from opc.input.edge import prepare_macro_problem  # problem 构造
 
-_PLAN_FORMAT_VERSION = 1  # plan.json 结构版本
+# v2 移除 dark_box 键（2026-08-22 环带改几何方案）；v1 显式拒绝。
+_PLAN_FORMAT_VERSION = 2
 
 
 def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
                          dbu_nm: Decimal) -> DbuBox:
     """解析处理框：双 None 用 layer bbox；box 直用；size 以 layer bbox 居中推导。
 
-    环带（field 减 layer bbox 的无图形区）光学语义 = 恒不透光（两极性
-    统一——光学开孔边界 = layer 数据包络，即 dark_bounds；2026-08-21
-    用户裁定修订）；处理框绝不作为图形进入 Region（00_PAST field_box
-    契约——不产生虚假可动边）。严格大于 layer bbox 时给出 warning。
+    field 只声明规划口径（macro 网格与输出覆盖范围），本身不携带光学
+    语义（2026-08-22 修订）：环带的光学处理在 prepare 阶段按极性完成——
+    opaque 补画数据包络外的不透光图形（prepare_problems 内另行提示），
+    clear 包络外无图形、coverage=0 天然恒暗。
     """
     if layout.field_box_nm is not None:
         left, bottom, right, top = (
@@ -90,20 +91,23 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
             f"({layer_bounds.left},{layer_bounds.bottom})-"
             f"({layer_bounds.right},{layer_bounds.top}) DBU"
             "——配置比版图小或偏移出界")
-    if (field.left < layer_bounds.left or field.bottom < layer_bounds.bottom
-            or field.right > layer_bounds.right
-            or field.top > layer_bounds.top):
+    if ((field.left < layer_bounds.left or field.bottom < layer_bounds.bottom
+             or field.right > layer_bounds.right or field.top > layer_bounds.top)
+            # opaque 的补铬提示由 prepare_problems 统一发出（避免同因双
+            # 警告），这里只对 clear 给一次性说明。
+            and layout.polarity == MaskPolarity.CLEAR):
         scale = Decimal(dbu_nm)
         warnings.warn(
             "处理框大于 layer bbox：field "
-            f"({Decimal(field.left) * scale},{Decimal(field.bottom) * scale})"
-            f"-({Decimal(field.right) * scale},{Decimal(field.top) * scale}) nm"
-            " ⊃ layer "
+            f"({Decimal(field.left) * scale},"
+            f"{Decimal(field.bottom) * scale})-"
+            f"({Decimal(field.right) * scale},"
+            f"{Decimal(field.top) * scale}) nm ⊃ layer "
             f"({Decimal(layer_bounds.left) * scale},"
             f"{Decimal(layer_bounds.bottom) * scale})-"
             f"({Decimal(layer_bounds.right) * scale},"
             f"{Decimal(layer_bounds.top) * scale}) nm；"
-            "环带恒不透光（光学开孔边界=layer 数据包络）", stacklevel=2)
+            "正板（clear）环带无图形、天然不透光", stacklevel=2)
     return field
 
 
@@ -140,6 +144,27 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         # ownership 复核——面积和恰等于父框即无正面积重叠。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积守恒
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
+        # 负板补铬告知（每运行恰一次，补铬本身在各 prepare 内部按极性进行）：
+        # 仅当 field 严格大于数据包络（存在环带）时提示；无 field 的常规运行
+        # 仅补 context 扩张带（与原暗界方案光学逐位同值），不另行打扰。
+        if (layout.polarity == MaskPolarity.OPAQUE
+                and (bounds.left < layer_bounds.left
+                     or bounds.bottom < layer_bounds.bottom
+                     or bounds.right > layer_bounds.right
+                     or bounds.top > layer_bounds.top)):
+            scale = Decimal(dbu_nm)
+            warnings.warn(
+                "负板（opaque）：处理框大于数据包络，prepare 阶段已补画包络外"
+                "不透光图形（至各 macro 查询边界）——环带将以真实几何进入"
+                "提边/栅格化与最终输出；field "
+                f"({Decimal(bounds.left) * scale},"
+                f"{Decimal(bounds.bottom) * scale})-"
+                f"({Decimal(bounds.right) * scale},"
+                f"{Decimal(bounds.top) * scale}) nm ⊃ layer "
+                f"({Decimal(layer_bounds.left) * scale},"
+                f"{Decimal(layer_bounds.bottom) * scale})-"
+                f"({Decimal(layer_bounds.right) * scale},"
+                f"{Decimal(layer_bounds.top) * scale}) nm", stacklevel=2)
         problems_dir = output.work_dir / "problems"  # problem 存放目录
         problems_dir.mkdir(parents=True, exist_ok=True)  # 创建目录结构
         entries = []  # 逐 macro 计划条目
@@ -154,7 +179,7 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
             # 一次完成提边/分段/切线分裂/ownership
             problem = prepare_macro_problem(
                 batch, layer, layout.polarity, runtime.fragmentation, macro,
-                dark_box=layer_bounds)
+                data_bounds=layer_bounds)
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
             problem_bytes = problem_path.stat().st_size  # 文件字节数即持久字节数
             segment_count_sum += problem.segments.segment_count  # 累计段数
@@ -184,8 +209,6 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         "dbu_um": float(dbu_nm / 1000),
         "layer": [layer.layer, layer.datatype],
         "polarity": layout.polarity.value,
-        "dark_box": [layer_bounds.left, layer_bounds.bottom,
-                     layer_bounds.right, layer_bounds.top],
         "core_size_dbu": runtime.grid.core_dbu,
         "context_dbu": runtime.grid.context_dbu,
         "pixel_dbu": runtime.grid.pixel_dbu,
@@ -336,7 +359,6 @@ def save_final_lithography(
     canvas_pixels = int(plan["canvas_pixels"])  # 画布
     core_dbu = int(plan["core_size_dbu"])  # tile 尺寸
     context_dbu = int(plan["context_dbu"])  # tile 上下文
-    dark_box = DbuBox(*plan["dark_box"])  # 光学暗界与迭代期 mask 同源
     with LayoutDB.open(final_layout) as database:  # 打开一次，全程在内物化消费
         bounds = database.layer_bbox(layer)  # 目标层真实包络（不用魔法框）
         if bounds is None:  # 空层无法出图
@@ -354,9 +376,15 @@ def save_final_lithography(
         def _window_region(spec):
             """只物化该 tile context 窗口相交的局部几何，用完即弃。"""
             # 窗口查询
-            return (database.query([layer], spec.context_box)
-                    .materialize_intersecting()
-                    .region(layer))
+            region = (database.query([layer], spec.context_box)
+                      .materialize_intersecting()
+                      .region(layer))
+            if polarity is MaskPolarity.OPAQUE:
+                # 负板：最终版图包络外到 tile 查询边界补铬（与迭代期
+                # prepare 同一规则），边界 PNG 不出现虚假亮环
+                region = region + (kdb.Region(spec.context_box.to_native())
+                                   - kdb.Region(bounds.to_native()))
+            return region
 
         with torch.no_grad():  # 纯推理
             for batch_start in range(0, core_count, batch_size):  # 流式分批
@@ -366,8 +394,7 @@ def save_final_lithography(
                 # 每 tile 窗口就地栅格
                 masks = np.stack([rasterize_mask_canvas(
                     _window_region(spec), spec.context_box, pixel_dbu,
-                    canvas_pixels, polarity=polarity,
-                    dark_box=dark_box) for spec in specs])
+                    canvas_pixels, polarity=polarity) for spec in specs])
                 mask_tensor = torch.from_numpy(masks).to(model.device)  # 送设备
                 # 一次标称前向
                 printed = model.forward_many(

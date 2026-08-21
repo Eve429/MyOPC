@@ -35,7 +35,7 @@ def _problem(region, macro):
     """把原生 Region 直接包装为 RegionBatch 并生成 macro problem。"""
     batch = RegionBatch({LAYER: region}, macro.query_box)
     return prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
-                                 dark_box=BOUNDS)
+                                 data_bounds=BOUNDS)
 
 
 def _assert_problem_invariants(problem, source):
@@ -143,6 +143,98 @@ class TestOwnershipSplit:
         problem = _problem(region, _macros()[0])
         zeros = np.zeros(problem.segments.segment_count)
         assert int((reconstruct_region(problem, zeros) ^ region).area()) == 0
+
+
+class TestOpaqueSurround:
+    """负板 prepare 前补铬的几何方案（2026-08-22 用户裁定）。
+
+    补区 = macro 查询框 − data_bounds：与既有铬共线相接处在布尔并中
+    融合（不产生虚假可动边）；补区外缘落在查询边界上，恒为 context-only
+    段（owner=-1，不可动、不进输出）；包络边有透光缺口时缺口处形成
+    真实铬|石英边（owned 段，物理真实）。
+    """
+
+    def _opaque_problem(self, region, macro=None, data_bounds=BOUNDS):
+        """按负板极性构造 problem（补铬在 prepare 内部进行）。"""
+        macro = _macros()[0] if macro is None else macro
+        batch = RegionBatch({LAYER: region}, macro.query_box)
+        return prepare_macro_problem(batch, LAYER, "opaque", CFG, macro,
+                                     data_bounds=data_bounds)
+
+    @staticmethod
+    def _midpoints(problem):
+        """返回全部段的参考中点。"""
+        geometry = problem.segments.materialize()
+        return (geometry.starts + geometry.ends) * 0.5
+
+    def test_surround_extends_to_query_edge(self):
+        """零位移重建覆盖到查询四角：补铬连续越过 data_bounds。"""
+        problem = self._opaque_problem(kdb.Region(kdb.Box(10, 10, 70, 70)))
+        rebuilt = reconstruct_region(
+            problem, np.zeros(problem.segments.segment_count))
+        box, query = rebuilt.bbox(), problem.macro.query_box
+        assert (box.left <= query.left and box.bottom <= query.bottom
+                and box.right >= query.right and box.top >= query.top)
+
+    def test_query_edge_segments_are_context_only(self):
+        """补区外缘（查询边界线上/外）段全部 owner=-1。"""
+        problem = self._opaque_problem(kdb.Region(kdb.Box(10, 10, 70, 70)))
+        mids = self._midpoints(problem)
+        ownership = problem.macro.ownership_box
+        outside = ((mids[:, 0] < ownership.left)
+                   | (mids[:, 0] >= ownership.right)
+                   | (mids[:, 1] < ownership.bottom)
+                   | (mids[:, 1] >= ownership.top))
+        assert np.any(outside)
+        assert np.all(problem.owner_indices[outside] == -1)
+
+    def test_complement_plate_boundary_edges_merge_away(self):
+        """补区式负板（铬贴满 data_bounds）：边界线处无任何段（融合）。"""
+        chrome = (kdb.Region(kdb.Box(0, 0, 80, 80))
+                  - kdb.Region(kdb.Box(30, 30, 50, 50)))
+        problem = self._opaque_problem(chrome, data_bounds=DbuBox(0, 0, 80, 80))
+        mids = self._midpoints(problem)
+        on_bounds = (np.isclose(mids[:, 0], 0) | np.isclose(mids[:, 0], 80)
+                     | np.isclose(mids[:, 1], 0) | np.isclose(mids[:, 1], 80))
+        assert not np.any(on_bounds)  # 80² 边界全线有铬：共线融合无轮廓
+
+    def test_gap_plate_boundary_edge_is_owned(self):
+        """包络边有透光缺口的负板：缺口处铬|石英边成为真实 owned 段。"""
+        chrome = kdb.Region(kdb.Box(20, 20, 60, 60))  # 不触 data_bounds 边
+        problem = self._opaque_problem(chrome, data_bounds=DbuBox(0, 0, 80, 80))
+        mids = self._midpoints(problem)
+        on_bounds = (np.isclose(mids[:, 0], 0) | np.isclose(mids[:, 0], 80)
+                     | np.isclose(mids[:, 1], 0) | np.isclose(mids[:, 1], 80))
+        assert np.any(on_bounds & (problem.owner_indices >= 0))
+
+    def test_clear_ignores_data_bounds(self):
+        """正板零处理：data_bounds 取值不改变段几何（逐位一致）。"""
+        region = kdb.Region(kdb.Box(20, 20, 60, 60))
+        macro = _macros()[0]
+        materials = []
+        for bounds in (BOUNDS, macro.query_box, DbuBox(30, 30, 50, 50)):
+            batch = RegionBatch({LAYER: region}, macro.query_box)
+            problem = prepare_macro_problem(
+                batch, LAYER, "clear", CFG, macro, data_bounds=bounds)
+            materials.append(problem.segments.materialize())
+        for other in materials[1:]:
+            assert np.array_equal(materials[0].starts, other.starts)
+            assert np.array_equal(materials[0].ends, other.ends)
+            assert np.array_equal(materials[0].normals, other.normals)
+
+    def test_opaque_empty_region_far_from_data_fills_query(self):
+        """环带区宏（查询不接数据包络）+ 负板：整查询补铬、全部段
+        owner=-1（空区=铬，与透光率置零方案光学同值）。"""
+        macro = _macros()[0]
+        batch = RegionBatch({LAYER: kdb.Region()}, macro.query_box)
+        problem = prepare_macro_problem(
+            batch, LAYER, "opaque", CFG, macro,
+            data_bounds=DbuBox(200, 200, 240, 240))  # 与查询不相交
+        rebuilt = reconstruct_region(
+            problem, np.zeros(problem.segments.segment_count))
+        assert int((rebuilt ^ kdb.Region(macro.query_box.to_native())
+                    ).area()) == 0
+        assert np.all(problem.owner_indices == -1)
 
 
 class TestSharedDiagonal:
@@ -267,7 +359,7 @@ class TestGeometryMatrix:
             with LayoutDB.open(path) as database:
                 batch = database.query([LAYER], macro.query_box).materialize_intersecting()
             problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
-                                      dark_box=BOUNDS)
+                                      data_bounds=BOUNDS)
             _assert_problem_invariants(problem, batch.region(LAYER))
 
     def test_two_by_two_aref_spreads_across_macros(self, tmp_path):
@@ -286,7 +378,7 @@ class TestGeometryMatrix:
             with LayoutDB.open(path) as database:
                 batch = database.query([LAYER], macro.query_box).materialize_intersecting()
             problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
-                                      dark_box=BOUNDS)
+                                      data_bounds=BOUNDS)
             _assert_problem_invariants(problem, batch.region(LAYER))
             owners_per_macro[macro.macro_id] = int((problem.owner_indices >= 0).sum())
         # occurrence 中心分别位于 (80,40)、(120,40)、(80,100)、(120,100)：
@@ -439,7 +531,7 @@ class TestReconstructionMidpoints:
         macro = _macros()[0]
         batch = RegionBatch({LAYER: self.RECT}, macro.query_box)
         problem = prepare_macro_problem(batch, LAYER, "clear", cfg, macro,
-                               dark_box=BOUNDS)
+                               data_bounds=BOUNDS)
         displacements = np.zeros(problem.segments.segment_count)
         geometry = problem.segments.materialize(None)
         bottom_ids = self._edge_mask(geometry, 1, 10)
@@ -500,7 +592,7 @@ class TestTopologyPreservation:
         with LayoutDB.open(path) as database:
             batch = database.query([LAYER], macro.query_box).materialize_intersecting()
         problem = prepare_macro_problem(batch, LAYER, "clear", CFG, macro,
-                                      dark_box=BOUNDS)
+                                      data_bounds=BOUNDS)
         assert problem.segments.segment_count > 0
         zeros = np.zeros(problem.segments.segment_count)
         assert np.all(problem.owner_indices >= -1)
@@ -517,7 +609,7 @@ class TestPreparationValidation:
                             DbuBox(0, 0, 20, 20))
         with pytest.raises(ValueError, match="query_box"):
             prepare_macro_problem(batch, LAYER, "clear", CFG,
-                                      _macros()[0], dark_box=BOUNDS)
+                                      _macros()[0], data_bounds=BOUNDS)
 
     def test_unknown_polarity_rejected(self):
         """未知极性字符串在准备入口即失败。"""
@@ -526,21 +618,23 @@ class TestPreparationValidation:
         batch = RegionBatch({LAYER: region}, macro.query_box)
         with pytest.raises(ValueError, match="极性"):
             prepare_macro_problem(batch, LAYER, "reverse", CFG, macro,
-                                      dark_box=BOUNDS)
+                                      data_bounds=BOUNDS)
 
 
-    def test_dark_box_roundtrip_and_version_bump(self, tmp_path):
-        """dark_box 随 NPZ 往返一致；版本 2 旧版（1）显式拒绝。"""
+    def test_npz_version_rejects_v1_and_v2(self, tmp_path):
+        """v3 现行；曾含 dark_box 的 v2 与 v1 均显式拒绝。"""
         problem = _problem(kdb.Region(kdb.Box(20, 20, 140, 60)), _macros()[0])
         path = problem.save(tmp_path / "p.npz")
-        loaded = MacroProblem.load(path)
-        assert loaded.dark_box == problem.dark_box == BOUNDS
+        loaded = MacroProblem.load(path)  # 现行版本往返成功
+        assert loaded.segments.segment_count == problem.segments.segment_count
         with np.load(path, allow_pickle=False) as data:
             arrays = {key: data[key] for key in data.files}
-        arrays["format_version"] = np.array([1], dtype=np.int32)
-        np.savez(tmp_path / "old.npz", **arrays)
-        with pytest.raises(ValueError, match="format version"):
-            MacroProblem.load(tmp_path / "old.npz")
+        assert "dark_box" not in arrays  # v3 已不含该键
+        for old in (1, 2):
+            arrays["format_version"] = np.array([old], dtype=np.int32)
+            np.savez(tmp_path / f"old{old}.npz", **arrays)
+            with pytest.raises(ValueError, match="format version"):
+                MacroProblem.load(tmp_path / f"old{old}.npz")
 
     def test_own_missing_from_owner_membership_rejected(self):
         """owner 不在该 core membership 时构造期拒绝（own⊆membership）。"""
@@ -559,7 +653,7 @@ class TestPreparationValidation:
         broken[segment] = outsider
         with pytest.raises(ValueError, match="membership"):
             MacroProblem(macro, problem.layer, problem.polarity,
-                         problem.fragmentation, problem.dark_box,
+                         problem.fragmentation,
                          problem.segments,
                          owner_indices=broken,
                          core_offsets=problem.core_offsets,
@@ -574,7 +668,7 @@ class TestPreparationValidation:
         owners[owners >= 0] = 0
         with pytest.raises(ValueError, match="membership"):
             MacroProblem(macro, problem.layer, problem.polarity,
-                         problem.fragmentation, problem.dark_box,
+                         problem.fragmentation,
                          problem.segments,
                          owner_indices=owners,
                          core_offsets=np.zeros(macro.core_count + 1, dtype=np.int64),
@@ -585,7 +679,7 @@ class TestPreparationValidation:
         macro = _macros()[0]
         problem = _problem(kdb.Region(kdb.Box(20, 20, 140, 60)), macro)
         empty = MacroProblem(macro, problem.layer, problem.polarity,
-                             problem.fragmentation, problem.dark_box,
+                             problem.fragmentation,
                              problem.segments,
                              owner_indices=np.full(
                                  problem.segments.segment_count, -1, dtype=np.int32),

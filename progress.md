@@ -516,3 +516,9 @@
   3 档 × 正负板 12 份；双板 target_u8 逐位等价、环带两极性恒 0、ILT
   单宏 + MB-OPC 四宏双极性 smoke。规格入 reticle_build_plan.md §10，
   CLAUDE.md 测试与数据节同步（含 gcd_45nm→gcd_30um 过期项修正）。
+
+- 入口改名同步（用户 5f2a964 改名四入口后补全）：4 个 runner 测试 import
+  与直跑路径、4 个入口 usage 自引用、CLAUDE.md 命令块（gradient 改新名
+  并补三个 ILT 入口）、10 份活跃文档（dataflow 五文件/system/data_model/
+  contracts.ilt/两手册）；doc/changes、doc/archive、.planning 与 findings
+  历史条目按规则保留旧名。全量门禁恢复 683 passed + 1 skipped。

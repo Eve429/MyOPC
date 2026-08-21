@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-import main.run_gradient_mbopc as workflow
+import main.run_mbopc_gradient as workflow
 from layout import DbuBox, LayerSpec, LayoutDB
 from main.configuration import load_config
 
@@ -492,7 +492,7 @@ class TestGradientDirectExecution:
         """从仓库外直跑梯度入口退出码 0 并产出全部关键标记。"""
         gds = _write_gds(tmp_path)  # 生成版图
         config = _write_config(tmp_path, gds, macro_grid="[2, 2]")  # 多 macro
-        script = project_root / "main" / "run_gradient_mbopc.py"  # 入口
+        script = project_root / "main" / "run_mbopc_gradient.py"  # 入口
         completed = self._run(script, config, tmp_path)  # cwd=仓库外
         assert completed.returncode == 0, completed.stderr  # 正常退出
         for marker in ("梯度 MB-OPC 执行完成", "device：",  # 摘要标记
@@ -501,7 +501,7 @@ class TestGradientDirectExecution:
 
     def test_missing_argument_returns_usage(self, project_root):
         """无参数运行打印用法并以退出码 2 结束。"""
-        script = project_root / "main" / "run_gradient_mbopc.py"  # 入口
+        script = project_root / "main" / "run_mbopc_gradient.py"  # 入口
         completed = subprocess.run(  # 无参数直跑
             [sys.executable, str(script)], cwd=project_root,
             capture_output=True, text=True, timeout=60, check=False)

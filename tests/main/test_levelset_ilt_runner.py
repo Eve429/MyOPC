@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import main._ilt_workflow as ilt_workflow
-import main.run_levelset_ilt as levelset_workflow
+import main.run_ilt_levelset as levelset_workflow
 import opc.iteration.ilt.levelset as levelset_module
 from main import configuration
 
@@ -146,7 +146,7 @@ class TestConfigAndEntry:
         config_path = _write_config(tmp_path / "sub", layout_path)
         result = subprocess.run(
             [sys.executable, str(Path(__file__).resolve().parents[2]
-                                 / "main" / "run_levelset_ilt.py"),
+                                 / "main" / "run_ilt_levelset.py"),
              str(config_path)],
             cwd=str(tmp_path), capture_output=True, text=True,
             timeout=300, check=False)

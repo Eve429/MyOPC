@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import main._ilt_workflow as ilt_workflow
-import main.run_simple_ilt as simple_workflow
+import main.run_ilt_simple as simple_workflow
 from layout import DbuBox, LayerSpec, LayoutDB
 from main import configuration
 from main.configuration import load_config
@@ -197,7 +197,7 @@ class TestConfigAndEntry:
         config_path = _write_config(tmp_path / "sub", layout_path)
         result = subprocess.run(
             [sys.executable, str(Path(__file__).resolve().parents[2]
-                                 / "main" / "run_simple_ilt.py"),
+                                 / "main" / "run_ilt_simple.py"),
              str(config_path)],
             cwd=str(tmp_path), capture_output=True, text=True,
             timeout=300, check=False)

@@ -3,13 +3,13 @@
 owner 边段法向位移的连续优化：midpoint STE 代理梯度、四项连续 loss
 （nominal/process/PVBand + 可选 EPE profile）、同步 Adam。
 
-入口：`python main/run_gradient_mbopc.py config/gradient_mbopc.toml`
+入口：`python main/run_mbopc_gradient.py config/gradient_mbopc.toml`
 
 ## 函数级流向
 
 ```text
-main/run_gradient_mbopc.py::main
-└─ main/run_gradient_mbopc.py::run_gradient_mbopc（GRADIENT_METHOD 适配器同文件）
+main/run_mbopc_gradient.py::main
+└─ main/run_mbopc_gradient.py::run_gradient_mbopc（GRADIENT_METHOD 适配器同文件）
    └─ main/_mbopc_workflow.py::run_mbopc_workflow(GRADIENT_METHOD)
       ├─ configuration.py::load_config（[gradient] 段，尾部可选
       │    weight_epe=0.0 / epe_steepness=4.0，旧 TOML 兼容）

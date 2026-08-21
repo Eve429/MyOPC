@@ -43,7 +43,7 @@
 | 产物 | 生产者 | 内容要点 |
 |---|---|---|
 | `problems/<macro_id>.npz` | `MacroProblem.save` | 全参考数组，format v1，无 dbu_um |
-| `macros/<id>/result.npz`、`gradient_result.npz` | `run_mbopc.py` / `run_gradient_mbopc.py` 入口（适配器已并入） | best_round/best_state_index、best_displacements、stop_reason |
+| `macros/<id>/result.npz`、`gradient_result.npz` | `run_mbopc.py` / `run_mbopc_gradient.py` 入口（适配器已并入） | best_round/best_state_index、best_displacements、stop_reason |
 | `macros/<id>/metrics.json`、`gradient_metrics.json` | 同上 | 逐轮/逐状态标量 + stop_detail |
 | `round_*/results/*.npz` | `run_round` | 累计位移 + 每核 transmission（验证管线） |
 | `final.gds` | `merge_macro_results` | ownership 权威覆盖，single_cell/macro_cells；空 macro 候选按零覆盖容忍 |

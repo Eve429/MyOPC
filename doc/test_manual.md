@@ -81,7 +81,7 @@ manifest。gcd_45nm 默认参数 CUDA 实测约 126s（multi 870 tile，EPE 逐�
 ### 梯度入口 smoke（2026-08-17）
 
 ```bash
-D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradient_mbopc.toml
+D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_gradient.py config/gradient_mbopc.toml
 ```
 
 通过标准：退出码 0；摘要含 device、loss 权重、每 macro

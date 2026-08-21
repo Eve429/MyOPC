@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import main._ilt_workflow as ilt_workflow
-import main.run_curvmulti_ilt as curvmulti_workflow
+import main.run_ilt_curvmulti as curvmulti_workflow
 
 
 def _write_gds(tmp_path):
@@ -162,7 +162,7 @@ class TestConfigAndEntry:
         config_path = _write_config(tmp_path / "sub", layout_path)
         result = subprocess.run(
             [sys.executable, str(Path(__file__).resolve().parents[2]
-                                 / "main" / "run_curvmulti_ilt.py"),
+                                 / "main" / "run_ilt_curvmulti.py"),
              str(config_path)],
             cwd=str(tmp_path), capture_output=True, text=True,
             timeout=300, check=False)

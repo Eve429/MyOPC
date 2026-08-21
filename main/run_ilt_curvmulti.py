@@ -40,7 +40,7 @@ def run_curvmulti_ilt(config_path: str | Path) -> dict:
 def main() -> int:
     """读取可选位置参数 config（默认仓库内 config/curvmulti_ilt.toml）并执行。"""
     if len(sys.argv) > 2:  # 参数数量不符
-        print("用法：python main/run_curvmulti_ilt.py [config.toml]",
+        print("用法：python main/run_ilt_curvmulti.py [config.toml]",
               file=sys.stderr)
         return 2  # 参数错误退出码
     config = (sys.argv[1] if len(sys.argv) == 2

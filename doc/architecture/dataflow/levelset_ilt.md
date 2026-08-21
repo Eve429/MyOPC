@@ -4,13 +4,13 @@
 once/macro、macro 域唯一 |grad(phi)| 代理系数、`-|grad|·上游` STE、
 跨 core raw-sum 梯度、屏障后单次 Adam。
 
-入口：`python main/run_levelset_ilt.py [config/levelset_ilt.toml]`
+入口：`python main/run_ilt_levelset.py [config/levelset_ilt.toml]`
 
 ## 函数级流向
 
 ```text
-main/run_levelset_ilt.py::main（可选位置参数，默认 config/levelset_ilt.toml）
-└─ main/run_levelset_ilt.py::run_levelset_ilt（LEVELSET_ILT_METHOD 适配器同文件）
+main/run_ilt_levelset.py::main（可选位置参数，默认 config/levelset_ilt.toml）
+└─ main/run_ilt_levelset.py::run_levelset_ilt（LEVELSET_ILT_METHOD 适配器同文件）
    └─ main/_ilt_workflow.py::run_ilt_workflow(LEVELSET_ILT_METHOD)
       ├─ configuration.py::load_config（[layout][partition][lithography]
       │    [levelset_ilt][output]；不读取 [edge]）

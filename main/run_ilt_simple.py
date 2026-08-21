@@ -41,7 +41,7 @@ def run_simple_ilt(config_path: str | Path) -> dict:
 def main() -> int:
     """读取可选位置参数 config（默认仓库内 config/simple_ilt.toml）并执行。"""
     if len(sys.argv) > 2:  # 参数数量不符
-        print("用法：python main/run_simple_ilt.py [config.toml]", file=sys.stderr)
+        print("用法：python main/run_ilt_simple.py [config.toml]", file=sys.stderr)
         return 2  # 参数错误退出码
     config = sys.argv[1] if len(sys.argv) == 2 else str(_REPO_ROOT / "config" / "simple_ilt.toml")
     summary = run_simple_ilt(config)  # 完整像素 ILT 流程

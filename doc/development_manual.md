@@ -42,7 +42,7 @@ as_points）、`io`（atomic_write_json/atomic_write_npz）、`units`（exact_db
 准备/候选写出/最终合并/最终光刻留档）；MB-OPC 两方法共用
 `main/_mbopc_workflow.py` 的公共生命周期（配置加载→prepare→device/model/
 cache→macro 循环→merge→留档→summary），算法差异以 `MBOPCMethod` 适配器
-注入：适配器并入入口文件 `main/run_mbopc.py` 与 `main/run_gradient_mbopc.py`，
+注入：适配器并入入口文件 `main/run_mbopc.py` 与 `main/run_mbopc_gradient.py`，
 只保留各自的 optimizer 与序列化/摘要钩子（2026-08-18 拆分防大 workflow
 复燃，同日两轮上提公共层——solve 包装与生命周期均公共化，注入式而非
 机械合并；2026-08-20 适配器并入各自入口，新增方法在入口文件内写适配器）。
@@ -168,7 +168,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
 
 ```bash
 # 单入口、任意 macro 数（config 即 gcd_45nm 2×2 smoke）
-D:/app/miniforge/envs/myopc/python.exe main/run_gradient_mbopc.py config/gradient_mbopc.toml
+D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_gradient.py config/gradient_mbopc.toml
 ```
 
 - **算法**：`optimize_gradient_macro()` —— KLayout 精确面积覆盖率 hard 前向 +
@@ -229,7 +229,7 @@ binary 终评、merge 恰一次）。
 
 ```bash
 # corners_unit smoke（默认参数即此配置；也可省略参数）
-D:/app/miniforge/envs/myopc/python.exe main/run_simple_ilt.py config/simple_ilt.toml
+D:/app/miniforge/envs/myopc/python.exe main/run_ilt_simple.py config/simple_ilt.toml
 ```
 
 关键约束：目标层 bbox 宽高必须是 pixel 整数倍（比 edge 管线严）；空 macro
@@ -248,7 +248,7 @@ context 为 hard `target>=0.5`（与 Simple 的 soft σ(β(2T−1)) 不同）。
 
 ```bash
 # corners_unit smoke（N=2 → 3 个评价状态）
-D:/app/miniforge/envs/myopc/python.exe main/run_levelset_ilt.py config/levelset_ilt.toml
+D:/app/miniforge/envs/myopc/python.exe main/run_ilt_levelset.py config/levelset_ilt.toml
 ```
 
 约束：`context_dbu >= pixel_dbu` 无条件入口拒绝（与 curvature_weight
@@ -275,7 +275,7 @@ area/跨 stage warm-start nearest、曲率作用于 printed nominal wafer
 （DEC：不建共享 ILTConfig）；无 optimization_mask（ownership 即可动域）。
 
 ```bash
-D:/app/miniforge/envs/myopc/python.exe main/run_curvmulti_ilt.py config/curvmulti_ilt.toml
+D:/app/miniforge/envs/myopc/python.exe main/run_ilt_curvmulti.py config/curvmulti_ilt.toml
 ```
 
 corners_unit 对照 smoke（GTX 1650，CUDA）：CurvMulti scales=[5,1]、

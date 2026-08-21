@@ -6,8 +6,8 @@ context、merge 恰一次）；本文只描述 CurvMulti 特有的参数化与 s
 ## 函数级流向
 
 ```text
-main/run_curvmulti_ilt.py::main（可选位置参数，默认 config/curvmulti_ilt.toml）
-└─ main/run_curvmulti_ilt.py::run_curvmulti_ilt（CURVMULTI_ILT_METHOD 适配器同文件）
+main/run_ilt_curvmulti.py::main（可选位置参数，默认 config/curvmulti_ilt.toml）
+└─ main/run_ilt_curvmulti.py::run_curvmulti_ilt（CURVMULTI_ILT_METHOD 适配器同文件）
    └─ main/_ilt_workflow.py::run_ilt_workflow(CURVMULTI_ILT_METHOD)
       ├─ configuration.py::load_config（[layout][partition][lithography]
       │    [curvmulti_ilt][output]；不读取 [edge]）

@@ -100,7 +100,7 @@ def main() -> int:
     """读取唯一位置参数 config，运行梯度 MB-OPC 流程并打印中文摘要。"""
     if len(sys.argv) != 2:  # 参数数量不符
         # 提示
-        print("用法：python main/run_gradient_mbopc.py <config.toml>",
+        print("用法：python main/run_mbopc_gradient.py <config.toml>",
               file=sys.stderr)
         return 2  # 参数错误退出码
     summary = run_gradient_mbopc(sys.argv[1])  # 任意 macro 数的完整流程

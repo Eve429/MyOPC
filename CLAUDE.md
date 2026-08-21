@@ -45,7 +45,10 @@ python -m pytest -q tests
 python main/run_macro_pipeline.py config/macro_pipeline.toml        # 双轮 ±2nm 验证管线
 python main/run_single_pass.py config/single_pass.toml              # 单遍偏置扩张
 python main/run_mbopc.py config/mbopc_single_macro.toml        # simple MB-OPC（macro 数由网格决定）
-python main/run_gradient_mbopc.py config/gradient_mbopc.toml     # gradient MB-OPC
+python main/run_mbopc_gradient.py config/gradient_mbopc.toml  # gradient MB-OPC
+python main/run_ilt_simple.py config/simple_ilt.toml           # Simple ILT（像素型）
+python main/run_ilt_levelset.py config/levelset_ilt.toml       # LevelSet ILT
+python main/run_ilt_curvmulti.py config/curvmulti_ilt.toml     # CurvMulti ILT
 python main/main_test_lithography.py                                # 光刻模型演示
 ```
 

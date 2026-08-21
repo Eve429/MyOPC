@@ -188,9 +188,9 @@ build_fixed_context_canvas)` 五字段注入；`run_ilt_workflow` 负责 prepare
 公共 workflow 前仅从同一 TOML 的 `LithographyConfig.pixel_nm` 读取一次物理
 尺度并绑定到 solver；公共 `ILTMethod` 仍不感知 phi、sigmoid 或方法数学字段。
 
-入口：`python main/run_simple_ilt.py [config.toml]`（默认
-`config/simple_ilt.toml`）；`python main/run_levelset_ilt.py [config.toml]`
-（默认 `config/levelset_ilt.toml`）；`python main/run_curvmulti_ilt.py
+入口：`python main/run_ilt_simple.py [config.toml]`（默认
+`config/simple_ilt.toml`）；`python main/run_ilt_levelset.py [config.toml]`
+（默认 `config/levelset_ilt.toml`）；`python main/run_ilt_curvmulti.py
 [config.toml]`（默认 `config/curvmulti_ilt.toml`）。
 
 ## 已知限制

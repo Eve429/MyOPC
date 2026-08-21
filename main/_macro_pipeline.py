@@ -56,9 +56,9 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
                          dbu_nm: Decimal) -> DbuBox:
     """解析处理框：双 None 用 layer bbox；box 直用；size 以 layer bbox 居中推导。
 
-    环带（field 减 layer bbox 的无图形区）光学语义 = 极性背景外推
-    （clear→不透光、opaque→透光），由 prepare 的 transmission/coverage
-    变换天然给出；处理框绝不作为图形进入 Region（00_PAST field_box
+    环带（field 减 layer bbox 的无图形区）光学语义 = 恒不透光（两极性
+    统一——光学开孔边界 = layer 数据包络，即 dark_bounds；2026-08-21
+    用户裁定修订）；处理框绝不作为图形进入 Region（00_PAST field_box
     契约——不产生虚假可动边）。严格大于 layer bbox 时给出 warning。
     """
     if layout.field_box_nm is not None:

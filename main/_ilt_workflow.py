@@ -87,7 +87,7 @@ def prepare_pixel_problems(
         if layer_bounds is None:  # 目标层无图形
             raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
         # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化；
-        # 环带（field − layer bbox）transmission 由极性背景外推给出
+        # 环带（field − layer bbox）恒不透光（dark_bounds=layer 包络给出）
         bounds = resolve_field_bounds(layout, layer_bounds, dbu_nm)
         # 网格换算不含边段参数；像素整除与画布容量在 plan_macros 内校验
         grid = resolve_grid_config(partition, litho, dbu_nm)

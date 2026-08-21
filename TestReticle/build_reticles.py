@@ -3,12 +3,16 @@
 每个场景构建一次相对坐标 Region，成对写出正负两份掩膜：`_clear.gds`
 为原图形（配 config polarity="clear"，图形即透光区）；`_opaque.gds` 为
 图形包围盒内的补区（配 polarity="opaque"，图形=不透光材料，原图形处
-被挖空即透光）。两份在各自极性下表达同一透光目标。仅依赖 klayout.db，
-任何工作目录可直跑：
+被挖空即透光）。两份在各自极性下表达同一透光目标。
 
-    python TestReticle/build_reticles.py            # 生成全部 10 场景 ×2
+50nm 定尺寸组（p50_1024/p50_2048 × dense/mid/loose 档）另以固定设计区框
+（边长=掩膜尺寸）为负板补区基准，成对写在子目录 p50_<边长>/ 下，写后
+读回自检（详见 build plan p50 章）。仅依赖 klayout.db，任何工作目录可直跑：
+
+    python TestReticle/build_reticles.py            # 全部 10 场景 + 6 档 p50
     python TestReticle/build_reticles.py --list     # 只列清单
     python TestReticle/build_reticles.py --only lines_dense_unit
+    python TestReticle/build_reticles.py --p50      # 只生成 50nm 定尺寸组
 """
 
 import argparse
@@ -245,6 +249,139 @@ BUILDERS: dict[str, tuple] = {
 }
 
 
+# ---------------------------------------------------------------- 50nm 定尺寸组
+# 两组定尺寸掩膜（p50_1024 / p50_2048）：50nm 制程、设计区边长精确
+# 1.024/2.048µm（= 4nm pixel 下 256/512px，对应单宏与 [2,2] 四宏网格档）、
+# 图形内缩 64nm 边框空区。与上面"场景"系的本质差别：负板补区基准是固定
+# 设计区框而非图形包围盒——负板恒带 64nm 铬环框、包络恒为整版，正板包络
+# = 图形区；两板配 field_size（=掩膜尺寸）运行即得同一网格、环带恒不透光。
+# 间距档位是唯一自由度：结构族固定，三档变体各成对写出。
+
+P50_CD = 50      # 50nm 制程特征尺寸，全部结构共用
+P50_MARGIN = 64  # 边框空区：64 是常用 pixel（4/8/16nm）的公倍数，包络边恒整像素对齐
+P50_SIZES = (1024, 2048)  # 设计区边长 nm；正板图形区 = (64,64)-(size-64,size-64)
+P50_VARIANTS: dict[str, dict[str, int]] = {
+    "dense": {"pitch": 100, "via_pitch": 100, "t2t": 50},   # 密集档 L/S=1:1
+    "mid": {"pitch": 150, "via_pitch": 150, "t2t": 100},    # 中间档 1:2
+    "loose": {"pitch": 200, "via_pitch": 250, "t2t": 150},  # 稀疏档 孤立倾向
+}
+
+
+def _p50_vlines(region: kdb.Region, x0: int, y0: int, y1: int,
+                count: int, pitch: int) -> None:
+    """竖线阵：count 条 CD 宽竖线，首条左边 x0，全部贯穿 [y0,y1]。"""
+    for index in range(count):
+        _vline(region, x0 + index * pitch, y0, y1, P50_CD)
+
+
+def _p50_hlines(region: kdb.Region, x0: int, x1: int, y_top: int,
+                count: int, pitch: int) -> None:
+    """横线阵：count 条 CD 高横线贯穿 [x0,x1]，首条顶边 y_top 向下排。"""
+    for index in range(count):
+        _hline(region, x0, x1, y_top - P50_CD - index * pitch, P50_CD)
+
+
+def _p50_via_array(region: kdb.Region, x0: int, y0: int,
+                   cols: int, rows: int, pitch: int) -> None:
+    """方孔阵：cols×rows 个 CD 方孔，中心距 pitch，左下角孔在 (x0,y0)。"""
+    for row in range(rows):
+        for col in range(cols):
+            x, y = x0 + col * pitch, y0 + row * pitch
+            _box(region, x, y, x + P50_CD, y + P50_CD)
+
+
+def _shapes_p50_sampler_896(variant: dict[str, int]) -> kdb.Region:
+    """组 1 图形区 (64,64)-(960,960) 综合采样（组 2 左上象限原样复用）。
+
+    功能带布局：竖线阵贯穿全高（撑住包络左/下/上）；孔阵贴右下、横线阵
+    贴右上（撑住右）；45° 三角卡在两阵之间的空带；x≈440..576 走廊自下而
+    上放孤立孔、L 拐角、竖直对接线端。条数由带宽按档位 pitch 整除自适应
+    （密集档多、稀疏档少），各族互不接触（写出前断言 merge 计数不变）。
+    """
+    pitch, via_pitch, t2t = (variant["pitch"], variant["via_pitch"],
+                             variant["t2t"])
+    left = bottom = P50_MARGIN
+    right = top = 1024 - P50_MARGIN
+    region = kdb.Region()
+    # 竖线阵：左带全高，条数按左带宽 448 铺满
+    _p50_vlines(region, left, bottom, top, (448 - P50_CD) // pitch + 1, pitch)
+    # 孔阵：右下锚定（右缘 960、底 64）；行数以 45° 三角带底 y=440 为界
+    via_cols = (384 - P50_CD) // via_pitch + 1
+    via_rows = (440 - P50_CD - bottom) // via_pitch + 1
+    _p50_via_array(region, right - (via_cols - 1) * via_pitch - P50_CD,
+                   bottom, via_cols, via_rows, via_pitch)
+    # 横线阵：右上锚定（右缘 960、顶边 960）；最低线底边以三角顶点 590 为界
+    _p50_hlines(region, 576, right, top, (910 - 610) // pitch + 1, pitch)
+    # 走廊结构（x 440..576）：孤立孔；L 拐角整块单多边形（竖臂 480..530
+    # y300..450 + 顶接横臂至 580，共边拼装会破坏"各族互不接触"自检）
+    _box(region, 480, 150, 480 + P50_CD, 200)
+    region.insert(kdb.Polygon([kdb.Point(480, 300), kdb.Point(480, 450),
+                               kdb.Point(580, 450), kdb.Point(580, 400),
+                               kdb.Point(530, 400), kdb.Point(530, 300)]))
+    # 竖直对接线端：gap = t2t 档位参数，两端线长随档位自然变化
+    _vline(region, 480, 500, 680, P50_CD)
+    _vline(region, 480, 680 + t2t, 900, P50_CD)
+    # 45° 直角三角：卡在孔阵顶与横线阵底之间的空带（三档位均成立）
+    region.insert(kdb.Polygon([kdb.Point(600, 440), kdb.Point(750, 440),
+                               kdb.Point(600, 590)]))
+    return region
+
+
+def _shapes_p50_2048(variant: dict[str, int]) -> kdb.Region:
+    """组 2 图形区 (64,64)-(1984,1984)：左上象限复刻组 1，其余三象限扩展。
+
+    右上：孤立竖线 + 顶部锚定横线阵 + 底部水平对接线端；左下：大孔阵
+    （左下锚定，列数上限 8 给角上孤立孔留位）+ 触顶孤立孔；右下：L/T/
+    十字/U 拐角家族（错臂/分段拼装互不相叠）+ 45° 与 2:1 斜边三角，U 竖臂
+    延至 y=1984 撑住包络顶。跨尺寸对照：同变体左上象限与组 1 逐位相同，
+    差异只在宏划分（单宏 vs [2,2] 四宏）。
+    """
+    pitch, via_pitch, t2t = (variant["pitch"], variant["via_pitch"],
+                             variant["t2t"])
+    region = kdb.Region()
+    region.insert(_shapes_p50_sampler_896(variant))
+    # 右上象限（x 1024..1984, y 64..960）：孤立竖线、顶锚横线阵、底部对接
+    _vline(region, 1088, 64, 960, P50_CD)
+    _p50_hlines(region, 1180, 1984, 960, (910 - 190) // pitch + 1, pitch)
+    _hline(region, 1180, 1560, 104, P50_CD)
+    _hline(region, 1560 + t2t, 1984, 104, P50_CD)
+    # 左下象限（x 64..960, y 1024..1984）：大孔阵 + 右上角触顶孤立孔
+    cols = min((896 - P50_CD) // via_pitch + 1, 8)
+    _p50_via_array(region, 64, 1088, cols, cols, via_pitch)
+    _box(region, 910, 1934, 960, 1984)
+    # 右下象限（x 1024..1984, y 1024..1984）：拐角家族，臂长 300，整块
+    # 单多边形构造（分臂矩形共边拼接会破坏"各族互不接触"自检）
+    region.insert(kdb.Polygon([  # L：竖臂 1088..1138 + 底接横臂至 1388
+        kdb.Point(1088, 1088), kdb.Point(1388, 1088), kdb.Point(1388, 1138),
+        kdb.Point(1138, 1138), kdb.Point(1138, 1388), kdb.Point(1088, 1388)]))
+    region.insert(kdb.Polygon([  # T：横臂 1600..1900 + 中点下接竖臂至 1388
+        kdb.Point(1600, 1088), kdb.Point(1900, 1088), kdb.Point(1900, 1138),
+        kdb.Point(1775, 1138), kdb.Point(1775, 1388), kdb.Point(1725, 1388),
+        kdb.Point(1725, 1138), kdb.Point(1600, 1138)]))
+    region.insert(kdb.Polygon([  # 十字：竖臂 1213..1263 贯穿，横臂 1088..1388 居中
+        kdb.Point(1213, 1600), kdb.Point(1263, 1600), kdb.Point(1263, 1725),
+        kdb.Point(1388, 1725), kdb.Point(1388, 1775), kdb.Point(1263, 1775),
+        kdb.Point(1263, 1900), kdb.Point(1213, 1900), kdb.Point(1213, 1775),
+        kdb.Point(1088, 1775), kdb.Point(1088, 1725), kdb.Point(1213, 1725)]))
+    region.insert(kdb.Polygon([  # U：两竖臂 1600/1850 延至 1984 撑包络顶 + 底横
+        kdb.Point(1600, 1600), kdb.Point(1900, 1600), kdb.Point(1900, 1984),
+        kdb.Point(1850, 1984), kdb.Point(1850, 1650), kdb.Point(1650, 1650),
+        kdb.Point(1650, 1984), kdb.Point(1600, 1984)]))
+    # 斜边：45° 三角（十字与 U 之间空档）+ 2:1 坡三角（T 与 U 之间空档）
+    region.insert(kdb.Polygon([kdb.Point(1440, 1700), kdb.Point(1590, 1700),
+                               kdb.Point(1440, 1850)]))
+    region.insert(kdb.Polygon([kdb.Point(1650, 1420), kdb.Point(1930, 1420),
+                               kdb.Point(1650, 1560)]))
+    return region
+
+
+# 50nm 组注册表：名字 → (设计区边长, 档位名)。名字即产物文件名前缀与 --only 键。
+P50_GROUPS: dict[str, tuple[int, str]] = {
+    f"p50_{size}_{variant}": (size, variant)
+    for size in P50_SIZES for variant in P50_VARIANTS
+}
+
+
 def _write_pair(name: str, region: kdb.Region) -> None:
     """把一个场景的 Region 写出正负两份掩膜并打印统计。
 
@@ -270,24 +407,101 @@ def _write_pair(name: str, region: kdb.Region) -> None:
               f"{box.height() / 1000:.1f}um shapes={shapes.count()}")
 
 
+def _verify_p50_gds(path: Path, size: int, polarity: str) -> kdb.Region:
+    """读回单份 p50 GDS 校验身份与包络，返回 merge 后图形供互补终检。"""
+    layout = kdb.Layout()
+    layout.read(str(path))
+    if layout.dbu != DBU_UM:
+        raise SystemExit(f"{path.name}: 读回 dbu={layout.dbu} != {DBU_UM}")
+    tops = layout.top_cells()
+    if len(tops) != 1 or tops[0].name != "TOP":
+        raise SystemExit(f"{path.name}: 顶层不是唯一 TOP")
+    indices = list(layout.layer_indexes())
+    if len(indices) != 1 or layout.get_info(indices[0]) != kdb.LayerInfo(*LAYER):
+        raise SystemExit(f"{path.name}: 图形层不是唯一 {LAYER}")
+    region = kdb.Region(tops[0].begin_shapes_rec(indices[0]))
+    region.merge()
+    # 正板包络 = 图形区（内缩 MARGIN）；负板自带铬环框、包络 = 整版
+    expected = (kdb.Box(P50_MARGIN, P50_MARGIN, size - P50_MARGIN,
+                        size - P50_MARGIN) if polarity == "clear"
+                else kdb.Box(0, 0, size, size))
+    if region.bbox() != expected:
+        raise SystemExit(f"{path.name}: 包络 {region.bbox()} != 期望 {expected}")
+    box = region.bbox()
+    print(f"{path.name:34s} bbox=({box.left},{box.bottom})-({box.right},{box.top}) "
+          f"size={box.width() / 1000:.3f}x{box.height() / 1000:.3f}um "
+          f"shapes={region.count()}")
+    return region
+
+
+def _write_p50_pair(size: int, variant: str) -> None:
+    """生成一档 p50 掩膜：构造图形、成对写出、读回自检（失败即非零退出）。
+
+    与场景系不同，负板补区相对固定设计区框（而非图形包围盒）——负板恒带
+    64nm 铬环框，正负板在各自极性下透光区逐位互补（终检断言并集恰为设计
+    区框、交集为空），这是"真互补"的机器证明，不依赖人工核对。
+    """
+    region = (_shapes_p50_sampler_896(P50_VARIANTS[variant]) if size == 1024
+              else _shapes_p50_2048(P50_VARIANTS[variant]))
+    # 写前自检：包络恰为图形区（布局必须撑满四边），结构族互不接触
+    pattern = kdb.Box(P50_MARGIN, P50_MARGIN, size - P50_MARGIN, size - P50_MARGIN)
+    if region.bbox() != pattern:
+        raise SystemExit(f"p50_{size}_{variant}: 图形包络 {region.bbox()} "
+                         f"!= 图形区 {pattern}")
+    if region.merged().count() != region.count():
+        raise SystemExit(f"p50_{size}_{variant}: 结构族存在重叠/共边")
+    frame = kdb.Region(kdb.Box(0, 0, size, size))
+    variants = (("clear", region), ("opaque", frame - region))
+    out_dir = _OUTPUT_DIR / f"p50_{size}"
+    out_dir.mkdir(exist_ok=True)
+    paths = {}
+    for polarity, shapes in variants:
+        layout = kdb.Layout()
+        layout.dbu = DBU_UM
+        top = layout.create_cell("TOP")
+        shapes.insert_into(layout, top.cell_index(), layout.layer(*LAYER))
+        path = out_dir / f"p50_{size}_{variant}_{polarity}.gds"
+        layout.write(str(path))
+        paths[polarity] = path
+    clear = _verify_p50_gds(paths["clear"], size, "clear")
+    opaque = _verify_p50_gds(paths["opaque"], size, "opaque")
+    if (clear & opaque).area() != 0:
+        raise SystemExit(f"p50_{size}_{variant}: 正负板图形相交")
+    if ((clear + opaque) ^ frame).area() != 0:
+        raise SystemExit(f"p50_{size}_{variant}: 正负板并集 != 设计区框")
+
+
 def main() -> int:
     """按命令行参数生成版图集并逐份打印统计。"""
     parser = argparse.ArgumentParser(
         description="TestReticle 测试版图集生成器（规格见 reticle_build_plan.md）")
     parser.add_argument("--list", action="store_true",
                         help="只列出场景清单，不生成")
-    parser.add_argument("--only", choices=sorted(BUILDERS),
-                        help="只生成一个场景（同样成对产出）")
+    parser.add_argument("--p50", action="store_true",
+                        help="只生成 50nm 定尺寸组（p50_1024/p50_2048）")
+    parser.add_argument("--only", choices=sorted({*BUILDERS, *P50_GROUPS}),
+                        help="只生成一个场景或一档 p50 掩膜（同样成对产出）")
     arguments = parser.parse_args()
     if arguments.list:
         for name, (_, doc) in BUILDERS.items():
             print(f"{name:22s} {doc}")
+        for name, (size, variant) in P50_GROUPS.items():
+            print(f"{name:22s} 50nm 定尺寸组 {size}nm {variant} 档")
         return 0
-    selected = {arguments.only: BUILDERS[arguments.only]} if arguments.only \
-        else BUILDERS
-    for name, (builder, _) in selected.items():
+    if arguments.only:
+        if arguments.only in BUILDERS:
+            _write_pair(arguments.only, BUILDERS[arguments.only][0]())
+        else:
+            size, variant = P50_GROUPS[arguments.only]
+            _write_p50_pair(size, variant)
+        return 0
+    legacy = {} if arguments.p50 else BUILDERS
+    for name, (builder, _) in legacy.items():
         _write_pair(name, builder())
-    print(f"完成：{len(selected)} 场景 × {len(POLARITIES)} 份 → {_OUTPUT_DIR}")
+    for size, variant in P50_GROUPS.values():
+        _write_p50_pair(size, variant)
+    print(f"完成：{len(legacy)} 场景 + {len(P50_GROUPS)} 档 p50 × "
+          f"{len(POLARITIES)} 份 → {_OUTPUT_DIR}")
     return 0
 
 

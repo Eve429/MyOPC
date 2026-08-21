@@ -10,7 +10,7 @@ MyOPC：面向 OPC（光学邻近效应校正，半导体光刻）的层级版�
 
 **旧代码库整体归档于 `00_PAST/`（只读参照）；仓库根从零重建，分支 `migration`，全量 683 用例绿。**
 
-- **迁移进度**（细节见根目录 `task_plan.md`）：layout ✅、geometry ✅、opc.input(+edge) 重构为 Macro–Core 管线 ✅、lithography（ICCAD13，数值与 OpenILT 逐位一致）✅、evaluation（最小子集）✅、opc.iteration.mbopc（simple/gradient）✅、opc.iteration.ilt（Simple/LevelSet/CurvMulti 三方法 + 公共骨架）✅、main 编排层（验证管线/单遍/MB-OPC 双入口/三 ILT 入口）✅、配置统一 + field 处理框（field_box/field_size）+ 环带恒暗语义 ✅。**待迁移**：diffopc（需独立设计评审，不建空目录）、收尾审计。
+- **迁移进度**（细节见根目录 `task_plan.md`）：layout ✅、geometry ✅、opc.input(+edge) 重构为 Macro–Core 管线 ✅、lithography（ICCAD13，数值与 OpenILT 逐位一致）✅、evaluation（最小子集）✅、opc.iteration.mbopc（simple/gradient）✅、opc.iteration.ilt（Simple/LevelSet/CurvMulti 三方法 + 公共骨架）✅、main 编排层（验证管线/单遍/MB-OPC 双入口/三 ILT 入口）✅、配置统一 + field 处理框（field_box/field_size）+ 环带几何方案（负板 prepare 前补铬、正板天然暗，2026-08-22）✅。**待迁移**：diffopc（需独立设计评审，不建空目录）、收尾审计。
 - **`00_PAST/` 只读纪律（用户明令）**：不修改归档内任何内容；允许复制出来到新结构改写；确需修改归档必须先请示并获明确批准。
 - **既定工作模式**（lithography 与 mbopc 两轮先例）：用户写设计文档 → Claude 事实核对（对照 00_PAST 原文与当前代码，报告偏差与疑点）→ 用户批准 → Claude 按设计分批本地实施（每批测试先行、门禁全绿、独立 commit）。日常答疑与验证照旧；未被指派时不主动写新模块。
 - **权威参照文档**：旧系统调用图 `00_PAST/doc/function_call_architecture.md`（第 2–4、10 节）；新系统各批设计与报告在 `doc/`（macro_core/、lithography/、opc/）。

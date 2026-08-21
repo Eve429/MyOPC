@@ -1161,3 +1161,30 @@
   （反向 np.add.at——现行实现是 autograd 边自动累加）已顺带修正。
 - config/gradient_mbopc.toml 的 final_layout 文件名仍为 gcd_45nm_*（输入
   已是 gcd_30um）——config 属用户实验领地，仅立案提醒。
+
+## 环带几何方案交付事实（2026-08-22，用户裁定取代置零方案）
+
+- **方案**：正板 field 仅声明边框位置（环带无图形天然 coverage=0 恒暗）；
+  负板 prepare 前补画数据包络外到**各 macro 查询边界**的不透光图形
+  （query − data_bounds）+ workflow 层恰一次 warning（field 严格大于
+  包络时）；field 边界处因铬连续越过而不产生轮廓——外框边不成为可
+  优化段，field 外扩张带同暗。版本 bump 三处：MacroProblem NPZ v3
+  （拒 v1/v2）、plan.json v2、ilt_plan.json v2（均去 dark_box 键）。
+- **实施关键事实**：klayout Region `+` 的输出**表示层**保留与既有铬
+  共线相接的内部边（物理覆盖已融合），提边会多出虚假段（实测 48 个）
+  ——补铬后必须显式 `merged()`；`LayoutConfig` 直接构造时 polarity 可能
+  是裸字符串，警告条件须用 `==` 而非 `is`（str 枚举等值成立、恒等不
+  成立）；SIM102 合并 if 时 `and` 优先级高于 `or`，必须整体加括号
+  （否则 opaque 仍触发 clear 专属警告——单测当场抓出）。
+- **与置零方案的语义差异（golden 12 例全例可复现）**：仅数据包络边界
+  一圈像素的亚像素处理——旧半开像素中心裁切 vs 新真实部分覆盖
+  （rect clear 63px、tri opaque 83px/65536 量级；包络边对齐像素格
+  （≡0 mod pixel）则无差异）；环带/扩张带/包络内逐位同值。方案切换
+  前 golden 逐位一致预期不成立属固有差异，非缺陷；新方案 12 例 A/A
+  逐位确定（geom_final 基线）。
+- **输出语义变化**：负板输出（ILT 像素反演与 MB-OPC 边段路径）现均含
+  真实铬框（包络=field）——几何方案相对置零方案的关键增益；正板输出
+  仍=图形包络。用户场景实测：0.8µm 数据 + 2048 field 双极性全对
+  （警告文案/环带 0/孔透光/输出包络）。
+- 最终光刻留档对负板 tile 窗口同款补铬（context_box − 最终版图 bbox），
+  边界 PNG 无虚假亮环。

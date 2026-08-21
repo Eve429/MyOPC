@@ -9,18 +9,20 @@ workflow 契约供后续 Multilevel 复用。
 - 问题：`opc/input/pixel.py::PixelMacroProblem`（见
   `doc/contracts/opc_input.md` 像素宏问题节）——query box 一次栅格化的
   uint8 transmission、core 画布/参数索引映射、像素→Region 回写。
-- 场边界与处理框（2026-08-21 修订：环带恒暗）：`prepare_pixel_macro_problem`
+- 场边界与处理框（2026-08-22 修订：环带几何方案）：`prepare_pixel_macro_problem`
   双边界参数——`planning_bounds`（规划边界 = `resolve_field_bounds` 结果：
   `[layout].field_box_nm` 绝对坐标四元组（00_PAST `--box` 迁移等价）或
   `field_size_nm` 尺寸二元组（layer bbox 居中、奇 slack 归高侧），至多填
   一个、双空即 layer bbox；严格大于发 warning、不包含即 ValueError）与
-  `dark_bounds`（光学暗边界 = layer 数据包络）。三层语义：
-  数据包络内 = 正常极性变换（opaque 背景仍 255）；**环带（field − 数据
-  包络）与 field 外扩张带 = 恒 0（两极性统一，用户裁定）**；环带仍属
-  可训练域（监督 T=0）。暗边界只作用于 transmission 数组，绝不作为
-  图形进入 Region（不产生虚假可动边）。MB-OPC 路径同语义：
-  `rasterize_mask_canvas(..., dark_box=problem.dark_box)`，MacroProblem
-  持久化 dark_box（格式版本 2）。
+  `data_bounds`（全局数据包络 = layer bbox）。环带光学处理在 prepare 内
+  按极性完成：**opaque 在栅格化前补画包络外到查询边界的不透光图形**
+  （补区 coverage=1 → transmission=0，与既有铬共线相接处在布尔并+
+  merged() 中融合，不产生虚假可动边；补区使 field 边界处无轮廓、
+  外框边不成为可优化段）；clear 包络外无图形、coverage=0 天然恒暗。
+  数据包络内的极性变换不变（opaque 背景仍 255）；环带仍属 ILT 可
+  训练域（监督 T=0）。field 严格大于包络时 workflow 层恰一次
+  warning（opaque 补铬告知 / clear 天然暗说明）。MB-OPC 路径同语义
+  （`prepare_macro_problem(data_bounds=...)`，MacroProblem 格式版本 3）。
 - 记录：`opc/iteration/ilt/_common.py::ILTStateRecord`
   （state_index/stage_index/stage_state_index/scale + 四项损失 + 耗时；
   Simple/LevelSet 恒写 0/state_index/state_index/1）。

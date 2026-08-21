@@ -35,8 +35,7 @@ context ≥ max_displacement；core+2×context 的像素数 ≤ canvas（超限�
 
 ```python
 def rasterize_mask_canvas(region, context_box, pixel_dbu, canvas_pixels, *,
-                          polarity, dark_box: DbuBox | None = None
-                          ) -> np.float32[canvas, canvas]
+                          polarity) -> np.float32[canvas, canvas]
 def ownership_canvas(ownership_box, context_box, pixel_dbu,
                      canvas_pixels) -> np.bool_[canvas, canvas]
 def points_to_canvas(points_dbu, context_box, pixel_dbu,
@@ -45,11 +44,9 @@ def rasterize_region_window(region, box, pixel_dbu) -> np.float32[H, W]  # 无 p
 ```
 
 - **透光率语义**：1=透光；clear=coverage、opaque=1−coverage；canvas 外围
-  padding 恒 0。
-- **暗界 dark_box**（2026-08-21）：光学开孔边界=layer 数据包络；像素中心
-  落在其外的画布位置恒 0，两极性统一（clear 天然 no-op，opaque 把
-  1−coverage 的无几何区反透光压回暗）；中心换算与 ownership_canvas 同式。
-  None = 无暗界约束（独立调用/demo 现状）。绝不作为图形进入 Region。
+  padding 恒 0。窗口外的暗场由几何保证（2026-08-22 起：负板在 prepare
+  阶段已补画包络外不透光图形、正板包络外无图形天然 coverage=0），
+  本函数不再有暗界参数。
 - **居中 padding**：`_center_padding` 差值均分、奇数余量归高坐标侧；三个
   公开函数与 lithography `_prepare_mask` 共用同一偏移（同尺寸输入同一布局）。
 - **坐标换算**：`points_to_canvas` 返回 (x,y) 连续坐标
@@ -74,10 +71,11 @@ TestPointsToCanvas）；`opc/input/raster.py` 注释内的映射公式。
 ```python
 def prepare_pixel_macro_problem(batch, layer, polarity, macro, *,
                                 planning_bounds: DbuBox,
-                                dark_bounds: DbuBox) -> PixelMacroProblem
+                                data_bounds: DbuBox) -> PixelMacroProblem
     # planning_bounds=plan_macros 所用规划边界（field，ownership 四向包含校验）；
-    # dark_bounds=光学暗边界（layer 数据包络）：query 超出的环带/扩张带
-    # transmission 恒 0、两极性统一（2026-08-21 修订）。双参数必填无默认。
+    # data_bounds=全局数据包络（layer bbox）：负板栅格化前补画包络外到
+    # 查询边界的不透光图形（2026-08-22 几何方案，与 edge 路径同一语义）；
+    # clear 忽略之。双参数必填无默认。
 class PixelMacroProblem:                             # frozen；NPZ v1
     macro / layer / polarity
     target_u8: np.uint8[Hq, Wq]                      # query box transmission 0..255

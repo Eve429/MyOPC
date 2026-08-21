@@ -205,18 +205,22 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_gradient.py config/gradien
 state 新增 `epe_loss`。注意 weight_epe=1.0 下 EPE 项占总目标约 85%
 （gcd_30um 实测），实际使用按 workload 调权。
 
-## 8b. 处理框配置（[layout] field_box/field_size，2026-08-21）
+## 8b. 处理框配置（[layout] field_box/field_size，2026-08-22 几何方案）
 
 版图尺寸大于 layer 内容 bbox 时（如 layer 1×1 µm、reticle 2.048²），
 `[layout]` 可二选一声明处理框：`field_box_nm = [left, bottom, right, top]`
 （绝对 GDS 坐标）或 `field_size_nm = [width, height]`（layer bbox 居中、
-奇 slack 归高侧）。双空 = layer bbox 现行行为；严格大于 layer bbox 发
-warning；不包含即报错。**光学开孔边界 = layer 数据包络（2026-08-21 用户
-裁定）**：环带（field − 数据包络的无图形区）与 field 外扩张带两极性
-统一恒不透光——opaque 不再把环带反成透光；数据包络内的极性变换不变
-（opaque 背景仍透光）。环带属 ILT 可训练域（监督 T=0）。field 只承担
-规划语义（网格覆盖/输出范围）。ILT 与 MB-OPC 同语义（prepare 双边界
-参数 / `rasterize_mask_canvas` dark_box，MacroProblem 格式版本 2）。
+奇 slack 归高侧）。双空 = layer bbox 现行行为；严格大于 layer bbox 时
+warning（clear 在 resolve 层、opaque 在 prepare 层恰一次）；不包含即报错。
+**环带处理按极性（2026-08-22 用户裁定，取代透光率置零方案）**：负板
+（opaque）在 prepare 之前补画数据包络外到各 macro 查询边界的不透光
+图形——环带与最终输出带真实铬框（merge 裁到 ownership=field 内），
+补区外缘在查询边界上恒为 context-only 段（不可动、不进优化）；正板
+（clear）环带无图形、coverage=0 天然恒暗。数据包络内的极性变换不变
+（opaque 背景仍透光）；环带属 ILT 可训练域（监督 T=0）。field 只承担
+规划语义（网格覆盖/输出范围）。ILT 与 MB-OPC 同语义
+（`prepare_*(data_bounds=layer bbox)`；MacroProblem 格式版本 3、
+plan/ilt_plan 版本 2 均不含 dark_box 键）。
 
 ## 9. Simple ILT（opc/iteration/ilt，2026-08-19 迁移）
 

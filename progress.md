@@ -536,3 +536,11 @@
   → A3 CLI 资源打印对齐 + A4 分段公式模块归位 → 文档同步（contracts
   pack 参数、dataflow 双文件含 np.add.at 旧描述修正、审查报告处理状态
   标注、两手册）。A5 维持观察项判定并说明理由。
+
+- 环带几何方案（用户裁定"去除现在的方案"，两批交付）：批次 1
+  （8e349f3）——输入层/求解器/编排全链切换 + 三处版本 bump + 测试
+  重构（-4 旧例 +7 新例）+ golden A/A 新基线 + 用户场景双极性 e2e
+  （负板输出带真实铬框）；批次 2——contracts（edge v3/opc_input/ilt
+  场边界节）、development_manual §8b、CLAUDE.md 状态行、test_manual
+  （686 + 补铬组描述）、reticle plan §10.5、dataflow 同步。全量
+  686 passed + 1 skipped。

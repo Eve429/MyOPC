@@ -31,26 +31,28 @@ class SegmentGeometry:                            # starts/ends/normals 均 floa
 - **切线分裂**：ownership 切线处斜边交点参数由整数端点+整数切线计算；
   分裂碎片沿用原段数学边号；同一切线交点去重（零长碎段回归）。
 
-## MacroProblem（problem.py，NPZ format v2）
+## MacroProblem（problem.py，NPZ format v3）
 
 ```python
 class MacroProblem:                               # frozen，构造期校验全部不变量
     macro / layer / polarity / fragmentation / segments
-    dark_box: DbuBox                              # 光学暗边界=layer 数据包络（2026-08-21）
     owner_indices: Int32Array[S]                  # 唯一可写 core；-1=只读 context
     core_offsets: Int64Array[C+1]                 # CSR
     member_segment_indices: Int32Array[M]         # own ⊆ membership
     def segments_for_core(i) / owner_segments_for_core(i)
-    def save(dir) / MacroProblem.load(path)       # v2 持久化 dark_box；旧版显式拒绝
+    def save(dir) / MacroProblem.load(path)       # v3；v2（含 dark_box）与 v1 显式拒绝
 def prepare_macro_problem(batch, layer, polarity, fragmentation, macro,
-                          *, dark_box: DbuBox) -> MacroProblem
+                          *, data_bounds: DbuBox) -> MacroProblem
 ```
 
 不变量（构造期强制）：owner ∈ [-1,C)；CSR 单调闭合；own ⊆ membership
-（空 membership 不短路）；段中点归属即 owner。**暗界语义**：dark_box 是
-光学开孔边界——mask 画布像素中心在其外恒不透光、两极性统一（与 ILT
-像素路径的 dark_bounds 同一语义）；由求解器栅格化时传入
-`rasterize_mask_canvas(dark_box=...)`，绝不作为图形进入 Region。
+（空 membership 不短路）；段中点归属即 owner。**负板补铬（2026-08-22
+几何方案）**：data_bounds 是全局数据包络（layer bbox，须显式传参）；
+opaque 在提边之前补画包络外到查询边界的不透光图形——补区与既有铬
+共线相接处经布尔并 + merged() 融合（表示层共线边消除）；补区外缘落在
+查询边界上，恒为 context-only 段（owner=-1，不可动、不进输出）；包络
+边有透光缺口时缺口处形成真实铬|石英 owned 段。clear 忽略 data_bounds
+（包络外无图形天然恒暗）。
 
 ## 重建（reconstruction.py）
 

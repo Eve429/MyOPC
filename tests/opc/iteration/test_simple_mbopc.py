@@ -16,8 +16,8 @@ from opc.iteration.mbopc import (
     SimpleMBOPCResult,
     SimpleMBOPCStep,
     TargetCanvasCache,
-    evaluate_and_propose,
-    optimize_macro,
+    evaluate_state,
+    optimize_simple_macro,
     simple,
 )
 
@@ -214,7 +214,7 @@ class TestThresholdPropagation:
 
             monkeypatch.setattr(simple, name, spy)
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
-        optimize_macro(problem, model, _config(iterations=1),
+        optimize_simple_macro(problem, model, _config(iterations=1),
                        TargetCanvasCache(256 * 256 * 8))
         for name, values in captured.items():  # 全部收到模型阈值
             assert values, name  # 至少一次
@@ -223,7 +223,7 @@ class TestThresholdPropagation:
 
 
 class TestEntryContracts:
-    """evaluate_and_propose 的入口契约拦截。"""
+    """evaluate_state 的入口契约拦截。"""
 
     def _rectangle(self):
         """返回单矩形 problem 与零位移。"""
@@ -234,7 +234,7 @@ class TestEntryContracts:
         """位移长度不等于段数时失败。"""
         problem, _ = self._rectangle()
         with pytest.raises(ValueError, match="有限向量"):
-            evaluate_and_propose(problem, kdb.Region(), np.zeros(3),
+            evaluate_state(problem, kdb.Region(), np.zeros(3),
                                  _PhaseModel([_identity]), _config(), 2.0,
                                  TargetCanvasCache(0), can_update=True)
 
@@ -243,7 +243,7 @@ class TestEntryContracts:
         problem, zeros = self._rectangle()
         zeros[0] = float("nan")  # 注入 nan
         with pytest.raises(ValueError, match="有限向量"):
-            evaluate_and_propose(problem, kdb.Region(), zeros,
+            evaluate_state(problem, kdb.Region(), zeros,
                                  _PhaseModel([_identity]), _config(), 2.0,
                                  TargetCanvasCache(0), can_update=True)
 
@@ -258,7 +258,7 @@ class TestEntryContracts:
         zeros = np.zeros(problem.segments.segment_count)
         zeros[context[0]] = 1.0  # context 段注入位移
         with pytest.raises(ValueError, match="恒为 0"):
-            evaluate_and_propose(problem, kdb.Region(), zeros,
+            evaluate_state(problem, kdb.Region(), zeros,
                                  _PhaseModel([_identity]), _config(), 2.0,
                                  TargetCanvasCache(0), can_update=True)
 
@@ -268,7 +268,7 @@ class TestEntryContracts:
         model = _PhaseModel([_identity])
         model.config = _StubConfig(canvas=128)  # 与 problem 的 256 不一致
         with pytest.raises(ValueError, match="画布"):
-            evaluate_and_propose(problem, kdb.Region(), zeros, model,
+            evaluate_state(problem, kdb.Region(), zeros, model,
                                  _config(), 2.0, TargetCanvasCache(0),
                                  can_update=True)
 
@@ -276,13 +276,13 @@ class TestEntryContracts:
         """负步长失败。"""
         problem, zeros = self._rectangle()
         with pytest.raises(ValueError, match="step_dbu"):
-            evaluate_and_propose(problem, kdb.Region(), zeros,
+            evaluate_state(problem, kdb.Region(), zeros,
                                  _PhaseModel([_identity]), _config(), -1.0,
                                  TargetCanvasCache(0), can_update=True)
 
 
 class TestEvaluatePropose:
-    """evaluate_and_propose 的指标、方向与批语义。"""
+    """evaluate_state 的指标、方向与批语义。"""
 
     RECT = kdb.Region(kdb.Box(20, 20, 60, 60))
 
@@ -293,7 +293,7 @@ class TestEvaluatePropose:
         problem = problem if problem is not None else _problem(self.RECT)
         zeros = np.zeros(problem.segments.segment_count)
         region = reconstruct_region(problem, zeros)  # 零位移候选
-        step = evaluate_and_propose(
+        step = evaluate_state(
             problem, region, zeros, model, _config(**overrides),
             step_dbu, TargetCanvasCache(0), can_update=can_update)
         return step, problem, zeros
@@ -338,7 +338,7 @@ class TestEvaluatePropose:
         current = np.zeros(segment_count)
         current[problem.owner_indices >= 0] = 10.0  # 全部顶到上限
         region = reconstruct_region(problem, current)
-        step = evaluate_and_propose(
+        step = evaluate_state(
             problem, region, current, _PhaseModel([_zero]), _config(),
             4.0, TargetCanvasCache(0), can_update=True)
         # 全暗 → +1 外移：10+4 超上限 10，裁回 10。
@@ -366,7 +366,7 @@ class TestEvaluatePropose:
         problem = _problem(self.RECT)
         zeros = np.zeros(problem.segments.segment_count)
         region = reconstruct_region(problem, zeros)
-        evaluate_and_propose(  # 4 core / batch 2 → 恰 2 次调用
+        evaluate_state(  # 4 core / batch 2 → 恰 2 次调用
             problem, region, zeros, cpu_model, _config(batch_size=2),
             2.0, TargetCanvasCache(0), can_update=True)
         assert calls == [3, 3]  # 每批一次、每次三条件
@@ -389,7 +389,7 @@ class TestEvaluatePropose:
 
         monkeypatch.setattr(simple, "rasterize_mask_canvas", spy)
         zeros = np.zeros(problem.segments.segment_count)
-        evaluate_and_propose(
+        evaluate_state(
             problem, reconstruct_region(problem, zeros), zeros,
             _PhaseModel([_identity]), _config(), 2.0,
             TargetCanvasCache(0), can_update=False)
@@ -416,10 +416,10 @@ class TestEvaluatePropose:
             counts.append(1)
             return real_raster(region_, box, pixel, canvas, polarity=polarity)
         monkeypatch.setattr(simple, "rasterize_mask_canvas", _counting)
-        evaluate_and_propose(problem, region, zeros, model, _config(),
+        evaluate_state(problem, region, zeros, model, _config(),
                              2.0, cache, can_update=True)
         first = len(counts)  # 4 core × (target + mask) = 8 次
-        evaluate_and_propose(problem, region, zeros, model, _config(),
+        evaluate_state(problem, region, zeros, model, _config(),
                              2.0, cache, can_update=True)
         second = len(counts) - first  # 第二次新增的栅格调用
         assert first == 8
@@ -432,7 +432,7 @@ class TestEvaluatePropose:
         zeros = np.zeros(problem.segments.segment_count)
         region = reconstruct_region(problem, zeros)
         tiles = []
-        evaluate_and_propose(  # 全部 4 core 都要过一遍
+        evaluate_state(  # 全部 4 core 都要过一遍
             problem, region, zeros, _PhaseModel([_identity]), _config(),
             2.0, TargetCanvasCache(0), can_update=True,
             on_tiles_completed=tiles.append)
@@ -451,13 +451,13 @@ class TestEvaluatePropose:
 
 
 class TestOptimizeMacro:
-    """optimize_macro 的轮次语义、停止原因与最佳状态选择。"""
+    """optimize_simple_macro 的轮次语义、停止原因与最佳状态选择。"""
 
     def _run(self, model, region=None, **overrides):
         """按默认配置跑单 macro 完整迭代。"""
         problem = _problem(region if region is not None
                            else kdb.Region(kdb.Box(20, 20, 60, 60)))
-        return optimize_macro(problem, model, _config(**overrides),
+        return optimize_simple_macro(problem, model, _config(**overrides),
                               TargetCanvasCache(0))
 
     def test_baseline_only_when_zero_epe(self):
@@ -466,7 +466,7 @@ class TestOptimizeMacro:
         assert isinstance(result, SimpleMBOPCResult)
         assert result.stop_reason == "zero_epe"
         assert len(result.records) == 1  # 无移动后状态
-        assert result.best_round == 0  # baseline 最优
+        assert result.best_state_index == 0  # baseline 最优
         np.testing.assert_array_equal(
             result.best_displacements,
             np.zeros_like(result.best_displacements))
@@ -475,7 +475,7 @@ class TestOptimizeMacro:
     def test_records_semantics_for_one_iteration(self):
         """iterations=1 恰两条记录：baseline 与一次移动后评价。"""
         result = self._run(_PhaseModel([_zero, _identity]), iterations=1)
-        assert [r.round_index for r in result.records] == [0, 1]
+        assert [r.state_index for r in result.records] == [0, 1]
         baseline = result.records[0]
         assert baseline.step_dbu == 0.0  # baseline 无步长
         assert baseline.moved_segments == 0  # baseline 无移动
@@ -487,7 +487,7 @@ class TestOptimizeMacro:
         # 量化影响仍违规——只断言严格改善，不断言精确归零。
         assert 0 < first.epe < baseline.epe  # 移动后 EPE 改善
         assert result.stop_reason == "iteration_limit"  # 轮次用尽（EPE 未归零）
-        assert result.best_round == 1  # EPE 更优的移动后状态胜出
+        assert result.best_state_index == 1  # EPE 更优的移动后状态胜出
         assert int(np.count_nonzero(result.best_displacements)) > 0
 
     def test_no_update_stops_with_ambiguous_only(self):
@@ -505,15 +505,15 @@ class TestOptimizeMacro:
         assert result.stop_reason == "zero_epe"
         assert len(result.records) == 3  # baseline + 两轮（Round 2 归零）
         assert result.records[-1].epe == 0  # 最后一轮零违规
-        assert result.best_round == 2
+        assert result.best_state_index == 2
 
     def test_iteration_limit_records_all_rounds(self):
         """持续违规且持续移动时跑满轮次并按 iteration_limit 停止。"""
         result = self._run(_PhaseModel([_zero, _zero, _zero, _zero]),
                            iterations=2)
         assert result.stop_reason == "iteration_limit"
-        assert [r.round_index for r in result.records] == [0, 1, 2]
-        assert result.best_round == 0  # EPE 相同（全违规）保留较早 baseline
+        assert [r.state_index for r in result.records] == [0, 1, 2]
+        assert result.best_state_index == 0  # EPE 相同（全违规）保留较早 baseline
 
     def test_invalid_geometry_stops_and_keeps_last_best(self, monkeypatch):
         """非法候选终止迭代、保留最后合法 best、原因写入 stop_detail。"""
@@ -530,12 +530,12 @@ class TestOptimizeMacro:
             return real_reconstruct(problem_, displacements)
         monkeypatch.setattr(simple, "reconstruct_region", _failing_on_first_moved)
         model = _PhaseModel([_zero, _zero, _zero])
-        result = optimize_macro(problem, model, _config(),
+        result = optimize_simple_macro(problem, model, _config(),
                                 TargetCanvasCache(0))
         assert result.stop_reason == "invalid_geometry"
         assert "hole escaped" in result.stop_detail  # 原因不吞掉
         assert len(result.records) == 1  # Round 1 未能评价
-        assert result.best_round == 0  # 保留 baseline best
+        assert result.best_state_index == 0  # 保留 baseline best
 
     def test_step_decays_every_configured_rounds(self):
         """步长按 decay_every 周期减半（decay=1 即每轮减半）。"""
@@ -554,16 +554,16 @@ class TestOptimizeMacro:
         model = _PhaseModel([_zero, _zero, _zero])  # 持续全暗 → 各轮 EPE 相同
         monkeypatch.setattr(  # L2 恒 0（若参与比较也偏向不了任何轮）
             simple, "evaluate_binary_l2", lambda *a, **kw: 0)
-        result = optimize_macro(problem, model, _config(iterations=2),
+        result = optimize_simple_macro(problem, model, _config(iterations=2),
                                 TargetCanvasCache(0))
         assert result.stop_reason == "iteration_limit"
-        assert result.best_round == 0  # EPE 平局 → 保留最早（baseline）
+        assert result.best_state_index == 0  # EPE 平局 → 保留最早（baseline）
 
     def test_progress_counts_all_evaluated_tiles(self):
         """进度回调总数 = (iterations+1)×core_count，每次为批内真实 tile 数。"""
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         tiles = []
-        result = optimize_macro(  # 全暗持续移动 → 3 次评价全跑
+        result = optimize_simple_macro(  # 全暗持续移动 → 3 次评价全跑
             problem, _PhaseModel([_zero, _zero, _zero]), _config(iterations=2),
             TargetCanvasCache(0), on_tiles_completed=tiles.append)
         core_count = problem.macro.core_count
@@ -575,10 +575,10 @@ class TestOptimizeMacro:
         """步长超过 problem 位移上限时入口失败。"""
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         with pytest.raises(ValueError, match="位移上限"):
-            optimize_macro(problem, _PhaseModel([_identity]),
+            optimize_simple_macro(problem, _PhaseModel([_identity]),
                            _config(initial_step_dbu=11.0), TargetCanvasCache(0))
         with pytest.raises(ValueError, match="context"):
-            optimize_macro(problem, _PhaseModel([_identity]),
+            optimize_simple_macro(problem, _PhaseModel([_identity]),
                            _config(epe_distance_dbu=21.0), TargetCanvasCache(0))
 
 
@@ -588,7 +588,7 @@ class TestGeometryMatrix:
     def _run(self, region, polarity="clear", **overrides):
         """构造 problem 并以真实 CPU 模型完成一次小规模迭代。"""
         problem = _problem(region, polarity=polarity)
-        return optimize_macro(problem, self._model, _config(
+        return optimize_simple_macro(problem, self._model, _config(
             iterations=overrides.pop("iterations", 1),
             batch_size=4, **overrides), TargetCanvasCache(0)), problem
 
@@ -602,12 +602,12 @@ class TestGeometryMatrix:
         assert result.stop_reason in {  # 五种合法停止
             "zero_epe", "no_update", "invalid_geometry",
             "insufficient_probes", "iteration_limit"}
-        assert result.records[0].round_index == 0  # baseline 在首位
+        assert result.records[0].state_index == 0  # baseline 在首位
         if result.stop_reason == "invalid_geometry":
             assert result.stop_detail  # 原因非空
         else:
             assert result.stop_detail is None
-        assert 0 <= result.best_round < len(result.records)  # best 是已评价轮
+        assert 0 <= result.best_state_index < len(result.records)  # best 是已评价轮
         best = result.best_displacements
         assert np.all(np.isfinite(best))  # 位移有限
         assert np.all(best[problem.owner_indices < 0] == 0.0)  # context 归零
@@ -654,7 +654,7 @@ class TestGeometryMatrix:
         """横跨至少三个 core 的横条。"""
         macro = _macro(core_size_dbu=20)  # 80/20 = 4×4 core
         problem = _problem(kdb.Region(kdb.Box(5, 35, 75, 45)), macro)
-        result = optimize_macro(problem, self._model, _config(
+        result = optimize_simple_macro(problem, self._model, _config(
             iterations=1, batch_size=4), TargetCanvasCache(0))
         self._assert_healthy(result, problem)
 
@@ -667,7 +667,7 @@ class TestGeometryMatrix:
         region = kdb.Region(polygon)
         for macro in macros:  # 每个 macro 独立跑一轮
             problem = _problem(region, macro, data_bounds=bounds)
-            result = optimize_macro(problem, self._model, _config(
+            result = optimize_simple_macro(problem, self._model, _config(
                 iterations=1, batch_size=4), TargetCanvasCache(0))
             self._assert_healthy(result, problem)
 
@@ -681,7 +681,7 @@ class TestGeometryMatrix:
         """空 macro（无任何图形）零段零探针，baseline 即零违规。"""
         problem = _problem(kdb.Region())  # 空 Region
         assert problem.segments.segment_count == 0
-        result = optimize_macro(problem, self._model, _config(iterations=1),
+        result = optimize_simple_macro(problem, self._model, _config(iterations=1),
                                 TargetCanvasCache(0))
         assert result.stop_reason == "zero_epe"  # 无违规即停
         assert len(result.records) == 1
@@ -694,13 +694,13 @@ class TestGeometryMatrix:
         region = (kdb.Region(kdb.Box(10, 10, 70, 70)) -
                   kdb.Region(kdb.Box(12, 12, 68, 68)))  # 壁宽 2nm
         problem = _problem(region)
-        result = optimize_macro(problem, self._model, _config(
+        result = optimize_simple_macro(problem, self._model, _config(
             iterations=1, epe_distance_dbu=8.0), TargetCanvasCache(0))
         assert result.stop_reason == "insufficient_probes"  # 不是 zero_epe
         assert result.records[0].valid_probes == 0  # 确无有效探针
         assert result.records[0].epe == 0  # epe 恒 0（无法评价 ≠ 零违规）
         assert "有效 EPE 探针 0 个" in result.stop_detail  # 原因在案
-        assert result.best_round == 0  # 保留零位移 baseline
+        assert result.best_state_index == 0  # 保留零位移 baseline
         assert len(result.records) == 1  # 无移动后状态
 
     def test_hull_shrinking_into_hole_is_invalid_geometry(self):
@@ -710,12 +710,12 @@ class TestGeometryMatrix:
         region = (kdb.Region(kdb.Box(20, 20, 60, 60)) -
                   kdb.Region(kdb.Box(35, 35, 45, 45)))  # 壁 15nm
         problem = _problem(region)
-        result = optimize_macro(problem, _PhaseModel([_ones, _ones]),
+        result = optimize_simple_macro(problem, _PhaseModel([_ones, _ones]),
                                 _config(iterations=2, initial_step_dbu=10.0),
                                 TargetCanvasCache(0))
         assert result.stop_reason == "invalid_geometry"  # 守卫拦截
         assert "重建失败" in result.stop_detail  # 原因在案
-        assert result.best_round == 0  # 非法候选前的 baseline 保留
+        assert result.best_state_index == 0  # 非法候选前的 baseline 保留
 
     def test_rectangle_edges_crossing_is_invalid_geometry(self):
         """矩形大幅内移到边交叉/共线退化时重建守卫拦截（真构造）。"""
@@ -727,12 +727,12 @@ class TestGeometryMatrix:
                                    max_segment_length_dbu=16.0,
                                    max_displacement_dbu=30.0, miter_limit=4.0)
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)), frag=wide)
-        result = optimize_macro(problem, _PhaseModel([_ones, _ones]),
+        result = optimize_simple_macro(problem, _PhaseModel([_ones, _ones]),
                                 _config(iterations=1, initial_step_dbu=20.0),
                                 TargetCanvasCache(0))
         assert result.stop_reason == "invalid_geometry"  # 守卫拦截
         assert result.stop_detail is not None  # 原因在案
-        assert result.best_round == 0  # 非法候选前的 baseline 保留
+        assert result.best_state_index == 0  # 非法候选前的 baseline 保留
         assert len(result.records) == 1  # 退化候选未进入评价
 
 
@@ -741,11 +741,11 @@ class TestRealModelCuda:
 
     @pytest.mark.skipif(not torch.cuda.is_available(),
                         reason="当前环境没有 CUDA")
-    def test_cuda_optimize_macro_completes(self):
+    def test_cuda_optimize_simple_macro_completes(self):
         """CUDA 设备上完整迭代完成且指标有限。"""
         model = ICCAD13Lithography(device="cuda")
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
-        result = optimize_macro(problem, model, _config(iterations=1),
+        result = optimize_simple_macro(problem, model, _config(iterations=1),
                                 TargetCanvasCache(0))
         assert result.stop_reason in {  # 五种合法停止
             "zero_epe", "no_update", "invalid_geometry",

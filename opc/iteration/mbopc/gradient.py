@@ -108,7 +108,7 @@ class GradientMBOPCResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _GradientMacroContext:
+class _GradientContext:
     """保存 gradient 法专有的静态输入；公共静态经 pack 唯一持有。
 
     静态分层：计分画布/参考探针坐标/target 源/画布与像素尺度等与更新
@@ -245,10 +245,10 @@ def _profile_d_s(error: torch.Tensor, slots: torch.Tensor,
     return sample.view(count, q_slots).sum(dim=1)
 
 
-def _prepare_macro_context(
+def _prepare_gradient_context(
         problem: MacroProblem, model: LithographyModel,
-        config: GradientMBOPCConfig) -> _GradientMacroContext:
-    """一次性构造整个优化期间不变的 owner 映射、参考几何与探针静态输入。"""
+        config: GradientMBOPCConfig) -> _GradientContext:
+    """一次构造 gradient 专有静态（参数映射/采样 membership/EPE profile）。"""
     macro_id = problem.macro.macro_id  # 错误消息的 macro 部分
     pixel_dbu = int(problem.macro.pixel_dbu)  # 栅格像素
     core_count = problem.macro.core_count  # tile 总数
@@ -332,7 +332,7 @@ def _prepare_macro_context(
     # 三工艺角一次前向
     conditions = (model.condition("nominal"), model.condition("dose_max"),
                   model.condition("defocus_min"))
-    return _GradientMacroContext(
+    return _GradientContext(
         owner_ids=owner_ids, segment_to_parameter=segment_to_parameter,
         reference_segment_midpoints=reference_segment_midpoints,
         core_sampling_members=core_sampling_members,
@@ -344,7 +344,7 @@ def _prepare_macro_context(
 
 
 def _evaluate_state(
-        ctx: _GradientMacroContext, model: LithographyModel,
+        ctx: _GradientContext, model: LithographyModel,
         problem: MacroProblem, config: GradientMBOPCConfig,
         target_cache: TargetCanvasCache, parameters: torch.Tensor,
         current_region: kdb.Region,
@@ -581,7 +581,7 @@ def optimize_gradient_macro(
             np.zeros(segment_count, dtype=np.float64), (empty,), 0,
             "no_owned_segments", None)
     # 静态输入只准备一次，全部状态迭代复用。
-    ctx = _prepare_macro_context(problem, model, config)
+    ctx = _prepare_gradient_context(problem, model, config)
     # 唯一可训练参数：owner 法向位移 [O]
     parameters = torch.zeros(
         len(owner_ids), dtype=torch.float32, device=ctx.device,

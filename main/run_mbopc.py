@@ -24,28 +24,28 @@ from main.configuration import (
 from opc.iteration.mbopc import (
     SimpleMBOPCConfig,
     SimpleMBOPCResult,
-    optimize_macro,
+    optimize_simple_macro,
 )
 
-_RESULT_FORMAT_VERSION = 1  # 每 macro result NPZ 结构版本
+_RESULT_FORMAT_VERSION = 2  # 每 macro result NPZ 结构版本（v2：键改 state 词汇）
 
 
 def save_macro_result(macro_dir: Path, macro_id: str,
                       result: SimpleMBOPCResult) -> None:
-    """写出 simple 结果 NPZ 与逐轮 metrics（文件名独立于 gradient 产物）。"""
+    """写出 simple 结果 NPZ 与逐状态 metrics（文件名独立于 gradient 产物）。"""
     # result NPZ（位移与停止信息）
     atomic_write_npz(
         macro_dir / "result.npz",
         format_version=np.array([_RESULT_FORMAT_VERSION], np.int32),
         macro_id=np.array([macro_id]),
-        best_round=np.array([result.best_round], np.int32),
+        best_state_index=np.array([result.best_state_index], np.int32),
         best_displacements=np.ascontiguousarray(
             result.best_displacements, dtype=np.float64),
         stop_reason=np.array([result.stop_reason]))
-    # 逐轮标量与原因
+    # 逐状态标量与原因
     atomic_write_json(macro_dir / "metrics.json", {
         "macro_id": macro_id,
-        "best_round": result.best_round,
+        "best_state_index": result.best_state_index,
         "stop_reason": result.stop_reason,
         "stop_detail": result.stop_detail,
         "records": [asdict(record) for record in result.records]})
@@ -54,14 +54,14 @@ def save_macro_result(macro_dir: Path, macro_id: str,
 def macro_summary(macro_id: str, macro_dir: Path, result: SimpleMBOPCResult,
                   best_gds: Path, elapsed: float) -> dict:
     """构造公共循环消费的逐 macro 摘要条目。"""
-    best_record = result.records[result.best_round]  # 最佳轮指标
+    best_record = result.records[result.best_state_index]  # 最佳状态指标
     # 摘要（全量记录在 metrics.json）
     return {
         "macro_id": macro_id,
-        "best_round": result.best_round,
+        "best_state_index": result.best_state_index,
         "stop_reason": result.stop_reason,
         "stop_detail": result.stop_detail,
-        "round_count": len(result.records),
+        "state_count": len(result.records),
         "best_epe": best_record.epe, "best_l2": best_record.l2,
         "best_pvband": best_record.pvband,
         "best_gds": str(best_gds),
@@ -78,7 +78,7 @@ SIMPLE_METHOD = MBOPCMethod(
     method_name="simple_mbopc",
     algo_config_type=MBOPCConfig,
     build_solver_config=resolve_mbopc_config,
-    optimize_macro=optimize_macro,
+    optimize_macro=optimize_simple_macro,
     save_macro_result=save_macro_result,
     macro_summary=macro_summary,
     summary_extras=summary_extras)
@@ -105,7 +105,7 @@ def main() -> int:
     print(f"  macro 数：{summary['macro_count']}，core 数：{summary['core_count']}")  # 网格规模
     for macro in summary["macros"]:  # 逐 macro 摘要
         # 关键指标
-        print(f"  {macro['macro_id']}：best_round={macro['best_round']} "
+        print(f"  {macro['macro_id']}：best_state={macro['best_state_index']} "
               f"best_epe={macro['best_epe']} stop={macro['stop_reason']}")
     # 耗时
     print(f"  合并 {summary['merge_seconds']:.2f}s，总计 "

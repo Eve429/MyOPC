@@ -32,7 +32,7 @@ from opc.iteration.mbopc import gradient as gradient_module
 from opc.iteration.mbopc.gradient import (
     _EdgeGradientMask,
     _evaluate_state,
-    _prepare_macro_context,
+    _prepare_gradient_context,
     _profile_d_s,
     _take_optimizer_step,
 )
@@ -751,7 +751,7 @@ class TestEpeLoss:
         problem2 = _problem(kdb.Region(kdb.Polygon([
             kdb.Point(8, 8), kdb.Point(48, 8), kdb.Point(8, 48)])))
         for target_problem in (problem, problem2):
-            ctx = _prepare_macro_context(
+            ctx = _prepare_gradient_context(
                 target_problem, _LinearModel(), _config(weight_epe=1.0))
             assert ctx.epe_length_sum > 0.0
             reference = target_problem.segments.materialize()
@@ -811,7 +811,7 @@ class TestEpeLoss:
     def test_epe_owner_scores_once_membership_gradients_sum(self):
         """每段 profile 恰在其 owner core 计一次（分母 L_sum 全宏唯一）。"""
         problem = _problem(kdb.Region(kdb.Box(4, 4, 76, 76)))  # 跨 2×2 core
-        ctx = _prepare_macro_context(problem, _LinearModel(),
+        ctx = _prepare_gradient_context(problem, _LinearModel(),
                                      _config(weight_epe=1.0))
         owner_total = sum(len(ctx.pack.owner_members[c])
                           for c in range(problem.macro.core_count))
@@ -852,7 +852,7 @@ class TestEpeLoss:
 
         monkeypatch.setattr(gradient_module, "_profile_d_s", spy)
         problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
-        ctx = _prepare_macro_context(problem, _LinearModel(), _config())
+        ctx = _prepare_gradient_context(problem, _LinearModel(), _config())
         assert ctx.epe_length_sum == 0.0  # 关闭：无 profile 无分母
         assert all(p is None for p in ctx.epe_profiles)
         result = _optimize(problem, self._identity_model(), _config())
@@ -902,7 +902,7 @@ class TestEpeLoss:
 
         monkeypatch.setattr(gradient_module, "points_to_canvas", shifted)
         with pytest.raises(ValueError, match="越出画布"):
-            _prepare_macro_context(problem, _LinearModel(),
+            _prepare_gradient_context(problem, _LinearModel(),
                                    _config(weight_epe=1.0))
 
     def test_epe_only_update_improves_evaluated_loss(self):
@@ -922,7 +922,7 @@ class TestEpeLoss:
         """启用 EPE 不增加 forward；profile 每宏恰建一次（不随 state 重建）。"""
         problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 48)))
         prepare_calls = {"n": 0}
-        real = gradient_module._prepare_macro_context
+        real = gradient_module._prepare_gradient_context
 
         def counting(*args, **kwargs):
             """计数上下文（含 profile 坐标）构造次数。"""
@@ -931,7 +931,7 @@ class TestEpeLoss:
 
         models = {}
         for enabled in (False, True):
-            monkeypatch.setattr(gradient_module, "_prepare_macro_context",
+            monkeypatch.setattr(gradient_module, "_prepare_gradient_context",
                                 counting)
             prepare_calls["n"] = 0
             model = _LinearModel()
@@ -1094,11 +1094,11 @@ class TestCallCounts:
 class TestStructuralSplit:
     """三段函数拆分的结构级单测（数值行为由既有端到端用例守护）。"""
 
-    def test_prepare_macro_context_static_mappings(self):
+    def test_prepare_gradient_context_static_mappings(self):
         """静态上下文的 owner 映射、membership 与计分像素直接来自 problem。"""
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         config = _config()
-        ctx = _prepare_macro_context(problem, _LinearModel(), config)
+        ctx = _prepare_gradient_context(problem, _LinearModel(), config)
         owner_ids = np.flatnonzero(problem.owner_indices >= 0)
         assert np.array_equal(ctx.owner_ids, owner_ids)
         assert ctx.segment_to_parameter.shape == (
@@ -1125,7 +1125,7 @@ class TestStructuralSplit:
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         config = _config()
         model = _LinearModel()
-        ctx = _prepare_macro_context(problem, model, config)
+        ctx = _prepare_gradient_context(problem, model, config)
         parameters = torch.zeros(len(ctx.owner_ids), dtype=torch.float32,
                                  requires_grad=True)
         evaluation = _evaluate_state(
@@ -1140,7 +1140,7 @@ class TestStructuralSplit:
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         config = _config()
         model = _LinearModel()
-        ctx = _prepare_macro_context(problem, model, config)
+        ctx = _prepare_gradient_context(problem, model, config)
         parameters = torch.zeros(len(ctx.owner_ids), dtype=torch.float32,
                                  requires_grad=True)
         before = parameters.detach().clone()

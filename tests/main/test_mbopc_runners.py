@@ -129,8 +129,8 @@ class TestSingleMacroRunner:
             assert (macro_dir / name).is_file(), name
         assert (tmp / "final.gds").is_file()  # 最终合并版图
         with np.load(macro_dir / "result.npz", allow_pickle=False) as data:
-            assert set(data.files) == {  # §12.3 契约键集
-                "format_version", "macro_id", "best_round",
+            assert set(data.files) == {  # §12.3 契约键集（v2：state 词汇）
+                "format_version", "macro_id", "best_state_index",
                 "best_displacements", "stop_reason"}
             assert str(data["macro_id"][0]) == summary["macros"][0]["macro_id"]
 
@@ -140,7 +140,7 @@ class TestSingleMacroRunner:
         metrics_path = (tmp / "work" / "macros" /
                         summary["macros"][0]["macro_id"] / "metrics.json")
         records = json.loads(metrics_path.read_text(encoding="utf-8"))["records"]
-        assert [r["round_index"] for r in records] == [0, 1, 2]  # baseline+2 轮
+        assert [r["state_index"] for r in records] == [0, 1, 2]  # baseline+2 状态
         assert records[0]["step_dbu"] == 0.0  # baseline 无步长
         assert records[0]["moved_segments"] == 0  # baseline 无移动
         assert len(records) <= summary["iterations"] + 1  # 不超过迭代上限

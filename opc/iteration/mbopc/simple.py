@@ -42,7 +42,7 @@ class SimpleMBOPCConfig:
 
     iterations: int              # 最多发布更新次数
     initial_step_dbu: float      # 初始绝对法向步长
-    decay_every: int             # 步长减半周期（每过这么多轮步长减半）
+    decay_every: int             # 步长减半周期（每过这么多状态步长减半）
     epe_distance_dbu: float      # inner/outer 探针距离
     batch_size: int              # 一次 forward 的 core 数
     target_cache_bytes: int      # CPU target uint8 LRU 上限
@@ -78,10 +78,10 @@ class SimpleMBOPCStep:
 
 
 @dataclass(frozen=True, slots=True)
-class IterationRecord:
+class SimpleMBOPCIterationRecord:
     """保存 baseline 或一次移动后状态的实际评价结果。"""
 
-    round_index: int             # 0=baseline；1..N=对应位移完成后的状态
+    state_index: int             # 0=baseline；1..N=对应位移完成后的状态
     step_dbu: float              # 产生本状态时使用的步长；baseline 为 0
     epe: int                     # 本状态实际 EPE
     l2: int                      # 本状态实际二值 L2
@@ -97,13 +97,13 @@ class SimpleMBOPCResult:
     """保存单 macro 的最佳已评价位移、全部状态记录和停止原因。"""
 
     best_displacements: NDArray[np.float64]
-    records: tuple[IterationRecord, ...]  # records[0] 固定为 baseline
-    best_round: int                       # 0 表示零位移 baseline 最优
+    records: tuple[SimpleMBOPCIterationRecord, ...]  # records[0] 固定为 baseline
+    best_state_index: int                       # 0 表示零位移 baseline 最优
     stop_reason: str                      # zero_epe/no_update/invalid_geometry/iteration_limit
     stop_detail: str | None               # 非法候选的明确原因；正常停止为 None
 
 
-def evaluate_and_propose(
+def evaluate_state(
         problem: MacroProblem,
         current_region: kdb.Region,
         current_displacements: NDArray[np.float64],
@@ -120,7 +120,7 @@ def evaluate_and_propose(
     """评价一个 macro 当前状态，并产生同步 owner 位移提案。
 
     pack 是每 macro 打包一次的静态评价输入（计分画布/参考探针坐标/
-    零位移参考候选），optimize_macro 预打包后逐状态复用；直接调用缺省
+    零位移参考候选），optimize_simple_macro 预打包后逐状态复用；直接调用缺省
     时现算（reference 同理，两条 None 路径等价）。pack 优先时 reference
     参数不参与本调用。
     """
@@ -223,7 +223,7 @@ def evaluate_and_propose(
         moved_segments=moved)
 
 
-def optimize_macro(
+def optimize_simple_macro(
         problem: MacroProblem,
         model: LithographyModel,
         config: SimpleMBOPCConfig,
@@ -239,10 +239,10 @@ def optimize_macro(
     if config.epe_distance_dbu > float(problem.macro.context_dbu):
         raise ValueError("epe_distance_dbu 超过 problem 的 context 宽度")
 
-    def step_for(target_round: int) -> float:
-        """返回产生第 target_round 轮位移的步长（每 decay_every 轮减半）。"""
+    def step_for(target_state: int) -> float:
+        """返回产生第 target_state 次位移的步长（每 decay_every 状态减半）。"""
         return config.initial_step_dbu * 0.5 ** (
-            (target_round - 1) // config.decay_every)
+            (target_state - 1) // config.decay_every)
 
     segment_count = problem.segments.segment_count  # 段数 S
     owner_count = int(np.count_nonzero(problem.owner_indices >= 0))  # owner 段数
@@ -260,19 +260,19 @@ def optimize_macro(
         reference_geometry=reference, reference_region=baseline_region,
         to_canvas=points_to_canvas)
     pending_step = step_for(1)  # baseline 提案使用的步长
-    # 评价 + Round 1 提案
-    proposal = evaluate_and_propose(
+    # 评价 + State 1 提案
+    proposal = evaluate_state(
         problem, baseline_region, zeros, model, config, pending_step,
         target_cache, can_update=True, reference=reference, pack=pack,
         on_tiles_completed=on_tiles_completed)
     # records[0] 固定是 baseline
-    records = [IterationRecord(
-        round_index=0, step_dbu=0.0, epe=proposal.epe, l2=proposal.l2,
+    records = [SimpleMBOPCIterationRecord(
+        state_index=0, step_dbu=0.0, epe=proposal.epe, l2=proposal.l2,
         pvband=proposal.pvband, valid_probes=proposal.valid_probes,
         ambiguous_probes=proposal.ambiguous_probes, moved_segments=0,
         elapsed_seconds=time.perf_counter() - started)]
-    best_epe = proposal.epe  # 最佳状态 EPE（EPE 相同保留较早轮，由严格小于实现）
-    best_round = 0  # baseline 先当最佳
+    best_epe = proposal.epe  # 最佳状态 EPE（EPE 相同保留较早状态，由严格小于实现）
+    best_state_index = 0  # baseline 先当最佳
     best_displacements = zeros.copy()  # 零位移副本
     stop_reason: str | None = None  # 停止原因
     stop_detail: str | None = None  # 非法候选原因
@@ -285,16 +285,16 @@ def optimize_macro(
                        "无法评价（探针距离可能大于最窄特征）")
     elif proposal.epe == 0:  # baseline 已无违规
         stop_reason = "zero_epe"  # 直接以零位移为最佳
-    else:  # 常规路径：逐轮移动并评价
-        for round_index in range(1, config.iterations + 1):  # 移动后状态轮次
+    else:  # 常规路径：逐状态移动并评价
+        for state_index in range(1, config.iterations + 1):  # 移动后状态序
             candidate = proposal.next_displacements  # 上一评价的提案
             candidate_moved = proposal.moved_segments  # 该提案改变的段数
             if not candidate_moved:  # 提案与当前完全相同
                 # 同一状态再评一次不产生任何新信息（指标、几何全部不变），
-                # 直接停止，省去一整轮重建与光刻前向。
+                # 直接停止，省去一次完整重建与光刻前向。
                 stop_reason = "no_update"
                 break
-            started = time.perf_counter()  # 本轮计时（重建 + 评价）
+            started = time.perf_counter()  # 本状态计时（重建 + 评价）
             try:  # 候选必须先通过方向/hole/有效性守卫
                 candidate_region = reconstruct_region(problem, candidate)
             except (ValueError, ReconstructionError) as exc:  # 非法几何终止
@@ -302,53 +302,53 @@ def optimize_macro(
                 # 顶点）会以 ValueError 从 KLayout 数组校验冒出，并非只有
                 # ReconstructionError；把它包装进 ReconstructionError 需要
                 # 改 reconstruction.py，故维持宽捕获。
-                # 位移 shape/有限性由 evaluate_and_propose 入口契约先行拦截，
+                # 位移 shape/有限性由 evaluate_state 入口契约先行拦截，
                 # 此处的 ValueError 几乎只可能是几何退化。
                 stop_reason = "invalid_geometry"  # 保留最后合法 best
                 # 错误原因不得吞掉
                 stop_detail = (
-                    f"round {round_index} 候选重建失败：{exc}")
+                    f"state {state_index} 候选重建失败：{exc}")
                 break
-            can_propose = round_index < config.iterations  # 末轮不再生成
-            pending_next = step_for(round_index + 1)  # 被丢弃提案的步长（末轮）
-            # 移动后状态评价（末轮纯评价）
-            proposal = evaluate_and_propose(
+            can_propose = state_index < config.iterations  # 末状态不再生成
+            pending_next = step_for(state_index + 1)  # 被丢弃提案的步长（末状态）
+            # 移动后状态评价（末状态纯评价）
+            proposal = evaluate_state(
                 problem, candidate_region, candidate, model, config,
                 pending_next, target_cache, can_update=can_propose,
                 reference=reference, pack=pack,
                 on_tiles_completed=on_tiles_completed)
-            # Round N 指标属第 N 次位移后状态；moved 为产生本状态时移动的段数
-            records.append(IterationRecord(
-                round_index=round_index, step_dbu=pending_step, epe=proposal.epe,
+            # State N 指标属第 N 次位移后状态；moved 为产生本状态时移动的段数
+            records.append(SimpleMBOPCIterationRecord(
+                state_index=state_index, step_dbu=pending_step, epe=proposal.epe,
                 l2=proposal.l2, pvband=proposal.pvband,
                 valid_probes=proposal.valid_probes,
                 ambiguous_probes=proposal.ambiguous_probes,
                 moved_segments=candidate_moved,
                 elapsed_seconds=time.perf_counter() - started))
-            pending_step = pending_next  # 下轮记录使用的步长
+            pending_step = pending_next  # 下一状态记录使用的步长
             if owner_count and proposal.valid_probes == 0:  # 移动后无法评价
                 # 必须先于 best 比较终止：valid_probes==0 时 epe 恒 0，若放行
                 # 会被 epe<best 误当成改善状态。
                 stop_reason = "insufficient_probes"
-                stop_detail = (f"round {round_index} 有效 EPE 探针 0 个 / "
+                stop_detail = (f"state {state_index} 有效 EPE 探针 0 个 / "
                                f"owner 段 {owner_count} 个，无法评价")
                 break
-            if proposal.epe < best_epe:  # 严格更小才更新；相同保留较早轮
+            if proposal.epe < best_epe:  # 严格更小才更新；相同保留较早状态
                 best_epe = proposal.epe
-                best_round = round_index
+                best_state_index = state_index
                 best_displacements = candidate.copy()
             if proposal.epe == 0:  # 无违规即达目的
                 stop_reason = "zero_epe"
                 break
             if can_propose and proposal.moved_segments == 0:  # 提案不再移动
-                # 末轮 can_update=False 时 moved 恒 0，不构成 no_update 证据。
+                # 末状态 can_update=False 时 moved 恒 0，不构成 no_update 证据。
                 stop_reason = "no_update"
                 break
-        if stop_reason is None:  # 轮次自然用尽
+        if stop_reason is None:  # 状态数自然用尽
             stop_reason = "iteration_limit"
     return SimpleMBOPCResult(
         best_displacements=best_displacements,
         records=tuple(records),
-        best_round=best_round,
+        best_state_index=best_state_index,
         stop_reason=stop_reason,
         stop_detail=stop_detail)

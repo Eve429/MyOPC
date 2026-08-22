@@ -8,24 +8,24 @@ from .gradient import (
     optimize_gradient_macro,
 )
 from .simple import (
-    IterationRecord,
     SimpleMBOPCConfig,
+    SimpleMBOPCIterationRecord,
     SimpleMBOPCResult,
     SimpleMBOPCStep,
-    evaluate_and_propose,
-    optimize_macro,
+    evaluate_state,
+    optimize_simple_macro,
 )
 
 __all__ = [
     "GradientMBOPCConfig",
     "GradientMBOPCIterationRecord",
     "GradientMBOPCResult",
-    "IterationRecord",
     "SimpleMBOPCConfig",
+    "SimpleMBOPCIterationRecord",
     "SimpleMBOPCResult",
     "SimpleMBOPCStep",
     "TargetCanvasCache",
-    "evaluate_and_propose",
+    "evaluate_state",
     "optimize_gradient_macro",
-    "optimize_macro",
+    "optimize_simple_macro",
 ]

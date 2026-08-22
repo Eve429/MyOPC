@@ -197,14 +197,10 @@ def _reconstruct_geometry(
     return ReconstructionResult(contours, segment_midpoints)
 
 
-def reconstruct_contours(problem: MacroProblem, displacements: object) -> ContourBatch:
-    """批量计算 junction，并重建保留 polygon/hole 拓扑的整数轮廓。"""
-    return _reconstruct_geometry(problem, displacements).contours
-
-
 def reconstruct_region(problem: MacroProblem, displacements: object) -> kdb.Region:
     """把重建轮廓转换为 KLayout Region，并拒绝原生无效 Polygon。"""
-    region = contours_to_region(reconstruct_contours(problem, displacements))
+    contours = _reconstruct_geometry(problem, displacements).contours
+    region = contours_to_region(contours)
     if not region.has_valid_polygons():
         raise ReconstructionError("reconstructed region contains invalid polygons")
     return region

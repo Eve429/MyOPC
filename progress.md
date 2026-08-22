@@ -607,3 +607,11 @@ Simple 运行成功后从各 macro 的 `metrics.json` 读取已评价状态，�
 `overview_mode="lines"`，`[output].save_metric_trends=false` 可关闭。新增
 summary 趋势路径元数据、四面板 PNG 测试和配置默认值测试。定向趋势测试 3
 passed；全量 runner 仍有既有入口路径/field warning 失败，详见本任务 findings。
+
+## 2026-08-22（会话：删除冗余 reconstruct_contours 包装）
+
+确认当前生产调用只需要 `reconstruct_region` 和
+`reconstruct_region_with_midpoints`；删除 `reconstruct_contours` 公开包装，
+让 `reconstruct_region` 直接消费 `_reconstruct_geometry(...).contours`，并同步
+清理 edge 导出和当前契约/开发手册。边段、Simple MB-OPC、Gradient MB-OPC
+回归 170 passed；未修改 layout、geometry、00_PAST。

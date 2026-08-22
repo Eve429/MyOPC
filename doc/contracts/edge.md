@@ -60,7 +60,6 @@ opaque 在提边之前补画包络外到查询边界的不透光图形——补�
 ## 重建（reconstruction.py）
 
 ```python
-def reconstruct_contours(problem, displacements) -> ContourBatch
 def reconstruct_region(problem, displacements) -> kdb.Region
 ```
 

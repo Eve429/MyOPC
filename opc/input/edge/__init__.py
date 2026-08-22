@@ -8,7 +8,6 @@ from .fragmentation import (
 )
 from .problem import MacroProblem, prepare_macro_problem
 from .reconstruction import (
-    reconstruct_contours,
     reconstruct_region,
     reconstruct_region_with_midpoints,
 )
@@ -22,7 +21,6 @@ __all__ = [
     "edge_probe_points",
     "fragment_edges",
     "prepare_macro_problem",
-    "reconstruct_contours",
     "reconstruct_region",
     "reconstruct_region_with_midpoints",
 ]

@@ -79,7 +79,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 |---|---|
 | 两级网格规划 | `opc.input.plan_macros` → `MacroSpec`（`core(i)` 即时构造 `CoreSpec`） |
 | 单 macro 参考问题 | `opc.input.edge.prepare_macro_problem` / `MacroProblem.save/load` |
-| 位移重建 | `reconstruct_contours/reconstruct_region(problem, displacements)` |
+| 位移重建 | `reconstruct_region(problem, displacements)` |
 | 居中光刻画布 | `rasterize_mask_canvas` / `ownership_canvas` |
 | DBU 点→画布坐标 | `opc.input.points_to_canvas`（含 padding 项，禁手写公式） |
 | 最终双模式写出 | `geometry.PatchWriter.write_macro_results` |

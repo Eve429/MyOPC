@@ -244,27 +244,24 @@ def _prepare_gradient_context(
     problem: MacroProblem, model: LithographyModel, config: GradientMBOPCConfig
 ) -> _GradientContext:
     """一次构造 gradient 专有静态（参数映射/采样 membership/EPE profile）。"""
-    macro_id = problem.macro.macro_id  # 错误消息的 macro 部分
+    macro_id = problem.macro.macro_id
     pixel_dbu = int(problem.macro.pixel_dbu)
     core_count = problem.macro.core_count
     canvas_pixels = int(problem.macro.canvas_pixels)
-    owner_ids = np.flatnonzero(problem.owner_indices >= 0)  # owner 段全局号
+    owner_ids = np.flatnonzero(problem.owner_indices >= 0)
     segment_count = problem.segments.segment_count  # 段数 S
-    # 初始化：owner 映射、参考中点/法向与探针坐标只建一次，全部状态迭代
-    # 复用（同轮内不得重建 mapping）。
     # segment_to_parameter 把 owner 段全局号压缩成 Adam 参数下标 [0, O)：
-    # 非 owner 段恒 -1，owner 段按 owner_ids 顺序编号——parameters 的每个
-    # 元素经它反向定位到唯一段（如 5 段中第 1、2 段是 owner，则
-    # [-1,0,1,-1,-1]，其中 0、1 即两个可训练参数的下标）。
+    # 非 owner 段恒 -1，owner 段按 owner_ids 顺序编号——
+    # parameters 的每个元素经它反向定位到唯一段（如 5 段中第 1、2 段是 owner，
+    # 则 [-1,0,1,-1,-1]，其中 0、1 即两个可训练参数的下标）。
     segment_to_parameter = np.full(segment_count, -1, dtype=np.int32)
     segment_to_parameter[owner_ids] = np.arange(len(owner_ids), dtype=np.int32)
-    reference = problem.segments.materialize()  # 参考几何唯一物化（探针用）
+    reference = problem.segments.materialize()
     # 零位移参考几何与段采样中点：target/EPE 基准与 state0 采样共用一次
     # 重构；中点由重构几何提供（含 corner miter 切向调整），非刚体推算。
     reference_region, reference_segment_midpoints = reconstruct_region_with_midpoints(
         problem, np.zeros(segment_count, dtype=np.float64)
     )
-    # 共享静态打包（A1）：计分画布/参考探针坐标每 macro 一次，全状态复用
     pack = pack_macro_statics(
         problem,
         epe_distance_dbu=config.epe_distance_dbu,
@@ -276,9 +273,9 @@ def _prepare_gradient_context(
     # EPE profile 静态预计算（weight_epe>0 时）：固定在参考段中点/法向，
     # 与位移状态无关；Q = 2R 个对称半像素中心槽位。
     # R 的整数性已由 optimize 入口在空 owner 快速返回之前校验（单点）。
+    # q = (−R+0.5, …, −0.5, 0.5, …, R−0.5)·p：避开几何边界本身、对称覆盖
     epe_enabled = config.weight_epe > 0.0
     epe_radius = round(config.epe_distance_dbu / pixel_dbu) if epe_enabled else 0
-    # q = (−R+0.5, …, −0.5, 0.5, …, R−0.5)·p：避开几何边界本身、对称覆盖
     epe_offsets = (
         (np.arange(2 * epe_radius, dtype=np.float64) - epe_radius + 0.5) * pixel_dbu if epe_enabled else np.empty(0)
     )
@@ -287,15 +284,10 @@ def _prepare_gradient_context(
     epe_length_sum = 0.0  # L_epe 分母 L_sum = Σ len_s（macro 常量）
     for core_index in range(core_count):
         spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
-        # 梯度采样按 membership：该 core 可见的所有段中，凡 owner
-        # 段都在本 core 的 canvas 采样一次并累加到同一参数——跨 core 边界段
-        # 的邻 tile 贡献不丢弃；采样与 owner（发布归属）职责分离。
         members = np.asarray(problem.segments_for_core(core_index))
         core_sampling_members.append(members[segment_to_parameter[members] >= 0])
         owner_members = pack.owner_members[core_index]
         if epe_enabled and len(owner_members):
-            # EPE profile 固定在参考段（不随 current mask 移动）：中点沿
-            # 单位法向的 2R 个半像素中心；每段恰在本 owner core 建一条。
             midpoints = (reference.starts[owner_members] + reference.ends[owner_members]) * 0.5
             normals = reference.normals[owner_members]
             lengths = np.linalg.norm(reference.ends[owner_members] - reference.starts[owner_members], axis=1)
@@ -303,8 +295,8 @@ def _prepare_gradient_context(
             profile_xy = points_to_canvas(
                 profile_dbu.reshape(-1, 2), spec.context_box, pixel_dbu, canvas_pixels
             ).reshape(len(owner_members), -1, 2)
-            # 越界守卫：坐标必须落在闭区间 [0, canvas-1]（epe≤context 在
-            # 数学上保证；违反即输入/网格契约错误，不裁剪不跳过）。
+            # 越界守卫：坐标必须落在闭区间 [0, canvas-1]
+            # （epe≤context 在数学上保证；违反即输入/网格契约错误，不裁剪不跳过）。
             if float(profile_xy.min()) < 0.0 or float(profile_xy.max()) > float(canvas_pixels - 1):
                 raise ValueError(f"{macro_id} core {core_index} EPE profile 越出画布闭区间")
             epe_profiles.append(profile_xy)
@@ -313,9 +305,8 @@ def _prepare_gradient_context(
         else:
             epe_profiles.append(None)
             epe_lengths.append(None)
-    del reference  # 探针已提取，释放全量段几何数组
+    del reference
     if pack.total_pixels == 0:
-        # 有 owner 段却算不出任何计分像素，属于数据损坏，不能静默除零。
         raise ValueError("存在 owner 段但 ownership 计分像素为 0（数据不一致）")
     device = model.device
     threshold = float(model.config.print_threshold)  # 离散诊断二值阈值
@@ -511,24 +502,17 @@ def _take_optimizer_step(
     macro_id: str,
     state_index: int,
 ) -> tuple[kdb.Region, NDArray[np.float64]] | None:
-    """执行一次 Adam 更新，并把新参数重构为可发布的合法候选几何。
-
-    返回 None 表示参数无变化（no_update 判据）；重构失败以 ValueError/
-    ReconstructionError 原样上抛，停止决策留给调用方。macro_id 与
-    state_index 仅供异常消息定位，不参与计算。
-    """
+    """执行一次 Adam 更新，并把新参数重构为可发布的合法候选几何。"""
     max_displacement = float(problem.fragmentation.max_displacement_dbu)
-    before = parameters.detach().clone()  # 更新前快照（no_update 判据）
-    optimizer.step()  # 每 state 至多一次
+    before = parameters.detach().clone()
+    optimizer.step()
     with torch.no_grad():
-        parameters.clamp_(-max_displacement, max_displacement)  # 先裁上限
+        parameters.clamp_(-max_displacement, max_displacement)
     if not bool(torch.isfinite(parameters).all()):
         raise FloatingPointError(f"{macro_id} state {state_index} 候选参数非有限")
-    if torch.equal(parameters.detach(), before):  # 梯度全零时步长为零
+    if torch.equal(parameters.detach(), before):
         return None
     candidate_full[owner_ids] = parameters.detach().cpu().numpy().astype(np.float64)
-    # 候选必须先通过方向/hole/有效性守卫才可发布；返回的 Region 与采样
-    # 中点来自同一次重构，调用方必须成对发布（失败时两者都不更新）。
     return reconstruct_region_with_midpoints(problem, candidate_full)
 
 
@@ -553,10 +537,8 @@ def optimize_gradient_macro(
         radius = config.epe_distance_dbu / entry_pixel
         if radius < 1.0 or radius != int(radius):
             raise ValueError(f"weight_epe>0 要求 epe_distance_dbu 是 pixel_dbu 的正整数倍（R≥1），实际 R={radius}")
-    owner_ids = np.flatnonzero(problem.owner_indices >= 0)  # owner 段全局号
+    owner_ids = np.flatnonzero(problem.owner_indices >= 0)
     if len(owner_ids) == 0:
-        # 空或纯 context macro：没有可训练参数，O=0 必然没有计分像素，
-        # 任何评价都只会得到 0/0；直接以全零 baseline 停止，不建 optimizer。
         empty = GradientMBOPCIterationRecord(
             state_index=0,
             total_loss=0.0,
@@ -577,23 +559,23 @@ def optimize_gradient_macro(
     ctx = _prepare_gradient_context(problem, model, config)
     # 唯一可训练参数：owner 法向位移 [O]
     parameters = torch.zeros(len(owner_ids), dtype=torch.float32, device=ctx.device, requires_grad=True)
-    # 固定超参（规格钉死，不新增配置面）
+    # 固定超参
     optimizer = torch.optim.Adam(
         [parameters], lr=config.learning_rate_dbu, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0, amsgrad=False
     )
-    current_region = ctx.pack.reference_region  # 当前已发布合法几何
+    current_region = ctx.pack.reference_region
     current_segment_midpoints = ctx.reference_segment_midpoints
-    records = []  # 已评价状态记录（records[0] 恒为 baseline）
-    best_loss = float("inf")  # 严格更小才更新（平局保留较早状态）
+    records = []
+    best_loss = float("inf")
     best_state_index = 0
     best_owner = np.zeros(len(owner_ids), dtype=np.float64)
     stop_reason: str | None = None
     stop_detail: str | None = None
-    candidate_full = np.zeros(segment_count, dtype=np.float64)  # 展开缓冲
+    candidate_full = np.zeros(segment_count, dtype=np.float64)
     for state_index in range(config.iterations + 1):
-        can_update = state_index < config.iterations  # 末状态纯评价
+        can_update = state_index < config.iterations
         if can_update:
-            optimizer.zero_grad(set_to_none=True)  # 梯度按状态清零后累积
+            optimizer.zero_grad(set_to_none=True)
         current_owner = parameters.detach().cpu().numpy().astype(np.float64)
         evaluation = _evaluate_state(
             ctx,
@@ -632,20 +614,20 @@ def optimize_gradient_macro(
                 epe_loss=evaluation.epe_loss,
             )
         )
-        if evaluation.total_loss < best_loss:  # 严格更小才更新；相同保留较早状态
+        if evaluation.total_loss < best_loss:
             best_loss = evaluation.total_loss
             best_state_index = state_index
             best_owner = current_owner.copy()
-        if evaluation.total_loss == 0.0:  # 连续 loss 恰为零即达目的
+        if evaluation.total_loss == 0.0:
             stop_reason = "zero_loss"
             break
-        if state_index == config.iterations:  # 轮次自然用尽
+        if state_index == config.iterations:
             stop_reason = "iteration_limit"
             break
-        grad = parameters.grad  # 全部 batch 完成后的唯一屏障内检查
+        grad = parameters.grad
         if grad is None or not bool(torch.isfinite(grad).all()):
             raise FloatingPointError(f"{ctx.pack.macro_id} state {state_index} 梯度缺失或非有限")
-        try:  # 候选必须先通过方向/hole/有效性守卫才可发布
+        try:
             candidate = _take_optimizer_step(
                 problem,
                 parameters,
@@ -656,22 +638,17 @@ def optimize_gradient_macro(
                 state_index=state_index,
             )
         except (ValueError, ReconstructionError) as exc:
-            # 宽捕获有实测依据：几何退化（如位移共线使 ring 顶点不足）会以
-            # ValueError 从 KLayout 冒出而非 ReconstructionError（simple.py
-            # 同款证据）；收窄需改 reconstruction.py 包装。
             stop_reason = "invalid_geometry"
             stop_detail = f"state {state_index + 1} 候选重建失败：{exc}"
             break
-        if candidate is None:  # 参数无变化
+        if candidate is None:
             stop_reason = "no_update"
             break
-        # Region 与采样中点绑定发布：下一状态的栅格化与梯度采样恒来自
-        # 同一次合法候选重构（失败时两者都不更新）。
         current_region, current_segment_midpoints = candidate
-    if stop_reason is None:  # 防御兜底（iterations>=1 时循环内必设）
+    if stop_reason is None:
         stop_reason = "iteration_limit"
     best_full = np.zeros(segment_count, dtype=np.float64)
-    best_full[owner_ids] = best_owner  # context 段恒 0
+    best_full[owner_ids] = best_owner
     return GradientMBOPCResult(
         best_displacements=best_full,
         records=tuple(records),

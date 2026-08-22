@@ -1,11 +1,12 @@
 # gcd_45nm 多 macro 梯度 MB-OPC smoke；一轮更新可验证完整状态循环。
 
 [layout]
-layout = "../TestReticle/gcd_30um.gds"
+layout = "../TestReticle\\p50_1024\\p50_1024_dense_line_clear.gds"
 top_cell = "TOP"
 layer = 11
 datatype = 0
 polarity = "clear"
+field_size_nm = [1024, 1024]
 
 [partition]
 macro_grid = [1, 1]
@@ -24,11 +25,11 @@ max_displacement_nm = 24
 miter_limit = 4.0
 
 [gradient]
-iterations = 10
+iterations = 80
 learning_rate_nm = 1.0
 weight_nominal_l2 = 1.0
 weight_process_l2 = 0.5
-weight_pvband = 0.1
+weight_pvband = 1.0
 epe_distance_nm = 16
 batch_size = 8
 target_cache_mb = 512

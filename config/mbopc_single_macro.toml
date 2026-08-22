@@ -1,11 +1,12 @@
 # 单 macro（全 ROI 一个 macro、内部多 tile）simple MB-OPC 默认配置。
 
 [layout]
-layout = "../TestReticle/bench_30um_clear.gds"
+layout = "../TestReticle\\p50_1024\\p50_1024_dense_line_clear.gds"
 top_cell = "TOP"
 layer = 11
 datatype = 0
 polarity = "clear"
+field_size_nm = [1024, 1024]
 
 [partition]
 macro_grid = [1, 1]

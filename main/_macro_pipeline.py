@@ -492,11 +492,7 @@ def save_final_lithography(
     batch_size: int,
     output_dir: Path,
 ) -> dict:
-    """从 plan 提取六键，对最终合并版图留档（save_lithography_pngs 薄包装）。
-
-    不传 top_cell：plan["top_cell"] 是源版图顶层名，final GDS 顶层是
-    合并器写出的结果 Cell，用源名打开反而失败。
-    """
+    """从 plan 提取六键，对最终合并版图留档（save_lithography_pngs 薄包装）。"""
     layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = _plan_lithography_arguments(plan)
     return save_lithography_pngs(
         final_layout, layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels, model, batch_size, output_dir
@@ -510,12 +506,7 @@ def save_source_lithography(
     batch_size: int,
     output_dir: Path,
 ) -> dict:
-    """同一内核对源（未 OPC）版图留档：同参数，可逐 tile 对照。
-
-    差异点是显式传 plan["top_cell"]（源版图可多顶层）；tile 网格按源
-    GDS 自身 bbox 规划，与最终目录不保证重合，对照以 manifest 的
-    ownership_box 对账。
-    """
+    """同一内核对源（未 OPC）版图留档：同参数，可逐 tile 对照。"""
     layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = _plan_lithography_arguments(plan)
     return save_lithography_pngs(
         source_layout,

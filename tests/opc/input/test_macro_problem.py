@@ -15,7 +15,8 @@ from opc.input.edge import (
     reconstruct_region,
     reconstruct_region_with_midpoints,
 )
-from opc.input.edge.fragmentation import FragmentationConfig
+from opc.input.edge.fragmentation import FragmentationConfig, fragment_edges
+from opc.input.edge.problem import _split_segments_at_macro_and_core_cuts, _split_segments_at_macro_cuts
 from opc.input.edge.reconstruction import _reconstruct_geometry
 
 LAYER = LayerSpec(1, 0)
@@ -49,9 +50,9 @@ def _assert_problem_invariants(problem, source):
     # 可写段开区间不跨任何 ownership 切线（端点恰在切线上按半开约定归右/上）。
     lo = np.minimum(geometry.starts[owned], geometry.ends[owned])
     hi = np.maximum(geometry.starts[owned], geometry.ends[owned])
-    for cuts, axis in ((problem.macro.x_cuts, 0), (problem.macro.y_cuts, 1)):
-        for cut in cuts[1:-1]:
-            assert not np.any((lo[:, axis] < cut) & (hi[:, axis] > cut))
+    box = problem.macro.ownership_box
+    for cut, axis in ((box.left, 0), (box.right, 0), (box.bottom, 1), (box.top, 1)):
+        assert not np.any((lo[:, axis] < cut) & (hi[:, axis] > cut))
     # 段中点归属与 owner 一致（中点定唯一 owner 的构造契约）。
     midpoints = (geometry.starts[owned] + geometry.ends[owned]) * 0.5
     assert np.array_equal(problem.macro.locate_owned_points(midpoints), problem.owner_indices[owned])
@@ -71,8 +72,8 @@ def _reference_ring_count(region, macro):
 def _edge_split_params(problem, first, second):
     """返回指定数学边（按两端点整数坐标匹配）上的分裂参数集。"""
     vertices = problem.segments.contours.vertices
-    start = vertices[problem.segments.edge_ids]
-    end = vertices[problem.segments.edge_next_ids[problem.segments.edge_ids]]
+    start = vertices[problem.segments.segment_edge_ids]
+    end = vertices[problem.segments.edge_next_ids[problem.segments.segment_edge_ids]]
     hit = (
         (start[:, 0] == first[0]) & (start[:, 1] == first[1]) & (end[:, 0] == second[0]) & (end[:, 1] == second[1])
     ) | ((start[:, 0] == second[0]) & (start[:, 1] == second[1]) & (end[:, 0] == first[0]) & (end[:, 1] == first[1]))
@@ -83,8 +84,8 @@ def _edge_split_params(problem, first, second):
 class TestOwnershipSplit:
     """ownership 切线分段与 owner 唯一性。"""
 
-    def test_owned_segment_never_crosses_two_owners(self):
-        """可写段内部不跨任何 ownership 切线，中点归属即唯一 owner。"""
+    def test_owned_segment_never_crosses_macro_ownership(self):
+        """可写段内部不跨 macro ownership，中点归属仍给出唯一 owner。"""
         problem = _problem(kdb.Region(kdb.Box(10, 10, 70, 50)), _macros()[0])
         geometry = problem.segments.materialize(None)
         owned = np.flatnonzero(problem.owner_indices >= 0)
@@ -93,12 +94,31 @@ class TestOwnershipSplit:
         hi = np.maximum(geometry.starts[owned], geometry.ends[owned])
         # 内部穿越判定：切线严格落在段开区间 (lo, hi) 内。端点恰在切线上时按
         # 半开约定归右/上，与中点 owner 不同是预期行为，不算跨越。
-        for cuts, axis in ((problem.macro.x_cuts, 0), (problem.macro.y_cuts, 1)):
-            for cut in cuts[1:-1]:
-                crossing = (lo[:, axis] < cut) & (hi[:, axis] > cut)
-                assert not np.any(crossing)
+        box = problem.macro.ownership_box
+        for cut, axis in ((box.left, 0), (box.right, 0), (box.bottom, 1), (box.top, 1)):
+            crossing = (lo[:, axis] < cut) & (hi[:, axis] > cut)
+            assert not np.any(crossing)
         midpoints = (geometry.starts[owned] + geometry.ends[owned]) * 0.5
         assert np.array_equal(problem.macro.locate_owned_points(midpoints), problem.owner_indices[owned])
+
+    def test_owned_segment_may_cross_core_cut(self):
+        """core 切线只影响 owner 中点归属，不强制切开同一物理 segment。"""
+        problem = _problem(kdb.Region(kdb.Box(10, 10, 70, 50)), _macros()[0])
+        geometry = problem.segments.materialize(None)
+        owned = np.flatnonzero(problem.owner_indices >= 0)
+        lo = np.minimum(geometry.starts[owned], geometry.ends[owned])
+        hi = np.maximum(geometry.starts[owned], geometry.ends[owned])
+        core_cut = int(problem.macro.x_cuts[1])
+        assert np.any((lo[:, 0] < core_cut) & (hi[:, 0] > core_cut))
+
+    def test_macro_only_and_macro_core_wrappers_have_distinct_cuts(self):
+        """两个封装共用切分内核，但只切 macro 版本不切 core 内部切线。"""
+        macro = _macros()[0]
+        contours = extract_contour(kdb.Region(kdb.Box(10, 10, 70, 50)))
+        fragmented = fragment_edges(contours, CFG)
+        macro_only = _split_segments_at_macro_cuts(fragmented, macro)
+        macro_and_core = _split_segments_at_macro_and_core_cuts(fragmented, macro)
+        assert macro_only.segment_count < macro_and_core.segment_count
 
     def test_segments_outside_macro_ownership_are_readonly_context(self):
         """伸入邻居 macro 的部分段 owner 为 -1，且数量非零。"""
@@ -689,7 +709,7 @@ class TestPersistence:
         for name in ("vertices", "ring_offsets", "polygon_ring_offsets"):
             assert np.array_equal(getattr(loaded.segments.contours, name), getattr(problem.segments.contours, name))
         for name in (
-            "edge_ids",
+            "segment_edge_ids",
             "edge_next_ids",
             "edge_polygon_ids",
             "edge_normals",

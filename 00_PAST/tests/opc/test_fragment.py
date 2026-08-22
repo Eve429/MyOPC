@@ -23,12 +23,12 @@ def test_corner_and_middle_fragments_cover_edges_with_bounded_lengths() -> None:
     assert lengths.max() <= 20.0 + 1e-12
     assert np.isclose(lengths.sum(), 300.0)
     edge_count = len(segments.contours.vertices)
-    counts = np.bincount(segments.edge_ids, minlength=edge_count)
+    counts = np.bincount(segments.segment_edge_ids, minlength=edge_count)
     assert sorted(counts.tolist()) == [4, 4, 6, 6]
     vertices = segments.contours.vertices
     edge_lengths = np.linalg.norm(
         vertices[segments.edge_next_ids] - vertices, axis=1)
-    indices = np.flatnonzero(segments.edge_ids == int(np.argmax(edge_lengths)))
+    indices = np.flatnonzero(segments.segment_edge_ids == int(np.argmax(edge_lengths)))
     assert np.allclose(lengths[indices], [10, 20, 20, 20, 20, 10])
 
 
@@ -59,7 +59,7 @@ def test_diagonal_segments_are_deterministic_and_move_along_unit_normals() -> No
     config = FragmentationConfig(5, 20, 6)
     contours = extract_contour(mask.region)
     first, second = fragment_edges(contours, config), fragment_edges(contours, config)
-    np.testing.assert_array_equal(first.edge_ids, second.edge_ids)
+    np.testing.assert_array_equal(first.segment_edge_ids, second.segment_edge_ids)
     np.testing.assert_allclose(first.t0, second.t0)
     np.testing.assert_allclose(first.t1, second.t1)
     base = first.materialize()
@@ -107,5 +107,5 @@ def test_shared_fragment_count_formula_matches_real_randomized_batches() -> None
         edge_next[contours.ring_offsets[1:] - 1] = contours.ring_offsets[:-1]
         edge_lengths = np.linalg.norm(vertices[edge_next] - vertices, axis=1)
         expected = count_edge_fragments(edge_lengths, corner, maximum)
-        actual = np.bincount(segments.edge_ids, minlength=len(edge_lengths))
+        actual = np.bincount(segments.segment_edge_ids, minlength=len(edge_lengths))
         np.testing.assert_array_equal(actual, expected)

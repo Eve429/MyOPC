@@ -591,3 +591,11 @@ skipped 前后一致。
 等价校验（tmp/ast_check.py，剥离注释/docstring 后语法树逐位一致）+ 四件套
 门禁 695+1。生产树合计删 ~490 处表面注释、压缩 ~10 个长段，契约/公式/
 方向/内存注释全数保留。
+
+## 2026-08-22（会话：macro-only / macro+core 切分封装）
+
+保留同一个向量化切分内核，新增 `_split_segments_at_macro_cuts` 与
+`_split_segments_at_macro_and_core_cuts` 两个语义入口；`prepare_macro_problem`
+改用 macro-only，core 内跨界段由中点 owner + membership 处理。补充两种路径
+差异和跨 core 采样回归，定向套件 170 passed；同步更新当前数据流、边段契约和
+开发手册。未修改 layout、geometry、00_PAST。

@@ -605,7 +605,7 @@ class TestGeometryMatrix:
         self._assert_valid_publication(problem, result)
 
     def test_cross_core_geometry(self, monkeypatch):
-        """跨全部 core 的图形：梯度按全部 membership 采样（40 条）。"""
+        """跨全部 core 的图形：梯度按全部 membership 采样。"""
         problem = _problem(kdb.Region(kdb.Box(10, 10, 70, 70)))  # 跨 2×2 core
         counts = []  # 每次 apply 实际进入采样路径的条目数
 
@@ -622,9 +622,9 @@ class TestGeometryMatrix:
         monkeypatch.setattr(gradient_module, "_EdgeGradientMask", _CountingMask)
         result = _optimize(problem, _LinearModel(), _config(batch_size=1))
         self._assert_valid_publication(problem, result)
-        # state0 共 4 次 apply（batch_size=1 逐 core）；40 条 = 全部 membership
-        # 中 owner 段（修复前 owner-only 仅 24 条，丢跨 core 边界段邻 tile 贡献）。
-        assert sum(counts[:4]) == 40
+        # state0 共 4 次 apply（batch_size=1 逐 core）；macro-only 分段保留
+        # 跨 core 的连续段，因此每段由 membership 按覆盖 core 读取一次。
+        assert sum(counts[:4]) == 32
 
     def test_cross_core_contributions_sum(self, monkeypatch):
         """同一参数的跨 core 梯度贡献严格求和（防 owner-only/覆盖/平均）。"""
@@ -1268,7 +1268,7 @@ class TestRealModel:
         chosen = []
         seen_edges = set()
         for index in np.argsort(-lengths):
-            edge = int(problem.segments.edge_ids[index])
+            edge = int(problem.segments.segment_edge_ids[index])
             if index in set(owner_ids.tolist()) and edge not in seen_edges:
                 seen_edges.add(edge)
                 chosen.append(int(np.flatnonzero(owner_ids == index)[0]))

@@ -31,30 +31,18 @@ _FORMAT_VERSION = 3
 class MacroProblem:
     """一个 macro 可独立保存、加载和重复迭代的全部参考输入。"""
 
-    macro: MacroSpec
-    # 当前任务的 macro/core 网格、context、pixel 和 canvas 契约。
-
-    layer: LayerSpec
-    # 当前 problem 处理和最终输出的唯一 GDS layer/datatype。
-
-    polarity: MaskPolarity
-    # 源 polygon 的 mask 极性；栅格输出仍统一使用 1=透光、0=不透光。
-
-    fragmentation: FragmentationConfig
-    # 参考边段长度、最大允许位移和 miter 限制；阶段二不得重新计算。
-
-    segments: SegmentBatch
-    # 完整候选 polygon 的轮廓拓扑、数学边和控制边段，是参考几何唯一数组真源。
-
+    macro: MacroSpec  # 当前任务的 macro/core 网格、context、pixel 和 canvas 契约。
+    layer: LayerSpec  # 当前 problem 处理和最终输出的唯一 GDS layer/datatype。
+    polarity: MaskPolarity  # 源 polygon 的 mask 极性；栅格输出仍统一使用 1=透光、0=不透光。
+    fragmentation: FragmentationConfig  # 参考边段长度、最大允许位移和 miter 限制；阶段二不得重新计算。
+    segments: SegmentBatch  # 完整候选 polygon 的轮廓拓扑、数学边和控制边段，是参考几何唯一数组真源。
     owner_indices: Int32Array
     # 长度 S。owner_indices[s] 是 segment s 唯一可写的 macro 局部 core 编号；
     # -1 表示该 segment 只因 context 被当前 macro 看见，当前 macro 不得修改它。
-
     core_offsets: Int64Array
     # 长度 C+1 的 CSR 偏移。core c 的可见 segment 位于
     # member_segment_indices[core_offsets[c]:core_offsets[c+1]]。
     # 使用 int64 是因为 membership 总量 M 可能超过 int32 累计范围。
-
     member_segment_indices: Int32Array
     # 长度 M。按 core 连续存储 context 内所有 segment 的局部 segment 编号；
     # 同一 segment 可以因 context 同时出现在多个 core 的 membership 中，
@@ -147,7 +135,7 @@ class MacroProblem:
             "edge_polygon_ids": segments.edge_polygon_ids.astype(np.int32, copy=False),
             "edge_normals": segments.edge_normals.astype(np.float64, copy=False),
             "ring_segment_offsets": segments.ring_segment_offsets.astype(np.int64, copy=False),
-            "segment_edge_ids": segments.edge_ids.astype(np.int32, copy=False),
+            "segment_edge_ids": segments.segment_edge_ids.astype(np.int32, copy=False),
             "segment_t0": segments.t0.astype(np.float64, copy=False),
             "segment_t1": segments.t1.astype(np.float64, copy=False),
             "owner_indices": self.owner_indices.astype(np.int32, copy=False),
@@ -192,7 +180,7 @@ class MacroProblem:
             )
             segments = SegmentBatch(
                 contours=contours,
-                edge_ids=data["segment_edge_ids"],
+                segment_edge_ids=data["segment_edge_ids"],
                 edge_next_ids=data["edge_next_ids"],
                 edge_polygon_ids=data["edge_polygon_ids"],
                 edge_normals=data["edge_normals"],
@@ -214,18 +202,24 @@ class MacroProblem:
             )
 
 
-def _split_segments_at_ownership_cuts(
+def _split_segments_at_cuts(
     segments: SegmentBatch,
     x_cuts: NDArray[np.int64],
     y_cuts: NDArray[np.int64],
 ) -> SegmentBatch:
-    """在 macro/core ownership 切线交点处分裂控制段，保证一段不跨两个 owner。"""
+    """在给定 ownership 切线处分裂控制段，保证每段不跨传入的切线范围。
+
+    中点只能为已经落在单一 ownership 内的 segment 选择 owner；如果调用方要求
+    按某组切线隔离写入范围，就必须先保留原数学边参数区间，在这些切线处精确
+    分裂，再由调用方用分裂后 segment 中点建立唯一 owner。query/context 边界
+    只是只读范围，不属于传入切线，不在这里截断几何。
+    """
     count = segments.segment_count
-    # 空 macro（查询框不接触任何图形）没有可分裂的段，原样返回；后续的
-    # repeat/bincount 展开都假设至少存在一个段。
+    # 空 macro（查询框不接触任何图形）没有可分裂的段，原样返回；
+    # 后续的 repeat/bincount 展开都假设至少存在一个段。
     if not count:
         return segments
-    edge_ids = segments.edge_ids
+    edge_ids = segments.segment_edge_ids
     vertices = segments.contours.vertices
     starts_v = vertices[edge_ids].astype(np.int64)
     ends_v = vertices[segments.edge_next_ids[edge_ids]].astype(np.int64)
@@ -255,6 +249,7 @@ def _split_segments_at_ownership_cuts(
         # （那会在边界两侧产生 33/34 DBU 分歧）。
         return seg, (cut_values - origin[seg].astype(np.float64)) / delta[seg]
 
+    # x/y 两组切线分别求交后合并；斜边可能同时穿过两组切线，后面统一排序去重。
     x_seg, x_t = _crossings(x_cuts, x0, x1)
     y_seg, y_t = _crossings(y_cuts, y0, y1)
     seg_all = np.concatenate((x_seg, y_seg))
@@ -272,6 +267,8 @@ def _split_segments_at_ownership_cuts(
         duplicate = (seg_all[1:] == seg_all[:-1]) & np.isclose(t_all[1:], t_all[:-1], atol=1e-12, rtol=0.0)
         keep = np.concatenate(([True], ~duplicate))
         seg_all, t_all = seg_all[keep], t_all[keep]
+    # 每个原 segment 的内部切点数量决定输出片段数；没有切点时仍走同一条
+    # 向量化路径，保证返回数组与输入逐值一致而不维护特殊分支。
     counts = np.bincount(seg_all, minlength=count)
     cross_starts = np.concatenate(([0], np.cumsum(counts)[:-1]))
     # 每段输出 counts+2 个边界点、counts+1 个新段；全零穿越时新批次与
@@ -292,12 +289,14 @@ def _split_segments_at_ownership_cuts(
     else:
         mid_values = np.zeros(len(boundary_seg), dtype=np.float64)
     values = np.where(first, segments.t0[boundary_seg], np.where(last, segments.t1[boundary_seg], mid_values))
+    # 新 segment 仍引用原数学边，只替换参数子区间；这样同一数学边上的碎片
+    # 在重建时仍能按原 ring 拓扑首尾连接，不会把 ownership 切线误当成新拐角。
     piece_offsets = np.concatenate(([0], np.cumsum(counts + 1)))
     # 新段沿用原段的数学边号：分裂点只是控制段边界，同一条真实数学边上的
     # 全部碎片共享同一个 edge_id，重建时才能按同边同位移规则合并 junction。
     return SegmentBatch(
         contours=segments.contours,
-        edge_ids=segments.edge_ids[boundary_seg[~last]],
+        segment_edge_ids=segments.segment_edge_ids[boundary_seg[~last]],
         edge_next_ids=segments.edge_next_ids,
         edge_polygon_ids=segments.edge_polygon_ids,
         edge_normals=segments.edge_normals,
@@ -307,12 +306,25 @@ def _split_segments_at_ownership_cuts(
     )
 
 
+def _split_segments_at_macro_and_core_cuts(segments: SegmentBatch, macro: MacroSpec) -> SegmentBatch:
+    """同时按 macro 外边界和 macro 内 core 切线分裂控制段。"""
+    return _split_segments_at_cuts(segments, macro.x_cuts, macro.y_cuts)
+
+
+def _split_segments_at_macro_cuts(segments: SegmentBatch, macro: MacroSpec) -> SegmentBatch:
+    """只按 macro ownership 外边界分裂控制段，保留 core 内跨界 segment。"""
+    box = macro.ownership_box
+    x_cuts = np.asarray((box.left, box.right), dtype=np.int64)
+    y_cuts = np.asarray((box.bottom, box.top), dtype=np.int64)
+    return _split_segments_at_cuts(segments, x_cuts, y_cuts)
+
+
 def _build_macro_ownership(
     segments: SegmentBatch,
     macro: MacroSpec,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """生成每段唯一 owner 和每个 core 的 context membership CSR。"""
-    edge_ids = segments.edge_ids
+    edge_ids = segments.segment_edge_ids
     vertices = segments.contours.vertices
     # ownership 只需要参考端点：从数学边与参数区间直接插值，不构造完整
     # SegmentGeometry（省掉 S×2 法向复制与临时对象）。
@@ -390,14 +402,7 @@ def prepare_macro_problem(
     *,
     data_bounds: DbuBox,
 ) -> MacroProblem:
-    """从完整相交图形一次生成可供多轮迭代复用的 macro 参考问题。
-
-    data_bounds 是全局数据包络（layer bbox，须由调用方显式提供——macro
-    局部 region 的 bbox 只是包络的局部投影，不可代推）。负板在提边之前
-    补画包络外到查询边界的不透光图形：共线相接处在布尔并中融合（不产生
-    虚假可动边）；补区外缘恒为 context-only 段（owner=-1，不可动、不进
-    输出）；包络边透光缺口处形成真实铬|石英边，正常参与优化。
-    """
+    """从完整相交图形一次生成可供多轮迭代复用的 macro 参考问题。"""
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")
     try:
@@ -408,15 +413,15 @@ def prepare_macro_problem(
     # 查询框从不参与布尔相交，其四条边不会进入 SegmentBatch 成为虚假 OPC 边
     # （负板补铬外缘虽落在查询边界，它是真实几何的边，属 context-only 段）。
     region = normalize_mask(batch, layer)
+    # 针对负板，补充一个到macro上下文的图形，这样最外边的边框属于context范围不会被优化；
+    # 最终输出的时候是按照板的尺寸截取不会有影响
     if normalized is MaskPolarity.OPAQUE:
-        # 布尔并的输出表示可能保留与既有铬共线相接的内部边（物理覆盖已
-        # 融合、ring 表示未融合，实测会多出 48 个虚假段），必须显式
-        # merged() 消除——等价于 normalize_mask 对 GDS cut-line 的处理。
-        region = (region + _opaque_surround(macro.query_box, data_bounds)).merged()
+        region = (region + (kdb.Region(macro.query_box.to_native()) - kdb.Region(data_bounds.to_native()))).merged()
     segments = fragment_edges(extract_contour(region), fragmentation, normalized)
-    # 先按长度分段、再按 ownership 切线分裂：保证可写段的内部不跨两个 owner，
-    # 否则跨界段会被某一侧独占更新而另一侧副本停在旧位置，边界处不一致。
-    segments = _split_segments_at_ownership_cuts(segments, macro.x_cuts, macro.y_cuts)
+    # 先按长度分段，再只按 macro ownership 外边界分裂；core 内跨界 segment
+    # 保留为一个全局优化变量，由中点确定唯一 owner，邻 core 通过 membership 读取。
+    # todo 可能需要考虑一下某一边太短了合并一下
+    segments = _split_segments_at_macro_cuts(segments, macro)
     owners, core_offsets, members = _build_macro_ownership(segments, macro)
     return MacroProblem(
         macro=macro,

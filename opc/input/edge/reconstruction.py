@@ -99,8 +99,8 @@ def _reconstruct_geometry(
     # 前一段/当前段的端点与数学边号：边号相同即原本是一条数学边，此处不是 corner
     previous_ends = geometry.ends[previous]
     current_starts = geometry.starts
-    previous_edges = segments.edge_ids[previous]
-    current_edges = segments.edge_ids
+    previous_edges = segments.segment_edge_ids[previous]
+    current_edges = segments.segment_edge_ids
     same_edge = previous_edges == current_edges
     same_position = same_edge & np.isclose(values[previous], values, atol=1e-12, rtol=0.0)
     junctions = (previous_ends + current_starts) * 0.5

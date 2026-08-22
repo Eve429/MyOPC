@@ -61,7 +61,8 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
    扫描（不物化）。
 2. **阶段 1** `prepare_problems`：逐 macro 一次完成完整相交物化 →
    `normalize_mask` → `extract_contour` → `fragment_edges` →
-   ownership 切线分裂 → owner/CSR → `MacroProblem.save`（NPZ）；全部成功
+   macro ownership 外边界切线分裂 → owner/CSR → `MacroProblem.save`（NPZ）；
+   core 内跨界段保留为一个全局参数；全部成功
    后才写 `plan.json`。
 3. **阶段 2** `run_round` ×2：每 macro 逐 core owner 唯一写入（重复写即
    失败）、written 恰一次守卫、`reconstruct_region`、逐 core 居中 256

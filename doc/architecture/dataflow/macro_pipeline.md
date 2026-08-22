@@ -21,7 +21,7 @@ main/run_macro_pipeline.py::main → run(config_path)
 │     └─ opc/input/edge/problem.py::prepare_macro_problem
 │        ├─ opc/input/mask.py::normalize_mask（合并物理覆盖、恢复孔洞）
 │        ├─ geometry.extract_contour → edge/fragmentation.py::fragment_edges
-│        ├─ problem.py::_split_segments_at_ownership_cuts（段内部不跨 owner）
+│        ├─ problem.py::_split_segments_at_macro_cuts（段内部不跨 macro ownership）
 │        └─ problem.py::_build_macro_ownership（owner/CSR membership）
 │           → MacroProblem.save → problems/<macro>.npz
 │     全部成功后 atomic_write_json(plan.json)
@@ -55,7 +55,7 @@ main/_macro_pipeline.py::save_lithography_pngs
             plan_macros(bounds)                        # 两级网格
             for macro in macros（行优先）:
                 batch = query(query_box).materialize_intersecting
-                problem = prepare_macro_problem(...)   # 提边/分段/切线分裂/owner
+                problem = prepare_macro_problem(...)   # 提边/分段/macro切线分裂/owner
                 problem.save(NPZ)
             # 全部成功后才写 plan.json（失败不留"已完成"计划）
 阶段 2  双轮：for r, delta in [(1,+2nm), (2,−2nm)]:

@@ -153,11 +153,7 @@ def upload_eval_batch(
     ownership: NDArray[np.bool_],
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """批 numpy 上设备：target 转 float32/255，mask/ownership 直传。
-
-    uint8 LRU 缓存值到连续 target 的 /255 换算在此单源；from_numpy().to()
-    不构造计算图，调用方 no_grad 边界不影响数值。
-    """
+    """批 numpy 上设备：target 转 float32/255，mask/ownership 直传。"""
     target_tensor = torch.from_numpy(targets).to(device=device, dtype=torch.float32).div_(255.0)
     mask_tensor = torch.from_numpy(masks).to(device=device)
     ownership_tensor = torch.from_numpy(ownership).to(device=device)

@@ -180,13 +180,13 @@ def evaluate_state(
             totals["pvband"] += pvband
             if epe_result is not None:
                 totals["epe"] += epe_result.violation_count  # 违规段数
-                # 回切整 batch 化：每张小张量只做一次设备→主机搬运，随后全部
-                # 统计与写回在 numpy 侧切片完成，避免逐 core 的 GPU 同步。
+                # 回切整 batch 化：每张小张量只做一次设备→主机搬运，
+                # 随后全部统计与写回在 numpy 侧切片完成，避免逐 core 的 GPU 同步。
                 valid_all = epe_result.valid.cpu().numpy()
                 ambiguous_all = epe_result.ambiguous.cpu().numpy()
                 totals["valid"] += int(valid_all.sum())
                 totals["ambiguous"] += int(ambiguous_all.sum())
-                if can_update:  # 方向只写提案缓冲，current 全程只读
+                if can_update:
                     # -1/0/+1 方向 × 当前提案步长（一次取回）
                     moves = epe_result.directions.cpu().numpy().astype(np.float64) * step_dbu
                     cursor = 0  # 探针游标（按批内 core 顺序回切）
@@ -198,12 +198,11 @@ def evaluate_state(
                         cursor += len(idx)
                         next_values[idx] += moves[piece]
                         written[idx] = True
-            # 释放：批结束只保留标量与方向，GPU 张量立即失去引用。
             del printed, mask_tensor, target_tensor, ownership_tensor
-        if on_tiles_completed is not None:  # 释放后才报告进度
+        if on_tiles_completed is not None:
             on_tiles_completed(len(core_indices))
     # 出口：核对方向写集与 context 归零，提案裁到位移上限。
-    if can_update:  # 评价专用调用不产生提案，无需核对写集
+    if can_update:
         if not np.array_equal(written, problem.owner_indices >= 0):
             raise RuntimeError("owner 段未全部产生方向或出现重复方向")
         np.clip(next_values, -max_displacement, max_displacement, out=next_values)
@@ -260,7 +259,7 @@ def optimize_simple_macro(
         to_canvas=points_to_canvas,
     )
     pending_step = step_for(1)
-    # 评价 + State 1 提案
+    # 评价 + State 1 位移提案
     proposal = evaluate_state(
         problem,
         baseline_region,
@@ -288,42 +287,32 @@ def optimize_simple_macro(
             elapsed_seconds=time.perf_counter() - started,
         )
     ]
-    best_epe = proposal.epe  # 最佳状态 EPE（EPE 相同保留较早状态，由严格小于实现）
-    best_state_index = 0  # baseline 先当最佳
+    best_epe = proposal.epe
+    best_state_index = 0
     best_displacements = zeros.copy()
     stop_reason: str | None = None
     stop_detail: str | None = None
-    if owner_count and proposal.valid_probes == 0:  # 有段却无有效探针
-        # 「无法评价」不是「零违规」：探针越过窄特征落入异侧（如 2nm 壁 +
-        # 8nm 探针距离）时全部探针被判无效，epe 恒为 0；此时以零位移为 best
-        # 终止并显式记录原因，不冒充收敛。
+    if owner_count and proposal.valid_probes == 0:
         stop_reason = "insufficient_probes"
         stop_detail = f"有效 EPE 探针 0 个 / owner 段 {owner_count} 个，无法评价（探针距离可能大于最窄特征）"
-    elif proposal.epe == 0:  # baseline 已无违规
-        stop_reason = "zero_epe"  # 直接以零位移为最佳
-    else:  # 常规路径：逐状态移动并评价
-        for state_index in range(1, config.iterations + 1):  # 移动后状态序
-            candidate = proposal.next_displacements  # 上一评价的提案
-            candidate_moved = proposal.moved_segments  # 该提案改变的段数
-            if not candidate_moved:  # 提案与当前完全相同
-                # 同一状态再评一次不产生任何新信息（指标、几何全部不变），
-                # 直接停止，省去一次完整重建与光刻前向。
+    elif proposal.epe == 0:
+        stop_reason = "zero_epe"
+    else:
+        for state_index in range(1, config.iterations + 1):
+            candidate = proposal.next_displacements
+            candidate_moved = proposal.moved_segments
+            if not candidate_moved:
                 stop_reason = "no_update"
                 break
             started = time.perf_counter()
-            try:  # 候选必须先通过方向/hole/有效性守卫
+            try:
                 candidate_region = reconstruct_region(problem, candidate)
-            except (ValueError, ReconstructionError) as exc:  # 非法几何终止
-                # 宽捕获有实测依据：几何退化（如共线 ring 少于三顶点）会以
-                # ValueError 从 KLayout 冒出而非 ReconstructionError，收窄需
-                # 改 reconstruction.py 包装；位移 shape/有限性已在
-                # evaluate_state 入口拦截，此处 ValueError 几乎只可能是几何退化。
-                stop_reason = "invalid_geometry"  # 保留最后合法 best
-                # 错误原因不得吞掉
+            except (ValueError, ReconstructionError) as exc:
+                stop_reason = "invalid_geometry"
                 stop_detail = f"state {state_index} 候选重建失败：{exc}"
                 break
-            can_propose = state_index < config.iterations  # 末状态不再生成
-            pending_next = step_for(state_index + 1)  # 被丢弃提案的步长（末状态）
+            can_updata = state_index < config.iterations
+            pending_next = step_for(state_index + 1)
             # 移动后状态评价（末状态纯评价）
             proposal = evaluate_state(
                 problem,
@@ -333,7 +322,7 @@ def optimize_simple_macro(
                 config,
                 pending_next,
                 target_cache,
-                can_update=can_propose,
+                can_update=can_updata,
                 reference=reference,
                 pack=pack,
                 on_tiles_completed=on_tiles_completed,
@@ -352,25 +341,22 @@ def optimize_simple_macro(
                     elapsed_seconds=time.perf_counter() - started,
                 )
             )
-            pending_step = pending_next  # 下一状态记录使用的步长
-            if owner_count and proposal.valid_probes == 0:  # 移动后无法评价
-                # 必须先于 best 比较终止：valid_probes==0 时 epe 恒 0，若放行
-                # 会被 epe<best 误当成改善状态。
+            pending_step = pending_next
+            if owner_count and proposal.valid_probes == 0:
                 stop_reason = "insufficient_probes"
                 stop_detail = f"state {state_index} 有效 EPE 探针 0 个 / owner 段 {owner_count} 个，无法评价"
                 break
-            if proposal.epe < best_epe:  # 严格更小才更新；相同保留较早状态
+            if proposal.epe < best_epe:
                 best_epe = proposal.epe
                 best_state_index = state_index
                 best_displacements = candidate.copy()
-            if proposal.epe == 0:  # 无违规即达目的
+            if proposal.epe == 0:
                 stop_reason = "zero_epe"
                 break
-            if can_propose and proposal.moved_segments == 0:  # 提案不再移动
-                # 末状态 can_update=False 时 moved 恒 0，不构成 no_update 证据。
+            if can_updata and proposal.moved_segments == 0:
                 stop_reason = "no_update"
                 break
-        if stop_reason is None:  # 状态数自然用尽
+        if stop_reason is None:
             stop_reason = "iteration_limit"
     return SimpleMBOPCResult(
         best_displacements=best_displacements,

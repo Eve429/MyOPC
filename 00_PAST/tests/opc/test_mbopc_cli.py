@@ -8,7 +8,7 @@ from pathlib import Path
 import klayout.db as kdb
 import pytest
 
-from main.run_mbopc import build_parser, run
+from main.run_mbopc_simple import build_parser, run
 
 
 def _write_single_layer_layout(path: Path) -> Path:

@@ -544,3 +544,15 @@
   场边界节）、development_manual §8b、CLAUDE.md 状态行、test_manual
   （686 + 补铬组描述）、reticle plan §10.5、dataflow 同步。全量
   686 passed + 1 skipped。
+
+- 双求解器整改（用户发起：两 optimize 函数同义异名 + pack/ctx 差异
+  + optimize_macro 名不达意；三决策经 AskUserQuestion 确认全取推荐项），
+  三批交付：批次 1（94b9507）结构收敛——组批单源 iter_core_batches/
+  upload_eval_batch + _GradientContext 瘦身以 pack 为唯一共享源（行为
+  不变，686+1skip 前后一致）；批次 2（9b70750）命名统一——
+  optimize_simple_macro/evaluate_state/SimpleMBOPCIterationRecord/
+  state_index/best_state_index + _prepare_gradient_context，产物键对齐
+  gradient 入口（result.npz v2）；批次 3 文档——contracts/mbopc 新增
+  静态分层小节、dataflow 双文件、development_manual、data_model（含
+  环带批漏网的 v2/dark_box 陈旧行）、test_manual、contracts/edge。
+  ADR-004 为点时决策记录保持原文。全量 686 passed + 1 skipped。

@@ -64,7 +64,7 @@ def reconstruct_region(problem, displacements) -> kdb.Region
 守卫（ReconstructionError）：ring 拓扑改变、环绕翻转、hole 越出 hull、
 位移超上限、无效多边形；**几何退化也可能以 ValueError 冒出**（KLayout
 数组校验，如共线 ring 少于三顶点）——调用方按非法候选处理。位移 shape/
-有限性属上游契约（evaluate_and_propose 入口先行拦截）。
+有限性属上游契约（evaluate_state 入口先行拦截）。
 
 ## 探针（sampling.py）
 

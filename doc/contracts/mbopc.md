@@ -16,46 +16,60 @@ class TargetCanvasCache(max_bytes)                # LRU；get/put(macro_id, core
 
 SimpleMBOPCStep(next_displacements, epe, l2, pvband,
                valid_probes, ambiguous_probes, moved_segments)
-IterationRecord(round_index, step_dbu, epe, l2, pvband,
-                valid_probes, ambiguous_probes, moved_segments, elapsed_seconds)
-SimpleMBOPCResult(best_displacements, records, best_round,
+SimpleMBOPCIterationRecord(state_index, step_dbu, epe, l2, pvband,
+                           valid_probes, ambiguous_probes, moved_segments,
+                           elapsed_seconds)
+SimpleMBOPCResult(best_displacements, records, best_state_index,
                   stop_reason, stop_detail)
 ```
 
 ## 算法函数
 
 ```python
-def evaluate_and_propose(problem, current_region, current_displacements,
-                         model, config, step_dbu, target_cache, *,
-                         can_update, reference=None, pack=None,
-                         on_tiles_completed=None) -> SimpleMBOPCStep
+def evaluate_state(problem, current_region, current_displacements,
+                   model, config, step_dbu, target_cache, *,
+                   can_update, reference=None, pack=None,
+                   on_tiles_completed=None) -> SimpleMBOPCStep
 
-def optimize_macro(problem, model, config, target_cache, *,
-                   on_tiles_completed=None) -> SimpleMBOPCResult
+def optimize_simple_macro(problem, model, config, target_cache, *,
+                          on_tiles_completed=None) -> SimpleMBOPCResult
 ```
 
 - **入口契约**：位移长度=段数、有限、context 段=0；模型画布=问题画布；
   step≥0。reference 参数复用整迭代一次物化的参考几何（None 现算）；
   pack（2026-08-21 A1 起）复用 `_batching.pack_macro_statics` 的静态打包
-  （计分画布/参考探针坐标/零位移参考候选），optimize_macro 预打包逐状态
-  复用，直接调用缺省现算；pack 优先时 reference 不参与本调用。
+  （计分画布/参考探针坐标/零位移参考候选），optimize_simple_macro 预打包
+  逐状态复用，直接调用缺省现算；pack 优先时 reference 不参与本调用。
 - **批语义**：每批一次三条件 forward_many（no_grad）；方向 = current +
   {-1,0,+1}×step 只写 owner 段（written 恰一次守卫）；EPE 回切整批一次
-  .cpu()；批后释放张量再报 on_tiles_completed(batch_count)。计分画布/
-  探针坐标/target 缓存 miss 回填与批后离散诊断由 `mbopc/_batching.py`
-  承载（rasterize/points_to_canvas/evaluate_* 由求解器模块注入，
-  monkeypatch 锚点保持在 simple/gradient 模块）。
-- **轮次语义**：records[0]=baseline；Round N 指标属于第 N 次位移后状态，
-  评价同时产生下轮提案（末轮纯评价不提案）；无变化提案直接停止不重复评价
-  （no_update 时 records 只含 baseline）。
-- **步长衰减**：产生 Round r 的步长 = initial × 0.5^((r−1)//decay_every)。
-- **best 选择**：EPE 严格更小才更新，平局保留较早轮；L2/PVBand 只诊断。
+  .cpu()；批后释放张量再报 on_tiles_completed(len(core_indices))。计分
+  画布/探针坐标/target 缓存 miss 回填、公共组批
+  （`iter_core_batches`/`upload_eval_batch`）与批后离散诊断由
+  `mbopc/_batching.py` 承载（rasterize/points_to_canvas/evaluate_* 由
+  求解器模块注入，monkeypatch 锚点保持在 simple/gradient 模块）。
+- **状态语义**：records[0]=baseline；State N 指标属于第 N 次位移后状态，
+  评价同时产生下一状态提案（末状态纯评价不提案）；无变化提案直接停止
+  不重复评价（no_update 时 records 只含 baseline）。
+- **步长衰减**：产生 State r 的步长 = initial × 0.5^((r−1)//decay_every)。
+- **best 选择**：EPE 严格更小才更新，平局保留较早状态；L2/PVBand 只诊断。
   EPE 违规计数 **包含 ambiguous 段**（inner/outer 违规并集；ambiguous 段
   方向恒 0 并单独计数，metrics.py::violation_count）。
 - **五种停止**：zero_epe / no_update / invalid_geometry（重建守卫，含
   KLayout ValueError 退化形态，原因进 stop_detail 不吞错）/
   insufficient_probes（有 owner 段但 valid_probes==0——"无法评价"不是
   "零违规"；检查先于 best 比较）/ iteration_limit。空 macro（零段）= zero_epe。
+
+## 静态分层（两求解器共用，2026-08-22 收敛）
+
+| 层 | 内容 | simple | gradient |
+|---|---|---|---|
+| `_batching.MacroStaticPack` | 与更新策略无关的公共静态：计分画布/参考探针坐标/owner 段表/target 缓存 miss 源/画布与像素尺度 | `pack_macro_statics` 直接消费（其静态恰等于 pack，故无 wrapper） | `pack` 字段唯一持有，`ctx.pack.*` 访问 |
+| 求解器专有静态 | 参数映射/采样 membership/EPE profile/设备与工艺角 | —（无） | `_prepare_gradient_context → _GradientContext`（只含专有字段 + pack） |
+| 公共组批 | 切批→target 缓存/当前候选栅格/静态计分画布→上设备 /255 | `iter_core_batches` + `upload_eval_batch` 单源共用 | 同左（STE 建图与 loss 留在模块内） |
+
+命名法：求解器函数统一 `optimize_<method>_macro`（simple/gradient +
+ILT 三入口同款）；状态评价 `evaluate_state` / `_evaluate_state`；
+记录索引与 best 索引统一 `state_index` / `best_state_index`。
 
 ## 编排契约（main/_mbopc_workflow.py）
 
@@ -83,8 +97,10 @@ save_final_lithography(plan, final_layout, model, batch_size, output_dir)
   之和小 236 段、覆盖 XOR 34650860 DBU²）。
 - **macro 数量**：不加人为约束——macro_grid/macro_size_nm 是几就按几求解
   （单/多共用一个入口，数量模式配置层校验、size 模式 plan 后兜底）。
-- **产物**：macros/<id>/{result.npz(format v1), best.gds, metrics.json} +
-  final.gds + 可选 final_lithography/ + summary.json。
+- **产物**：macros/<id>/{result.npz(format v2，键 best_state_index),
+  best.gds, metrics.json} + final.gds + 可选 final_lithography/ +
+  summary.json（summary 逐 macro 键与 gradient 入口对称：
+  best_state_index/state_count）。
 - **内存**：target uint8 LRU；GPU 批后释放；最终 PNG/merge 验证逐窗口物化
   （merge patches 持有全部 clipped 为已知上界——PatchWriter 接口在
   geometry/）。
@@ -99,6 +115,12 @@ class GradientMBOPCConfig:   # 尾部新增（旧 TOML 省略时 EPE 关闭）
 class GradientMBOPCIterationRecord:   # 尾部新增
     epe_loss: float = 0.0          # 加权前 L_epe（关闭路径恒 0.0）
 ```
+
+梯度法本体 `optimize_gradient_macro`：静态经 `_prepare_gradient_context
+→ _GradientContext`（专有字段 + `pack` 公共静态，见上文静态分层）；
+逐状态 `_evaluate_state`（建图 backward / 末状态纯评价）与
+`_take_optimizer_step`（Adam → clamp ±max → torch.equal 判 no_update →
+成对发布 Region+中点）。
 
 - **公式**（参考 DiffOPC eq.(6)-(8) 的法向 profile 推广，独立实现）：
   profile 固定在参考段中点 ± 法向 `q=(−R+0.5…R−0.5)·pixel`（Q=2R，
@@ -124,7 +146,7 @@ class GradientMBOPCIterationRecord:   # 尾部新增
 
 ## 事实核对锚点
 
-`tests/opc/iteration/test_simple_mbopc.py`（53 例）、
+`tests/opc/iteration/test_simple_mbopc.py`（56 例）、
 `tests/main/test_mbopc_runners.py`（23 例）；simple smoke 历史记录于
 `changes/completed/CHG-20260816-simple-mbopc/`（时用 gcd_45nm，版图已
 退役）；Gradient 与 EPE 契约

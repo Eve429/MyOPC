@@ -22,17 +22,21 @@ main/run_mbopc_gradient.py::main
       │     ├─ 入口契约：画布一致；epe_distance ≤ context；
       │     │    weight_epe>0 时 epe_distance 必须为 pixel 整数倍（R=Q/2≥1）
       │     ├─ 无 owner 段 → no_owned_segments 空结果（不建 optimizer）
-      │     ├─ _prepare_macro_context → _GradientMacroContext（静态，一次）
-      │     │    owner_ids / segment_to_parameter / 参考几何（materialize 一次）
-      │     │    零位移 Region+采样中点 / _batching.pack_macro_statics
-      │     │    （计分画布/EPE 探针坐标/target 源，每 macro 一次）
-      │     │    / 逐 core sampling membership / EPE profile+段长+L_sum（仅启用时）
+      │     ├─ _prepare_gradient_context → _GradientContext（静态，一次：
+      │     │    gradient 专有 owner_ids / segment_to_parameter / 参考几何
+      │     │    （materialize 一次）/ 零位移 Region+采样中点
+      │     │    / 逐 core sampling membership / EPE profile+段长+L_sum
+      │     │    （仅启用时）；公共静态经 _batching.pack_macro_statics
+      │     │    （计分画布/EPE 探针坐标/target 源，每 macro 一次）由
+      │     │    ctx.pack 唯一持有）
       │     ├─ parameters[O]（device，requires_grad）+ Adam（固定超参）
       │     └─ for state in 0..iterations:
       │        ├─ _evaluate_state（同参数快照的全部 core 批）
-      │        │  ├─ 组批：_batching.cached_target_canvas
-      │        │  │    + rasterize_mask_canvas（当前候选）+ 静态打包
-      │        │  │    ownership 画布（逐态不重算）+ 已发布段中点
+      │        │  ├─ 组批：_batching.iter_core_batches（公共组批单源：
+      │        │  │    cached_target_canvas miss 回填 + 当前候选
+      │        │  │    rasterize_mask_canvas + 静态打包 ownership 画布，
+      │        │  │    逐态不重算）+ upload_eval_batch 上设备
+      │        │  │    + 已发布段中点
       │        │  ├─ gradient.py::_EdgeGradientMask.apply（STE：forward 数值
       │        │  │    =hard 栅格，backward 在段中点双线性采样 2·g_mid/pixel_dbu）
       │        │  ├─ forward_many(nominal, dose_max, defocus_min)（一次 FFT）
@@ -59,7 +63,7 @@ main/run_mbopc_gradient.py::main
 ## 伪代码
 
 ```text
-ctx = _prepare_macro_context(problem)                  # 静态一次
+ctx = _prepare_gradient_context(problem)               # 静态一次
 params = zeros[O]; adam = Adam(params, lr)
 for state in 0..N:
     zero_grad（仅 state<N）

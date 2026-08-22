@@ -135,14 +135,15 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macro.toml
 ```
 
-- **算法**：`evaluate_and_propose()` 评价一个状态（target/current/ownership
+- **算法**：`evaluate_state()` 评价一个状态（target/current/ownership
   三画布 → no_grad 三条件一次 forward_many → L2/PVBand 只在 ownership 像素
   → owner 探针批量 EPE → next = current + {-1,0,+1}×step，批后释放张量再报
-  进度；计分画布与参考探针坐标经 `_batching.pack_macro_statics` 每 macro
-  打包一次、`pack` 参数整迭代复用，参考几何同由 `reference` 参数复用一份）；
-  `optimize_macro()` baseline（records[0]）起每轮一次评价同时产生下轮提案
-  （末轮纯评价不提案、无变化提案直接停止），步长按 `decay_every` 减半，
-  EPE 严格更小才更新 best（平局保留早轮）。
+  进度；组批与上设备经 `_batching.iter_core_batches`/`upload_eval_batch`
+  单源共用，计分画布与参考探针坐标经 `_batching.pack_macro_statics` 每
+  macro 打包一次、`pack` 参数整迭代复用，参考几何同由 `reference` 参数
+  复用一份）；`optimize_simple_macro()` baseline（records[0]）起每状态一次
+  评价同时产生下一状态提案（末状态纯评价不提案、无变化提案直接停止），
+  步长按 `decay_every` 减半，EPE 严格更小才更新 best（平局保留早状态）。
 - **停止状态**：`zero_epe`（无违规）/ `no_update`（提案与当前一致）/
   `invalid_geometry`（候选重建守卫拦截，含 KLayout ValueError 退化形态）/
   `insufficient_probes`（有 owner 段但有效探针为 0——"无法评价"不是

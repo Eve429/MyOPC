@@ -1,7 +1,7 @@
 # Dataflow — Simple MB-OPC（离散 EPE 驱动）
 
 固定步长、EPE 驱动的最简 MB-OPC：方向 ∈ {−1,0,+1}×step（clip 到
-±max_displacement），EPE 严格更小才更新 best，平局保留较早轮。
+±max_displacement），EPE 严格更小才更新 best，平局保留较早状态。
 
 入口：`python main/run_mbopc.py config/mbopc_single_macro.toml`（macro 数由 config 决定）
 
@@ -23,17 +23,18 @@ main/run_mbopc.py::main
       ├─ 逐 macro（稳定顺序；macro 间不交换状态；外层条 try/finally）：
       │  ├─ edge/problem.py::MacroProblem.load(NPZ)
       │  ├─ _mbopc_workflow.py::_solve_macro（tqdm total=(iterations+1)×core_count）
-      │  │  └─ opc/iteration/mbopc/simple.py::optimize_macro
+      │  │  └─ opc/iteration/mbopc/simple.py::optimize_simple_macro
       │  │     ├─ segments.materialize()（参考几何整迭代一次）
       │  │     ├─ _batching.pack_macro_statics（计分画布/参考探针坐标/零位移
       │  │     │    参考候选，每 macro 一次；探针/ownership 逐态不再重算）
-      │  │     ├─ reconstruct_region(零位移) → baseline 评价 + Round1 提案
-      │  │     └─ 逐轮：候选 reconstruct 守卫 → evaluate_and_propose（末轮纯评价）
-      │  │        └─ evaluate_and_propose 批循环：
-      │  │           ├─ CPU 逐 tile 组批：_batching.cached_target_canvas
-      │  │           │    （TargetCanvasCache miss → 零位移参考栅格化 uint8 回填）
-      │  │           ├─ rasterize_mask_canvas（当前候选）+ 静态打包
-      │  │           │    ownership 画布
+      │  │     ├─ reconstruct_region(零位移) → baseline 评价 + State1 提案
+      │  │     └─ 逐状态：候选 reconstruct 守卫 → evaluate_state（末状态纯评价）
+      │  │        └─ evaluate_state 批循环：
+      │  │           ├─ _batching.iter_core_batches（公共组批单源：
+      │  │           │    cached_target_canvas miss 回填 + 当前候选
+      │  │           │    rasterize_mask_canvas + 静态打包 ownership 画布）
+      │  │           ├─ _batching.upload_eval_batch（uint8 target→float32/255
+      │  │           │    上设备）
       │  │           ├─ _batching.assemble_probe_batch（静态参考探针坐标
       │  │           │    = 参考中点±法向经 points_to_canvas 居中换算）
       │  │           ├─ lithography.forward_many(nominal, dose_max, defocus_min)
@@ -67,7 +68,7 @@ else:
      if 提案无变化: 停止 no_update                            # 不重复评价同状态
      candidate_region = reconstruct_region(candidate)          # 守卫（含 KLayout
          ValueError 退化形态 → 停止 invalid_geometry，原因入 stop_detail）
-     proposal = evaluate(candidate, can_update=(r<iterations)) # 末轮纯评价
+     proposal = evaluate(candidate, can_update=(r<iterations)) # 末状态纯评价
      records[r] = proposal（指标属第 r 次位移后状态）
      if owner>0 且 valid_probes==0: 停止 insufficient_probes   # 先于 best
      if proposal.epe < best_epe: best ← candidate              # 严格更小，平局保早

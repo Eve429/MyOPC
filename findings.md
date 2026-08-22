@@ -1188,3 +1188,40 @@
   （警告文案/环带 0/孔透光/输出包络）。
 - 最终光刻留档对负板 tile 窗口同款补铬（context_box − 最终版图 bbox），
   边界 PNG 无虚假亮环。
+
+## 2026-08-22 双求解器整改（结构收敛 + 命名统一，94b9507/9b70750）
+
+- **差异根源（用户问询引出）**：gradient（CHG-20260816）先建时把全部
+  静态平铺进 `_GradientMacroContext`；A1 抽公共静态到 pack 时 simple
+  直接消费（其静态恰等于 pack），gradient 只塞 pack 却保留平铺副本——
+  `ctx.X` 与 `ctx.pack.X` 双访问路径并存是历史最小 diff 的产物。
+- **批次 1（结构，行为不变）**：`_batching.iter_core_batches`（切批→
+  target 缓存/当前候选栅格/静态计分画布的 numpy 组批生成器）+
+  `upload_eval_batch`（uint8→float32/255 上设备）单源化两评价函数的
+  公共组批段（审查 A2 漂移源消除）；`_GradientContext` 删 10 个与 pack
+  重复字段，公共静态经 `ctx.pack` 唯一访问；`_take_optimizer_step`
+  改就地读 `problem.fragmentation` 位移上限（去传参）；simple 的
+  conditions/device 提到批循环外（与 gradient ctx.conditions 同语义）。
+  全量 686+1skip 改前后一致 = 行为不变证明。
+- **批次 2（命名，state 词汇）**：`optimize_macro`→`optimize_simple_macro`
+  （补齐 optimize_<method>_macro 家族：gradient + ILT 三入口同款）；
+  `evaluate_and_propose`→`evaluate_state`；`IterationRecord`→
+  `SimpleMBOPCIterationRecord`（模块内前缀纪律）；`round_index`→
+  `state_index`、`best_round`→`best_state_index`；gradient 侧
+  `_prepare_macro_context`→`_prepare_gradient_context`、
+  `_GradientMacroContext`→`_GradientContext`（名实相符：专有静态准备，
+  simple 无 wrapper 因其静态恰等于 pack）。产物键全面统一：simple
+  result.npz format **v1→v2**（best_state_index），metrics/summary/CLI
+  与 gradient 入口完全对称（best_state_index/state_count/best_state=）。
+- **刻意不合并**：SimpleMBOPCStep（提案载体）vs _GradientStateEvaluation
+  （纯评价）内容异义；两 Result/Config 无第三调用方不抽基类；两个
+  optimize 主循环机制本质不同（提案链 vs Adam+屏障+成对发布）；
+  moved_segments（相对上一状态移动数）vs displaced_segments（本状态
+  非零位移数）语义确实不同；MBOPCMethod.optimize_macro 协议槽位名是
+  simple/gradient+三 ILT 共用注入槽，不动；run_macro_pipeline 的
+  round 是双轮验证管线自身域概念，不在统一范围。
+- **补丁锚纪律验证**：iter_core_batches 的 rasterize 钩子仍由求解器
+  模块传自身全局，monkeypatch simple/gradient 模块的 rasterize_mask_canvas
+  继续生效（threshold 透传/计数类测试全绿证明）。
+- **顺手清扫**：data_model.md 两处 MacroProblem"format v2 含 dark_box"
+  为环带方案批次的漏网陈旧信息，已改 v3 无 dark_box。

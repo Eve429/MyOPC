@@ -71,7 +71,7 @@ D:/app/miniforge/envs/myopc/python.exe -m coverage report -m
 D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macro.toml
 ```
 
-通过标准：退出码 0；摘要含 device、每 macro `best_round/best_epe/stop`、
+通过标准：退出码 0；摘要含 device、每 macro `best_state/best_epe/stop`、
 合并耗时与最终版图；`work_dir` 下 plan.json、problems/、macros/<id>/
 {result.npz,best.gds,metrics.json}、summary.json、final.gds；
 `save_final_lithography=true` 时 final_lithography/ 有逐 tile PNG 与

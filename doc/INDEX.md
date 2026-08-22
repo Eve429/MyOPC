@@ -13,6 +13,7 @@
 | 实现 Change（AI B） | `AGENTS.md` → 本文件 → 对应 `changes/active/CHG-xxx/implementation_spec.md` → spec 引用的 contracts/architecture → 相关源码与 tests | — |
 | 了解术语 | `glossary.md` | — |
 | 了解系统现状 | `architecture/system.md` → `architecture/dataflow/index.md` | `architecture/data_model.md` |
+| 理解具体算法 | `algorithms/index.md` → 对应算法文档 | 相关 `contracts/*.md` 与测试 |
 | 查某模块接口保证 | 对应 `contracts/<module>.md` | — |
 | 查开发/测试操作 | `development_manual.md`（根） → `test_manual.md`（根） | — |
 | 追溯某次变更 | `changes/completed/CHG-xxx/`（spec + 两报告） | 对应版本 git 记录 |
@@ -56,6 +57,7 @@ doc/changes/completed/*/test_report.md         → 某次 Change 实际验证结
 INDEX.md / glossary.md / implementation_spec_template.md
 development_manual.md · test_manual.md   （活跃手册）
 architecture/  system.md · dataflow/（index + 六工作流文件） · data_model.md
+algorithms/    index.md · reconstruct_geometry.md
 contracts/     layout · geometry · opc_input · edge · lithography · mbopc · ilt · evaluation
 review/        点时性审查报告（非当前事实源，结论须落 contracts/architecture 才生效）
 adr/           ADR-001 .. ADR-006

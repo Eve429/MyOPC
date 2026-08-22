@@ -615,3 +615,10 @@ passed；全量 runner 仍有既有入口路径/field warning 失败，详见本
 让 `reconstruct_region` 直接消费 `_reconstruct_geometry(...).contours`，并同步
 清理 edge 导出和当前契约/开发手册。边段、Simple MB-OPC、Gradient MB-OPC
 回归 170 passed；未修改 layout、geometry、00_PAST。
+
+## 2026-08-22（会话：新增算法文档目录与 reconstruct geometry 解析）
+
+新增 `doc/algorithms/` 及目录索引，补充 `reconstruct_geometry.md`：说明输入输出、
+位移物化、ring 邻接、同数学边处理、corner miter/bevel、Gradient 当前中点、
+整数化去重、拓扑守卫、Region 转换、伪代码、复杂度和失败语义；`doc/INDEX.md`
+新增算法文档导航。未修改业务代码、layout 或 geometry。

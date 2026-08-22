@@ -20,9 +20,9 @@ MyOPC：面向 OPC（光学邻近效应校正，半导体光刻）的层级版�
 
 `AGENTS.md`（2026-08 重写版）是最高开发手册，与其他规则冲突时以它为准。要点：
 
-- 所有 docstring 与注释用中文且以中文词开头，注释解释 why（坐标方向、数据不变量、性能路径、内存上界、边界归属、异常原因），置于紧凑逻辑块之前。
+- 所有 docstring 与注释用中文且以中文词开头，简明扼要；包导入不加注释，多步骤函数逐步骤开头简注，关键算法定义必须加注（细则见 AGENTS.md「代码与注释」）。
 - 未经用户逐次确认不得修改 `layout/` 与 `geometry/`——**对用户新迁移出的同名目录同样适用，它们是用户手工迁移的领地**。
-- 禁止自动格式化，保持紧凑排版；质量门禁 = ruff 规则检查 + compileall + pytest。
+- 排版统一 ruff format（120 列，注释纪律见 AGENTS.md「代码与注释」）；质量门禁 = ruff 检查 + ruff format --check + compileall + pytest。
 - 每个 bug 修复必须带可复现回归测试；修复后搜索调用点，删除仅服务旧 bug 的函数/包装/分支/变量。
 - 禁止投机抽象：新接口必须有当前调用方。
 - 本地 commit 为主，未经明确授权不 push；`TestReticle/*.gds` 用户回归数据与 `Test/klayout.ipynb` 不在修改范围。
@@ -36,6 +36,7 @@ MyOPC：面向 OPC（光学邻近效应校正，半导体光刻）的层级版�
 ```bash
 python -m compileall -q common layout geometry opc lithography evaluation main tests
 python -m ruff check common layout geometry opc lithography evaluation main tests
+python -m ruff format --check common layout geometry opc lithography evaluation main tests
 python -m pytest -q tests
 ```
 

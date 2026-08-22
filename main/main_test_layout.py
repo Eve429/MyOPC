@@ -64,7 +64,8 @@ def _write_glp(path: Path) -> None:
         "RECT N M1 0 0 100 200\n"
         "PGON N 7 300 300 400 300 400 400 300 400\n"
         "ENDMSG\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
 
 
 def run_demo(gds: Path, glp: Path) -> None:
@@ -128,8 +129,7 @@ def run_demo(gds: Path, glp: Path) -> None:
         diag = db.query([(7, 0)], _QUERY).materialize(diagnostics=True)
         stats = diag.stats
         layer_stats = stats.shapes[LayerSpec(7, 0)] if stats else None
-        print(f"诊断：耗时 {stats.elapsed_seconds if stats else 0:.4f}s，"
-              f"形状统计 {layer_stats}")
+        print(f"诊断：耗时 {stats.elapsed_seconds if stats else 0:.4f}s，形状统计 {layer_stats}")
 
         # 阶段⑤属性保持模式。preserve_properties=True 时 GDS 属性随几何一起
         # 进入 Region：裁剪分支改用 NoPropertyConstraint 求交（普通 & 会丢
@@ -148,8 +148,7 @@ def run_demo(gds: Path, glp: Path) -> None:
     # GLP 符号层名映射到 GDS layer/datatype（可传 tuple），仅在 GLP 分支
     # 消费；输出与 GDS 完全一致的 LayoutDB，后续接口无差别可用。
     with LayoutDB.open(glp, glp_layer_map={"M1": (5, 0)}) as db:
-        print(f"GLP 分支：top={db.top_cell_name}，layers={db.layers()}，"
-              f"dbu={db.dbu_um} μm")
+        print(f"GLP 分支：top={db.top_cell_name}，layers={db.layers()}，dbu={db.dbu_um} μm")
 
 
 def main() -> int:

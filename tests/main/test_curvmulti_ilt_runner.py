@@ -25,10 +25,11 @@ def _write_gds(tmp_path):
     top = layout.create_cell("TOP")  # 唯一顶层
     shapes = top.shapes(layout.layer(1, 0))  # 目标层
     shapes.insert(kdb.Box(8, 8, 88, 88))  # 左侧实心矩形
-    hole_region = (kdb.Region(kdb.Box(96, 8, 168, 88)) -  # 右侧外框
-                   kdb.Region(kdb.Box(112, 24, 136, 72)))  # 中心 hole
-    hole_region.insert_into(layout, top.cell_index(),
-                            layout.layer(1, 0))  # 插入带孔图形
+    hole_region = (
+        kdb.Region(kdb.Box(96, 8, 168, 88))  # 右侧外框
+        - kdb.Region(kdb.Box(112, 24, 136, 72))
+    )  # 中心 hole
+    hole_region.insert_into(layout, top.cell_index(), layout.layer(1, 0))  # 插入带孔图形
     shapes.insert(kdb.Polygon([(16, 80), (64, 80), (16, 86)]))  # 斜边三角
     path = tmp_path / "reticle.gds"  # 输出路径
     layout.write(str(path))  # 写盘
@@ -38,14 +39,26 @@ def _write_gds(tmp_path):
 def _write_config(tmp_path, layout_path, macro_grid="[2, 2]", **overrides):
     """按默认契约生成 CurvMulti ILT TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值满足全部网格/尺度/迭代契约
-        "macro_grid": macro_grid, "core_size_nm": 40, "context_nm": 20,
-        "pixel_nm": 4, "scales": "[2, 1]", "iterations_per_stage": 1,
-        "step_size": 0.5, "smoothing_kernel": 3, "sigmoid_steepness": 4.0,
-        "sigmoid_offset": 0.5, "weight_process_l2": 1.0,
-        "weight_pvband": 0.5, "curvature_weight": 0.0,
-        "mask_threshold": 0.5, "batch_size": 4, "device": "cpu",
-        "save_final_lithography": "false", "show_progress": "false",
-        "final_cell_mode": "single_cell"}
+        "macro_grid": macro_grid,
+        "core_size_nm": 40,
+        "context_nm": 20,
+        "pixel_nm": 4,
+        "scales": "[2, 1]",
+        "iterations_per_stage": 1,
+        "step_size": 0.5,
+        "smoothing_kernel": 3,
+        "sigmoid_steepness": 4.0,
+        "sigmoid_offset": 0.5,
+        "weight_process_l2": 1.0,
+        "weight_pvband": 0.5,
+        "curvature_weight": 0.0,
+        "mask_threshold": 0.5,
+        "batch_size": 4,
+        "device": "cpu",
+        "save_final_lithography": "false",
+        "show_progress": "false",
+        "final_cell_mode": "single_cell",
+    }
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
 [layout]
@@ -114,8 +127,7 @@ class TestConfigAndEntry:
         """缺必填键在准备前失败：不创建工作目录。"""
         layout_path = _write_gds(tmp_path)
         config_path = _write_config(tmp_path, layout_path)
-        text = config_path.read_text(encoding="utf-8").replace(
-            "step_size = 0.5\n", "")  # 删除一个必填键
+        text = config_path.read_text(encoding="utf-8").replace("step_size = 0.5\n", "")  # 删除一个必填键
         config_path.write_text(text, encoding="utf-8")
         with pytest.raises(ValueError, match="缺少必填键"):
             curvmulti_workflow.run_curvmulti_ilt(config_path)
@@ -126,7 +138,8 @@ class TestConfigAndEntry:
         layout_path = _write_gds(tmp_path)
         config_path = _write_config(tmp_path, layout_path)
         text = config_path.read_text(encoding="utf-8").replace(
-            "[curvmulti_ilt]\n", "[curvmulti_ilt]\nunknown_key = 1\n")
+            "[curvmulti_ilt]\n", "[curvmulti_ilt]\nunknown_key = 1\n"
+        )
         config_path.write_text(text, encoding="utf-8")
         with pytest.raises(ValueError, match="未知键"):
             curvmulti_workflow.run_curvmulti_ilt(config_path)
@@ -135,8 +148,7 @@ class TestConfigAndEntry:
         """未知段（拼写错误的算法段）被严格拒绝。"""
         layout_path = _write_gds(tmp_path)
         config_path = _write_config(tmp_path, layout_path)
-        text = config_path.read_text(encoding="utf-8").replace(
-            "[curvmulti_ilt]", "[curvmult_ilt]")
+        text = config_path.read_text(encoding="utf-8").replace("[curvmulti_ilt]", "[curvmult_ilt]")
         config_path.write_text(text, encoding="utf-8")
         with pytest.raises(ValueError, match="未知配置段"):
             curvmulti_workflow.run_curvmulti_ilt(config_path)
@@ -161,11 +173,17 @@ class TestConfigAndEntry:
         layout_path = _write_gds(tmp_path / "sub")
         config_path = _write_config(tmp_path / "sub", layout_path)
         result = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve().parents[2]
-                                 / "main" / "run_ilt_curvmulti.py"),
-             str(config_path)],
-            cwd=str(tmp_path), capture_output=True, text=True,
-            timeout=300, check=False)
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parents[2] / "main" / "run_ilt_curvmulti.py"),
+                str(config_path),
+            ],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
         assert result.returncode == 0, result.stderr
 
 
@@ -184,11 +202,9 @@ class TestArtifacts:
             assert data["binary_mask"].dtype == np.uint8  # 持久化为 uint8
             assert int(data["best_state_index"][0]) == macro["best_state_index"]
         metrics = json.loads(Path(macro["metrics_json"]).read_text("utf-8"))
-        stages = [(record["stage_index"], record["scale"])
-                  for record in metrics["records"]]
+        stages = [(record["stage_index"], record["scale"]) for record in metrics["records"]]
         assert stages == [(0, 2), (0, 2), (1, 1), (1, 1)]
-        assert [record["state_index"] for record in metrics["records"]] == [
-            0, 1, 2, 3]
+        assert [record["state_index"] for record in metrics["records"]] == [0, 1, 2, 3]
 
     def test_merge_called_exactly_once(self, prepared, monkeypatch):
         """全部 macro 完成后恰一次 merge（显式 macro_id→GDS 映射）。"""
@@ -211,8 +227,16 @@ class TestArtifacts:
     def test_evaluated_states_total(self):
         """evaluated_states = Σ(iterations_per_stage+1)。"""
         config = curvmulti_workflow.CurvMultiConfig(
-            scales=(4, 2, 1), iterations_per_stage=2, step_size=0.5,
-            smoothing_kernel=3, sigmoid_steepness=4.0, sigmoid_offset=0.5,
-            weight_process_l2=1.0, weight_pvband=0.5, curvature_weight=0.0,
-            mask_threshold=0.5, batch_size=4)
+            scales=(4, 2, 1),
+            iterations_per_stage=2,
+            step_size=0.5,
+            smoothing_kernel=3,
+            sigmoid_steepness=4.0,
+            sigmoid_offset=0.5,
+            weight_process_l2=1.0,
+            weight_pvband=0.5,
+            curvature_weight=0.0,
+            mask_threshold=0.5,
+            batch_size=4,
+        )
         assert curvmulti_workflow._evaluated_states(config) == 9

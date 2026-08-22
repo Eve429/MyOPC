@@ -17,8 +17,7 @@ Int32Array = NDArray[np.int32]
 FloatArray = NDArray[np.float64]
 
 
-def _count_edge_fragments(lengths: np.ndarray, corner_dbu: float,
-                          maximum_dbu: float) -> np.ndarray:
+def _count_edge_fragments(lengths: np.ndarray, corner_dbu: float, maximum_dbu: float) -> np.ndarray:
     """按角部短段和均衡中段策略计算每条数学边的切分数量。
 
     纯 O(edge) 向量公式，唯一调用方是 fragment_edges 的真实切分——
@@ -27,8 +26,7 @@ def _count_edge_fragments(lengths: np.ndarray, corner_dbu: float,
     """
     counts = np.ceil(lengths / maximum_dbu).astype(np.int64)
     long_edges = lengths > 2.0 * maximum_dbu
-    counts[long_edges] = 2 + np.ceil(
-        (lengths[long_edges] - 2.0 * corner_dbu) / maximum_dbu).astype(np.int64)
+    counts[long_edges] = 2 + np.ceil((lengths[long_edges] - 2.0 * corner_dbu) / maximum_dbu).astype(np.int64)
     return counts
 
 
@@ -43,8 +41,7 @@ class FragmentationConfig:
 
     def __post_init__(self) -> None:
         """统一浮点类型并拒绝会产生过短中段或无界位移的配置。"""
-        names = ("corner_length_dbu", "max_segment_length_dbu",
-                 "max_displacement_dbu", "miter_limit")
+        names = ("corner_length_dbu", "max_segment_length_dbu", "max_displacement_dbu", "miter_limit")
         for name in names:
             value = getattr(self, name)
             if not isinstance(value, Real) or not np.isfinite(value):
@@ -87,59 +84,70 @@ class SegmentGeometry:
 # t0 = [0.0, 0.5, 0.0, 0.0, 0.5, 0.0]
 # t1 = [0.5, 1.0, 1.0, 0.5, 1.0, 1.0]
 
+
 @dataclass(frozen=True, slots=True)
 class SegmentBatch:
     """通过数学边索引和参数区间保存控制边段，避免重复几何元数据。"""
 
-    contours: ContourBatch          # 全局顶点/环/多边形两级CSR，几何唯一持有者；段只存索引不复制顶点
-    edge_ids: Int32Array            # 段级[S]：本段所属数学边的起始顶点索引；与t0/t1 配对插值出段端点
-    edge_next_ids: Int32Array       # 边级[E]：每条边的终点顶点索引，ring末边指回头点实现闭合
-    edge_polygon_ids: Int32Array    # 边级[E]：每条边所属 Polygon 编号，tile按整多边形筛选防止漏选半边
-    edge_normals: FloatArray        #边级[E×2]：每条边的外法向单位向量（材料指向空区，opaque 极性翻转）
+    contours: ContourBatch  # 全局顶点/环/多边形两级CSR，几何唯一持有者；段只存索引不复制顶点
+    edge_ids: Int32Array  # 段级[S]：本段所属数学边的起始顶点索引；与t0/t1 配对插值出段端点
+    edge_next_ids: Int32Array  # 边级[E]：每条边的终点顶点索引，ring末边指回头点实现闭合
+    edge_polygon_ids: Int32Array  # 边级[E]：每条边所属 Polygon 编号，tile按整多边形筛选防止漏选半边
+    edge_normals: FloatArray  # 边级[E×2]：每条边的外法向单位向量（材料指向空区，opaque 极性翻转）
     ring_segment_offsets: IntArray  # 段级CSR[R+1]：每个环的段区间端点，重建时定位各环首段/末段
-    t0: FloatArray                  # 段级[S]：段起点在所属边参数区间 [0,1] 上的位置
-    t1: FloatArray                  #段级[S]：段终点参数（0≤t0<t1≤1），同一条边可被拐角段/中段共享
+    t0: FloatArray  # 段级[S]：段起点在所属边参数区间 [0,1] 上的位置
+    t1: FloatArray  # 段级[S]：段终点参数（0≤t0<t1≤1），同一条边可被拐角段/中段共享
 
     def __post_init__(self) -> None:
         """规范化重建与迭代真正使用的紧凑数组并校验拓扑边界。"""
         next_ids = as_vector(self.edge_next_ids, np.dtype(np.int32), "edge_next_ids")
         polygon_ids = as_vector(self.edge_polygon_ids, np.dtype(np.int32), "edge_polygon_ids")
         edge_normals = as_matrix(self.edge_normals, np.dtype(np.float64), 2, "edge_normals")
-        ring_offsets = as_vector(self.ring_segment_offsets, np.dtype(np.int64),
-                                 "ring_segment_offsets")
+        ring_offsets = as_vector(self.ring_segment_offsets, np.dtype(np.int64), "ring_segment_offsets")
         edge_ids = as_vector(self.edge_ids, np.dtype(np.int32), "edge_ids")
         t0 = as_vector(self.t0, np.dtype(np.float64), "t0")
         t1 = as_vector(self.t1, np.dtype(np.float64), "t1")
         edge_count, segment_count = len(self.contours.vertices), len(edge_ids)
-        if (len(next_ids) != edge_count or len(polygon_ids) != edge_count or
-                len(edge_normals) != edge_count):
+        if len(next_ids) != edge_count or len(polygon_ids) != edge_count or len(edge_normals) != edge_count:
             raise ValueError("edge-level metadata must match mathematical edge count")
         expected_next = np.arange(edge_count, dtype=np.int32) + 1
         if edge_count:
             expected_next[self.contours.ring_offsets[1:] - 1] = self.contours.ring_offsets[:-1]
         ring_polygon_ids = np.repeat(
-            np.arange(self.contours.polygon_count, dtype=np.int32),
-            np.diff(self.contours.polygon_ring_offsets))
+            np.arange(self.contours.polygon_count, dtype=np.int32), np.diff(self.contours.polygon_ring_offsets)
+        )
         expected_polygons = np.repeat(ring_polygon_ids, np.diff(self.contours.ring_offsets))
         # 两组边级缓存必须与轮廓拓扑完全一致；离线恢复时同步检查，避免损坏
         # 缓存把边接到其他 ring，或让 tile 漏选、错选整个 Polygon。
-        if (not np.array_equal(next_ids, expected_next) or
-                not np.array_equal(polygon_ids, expected_polygons)):
+        if not np.array_equal(next_ids, expected_next) or not np.array_equal(polygon_ids, expected_polygons):
             raise ValueError("edge caches do not match contour topology")
-        if (len(ring_offsets) != self.contours.ring_count + 1 or ring_offsets[0] != 0 or
-                ring_offsets[-1] != segment_count or np.any(np.diff(ring_offsets) < 1)):
+        if (
+            len(ring_offsets) != self.contours.ring_count + 1
+            or ring_offsets[0] != 0
+            or ring_offsets[-1] != segment_count
+            or np.any(np.diff(ring_offsets) < 1)
+        ):
             raise ValueError("every contour ring must own at least one segment")
         if len(t0) != segment_count or len(t1) != segment_count:
             raise ValueError("segment-level metadata vectors must have equal length")
-        if (segment_count and (np.any(edge_ids < 0) or np.any(edge_ids >= edge_count) or
-                               np.any(t0 < 0.0) or np.any(t1 > 1.0) or np.any(t1 <= t0))):
+        if segment_count and (
+            np.any(edge_ids < 0)
+            or np.any(edge_ids >= edge_count)
+            or np.any(t0 < 0.0)
+            or np.any(t1 > 1.0)
+            or np.any(t1 <= t0)
+        ):
             raise ValueError("segment edge IDs or parametric intervals are invalid")
         if not np.all(np.isfinite(edge_normals)):
             raise ValueError("mathematical edges must have finite normals")
         for name, value in (
-            ("edge_next_ids", next_ids), ("edge_polygon_ids", polygon_ids),
-            ("edge_normals", edge_normals), ("ring_segment_offsets", ring_offsets),
-            ("edge_ids", edge_ids), ("t0", t0), ("t1", t1),
+            ("edge_next_ids", next_ids),
+            ("edge_polygon_ids", polygon_ids),
+            ("edge_normals", edge_normals),
+            ("ring_segment_offsets", ring_offsets),
+            ("edge_ids", edge_ids),
+            ("t0", t0),
+            ("t1", t1),
         ):
             object.__setattr__(self, name, value)
 
@@ -151,8 +159,15 @@ class SegmentBatch:
     @property
     def persistent_nbytes(self) -> int:
         """返回当前批次新增常驻 NumPy 数组的总字节数。"""
-        arrays = (self.edge_next_ids, self.edge_polygon_ids, self.edge_normals,
-                  self.ring_segment_offsets, self.edge_ids, self.t0, self.t1)
+        arrays = (
+            self.edge_next_ids,
+            self.edge_polygon_ids,
+            self.edge_normals,
+            self.ring_segment_offsets,
+            self.edge_ids,
+            self.t0,
+            self.t1,
+        )
         return sum(array.nbytes for array in arrays)
 
     def materialize(self, displacements: object | None = None) -> SegmentGeometry:
@@ -174,9 +189,13 @@ class SegmentBatch:
         return SegmentGeometry(starts, ends, normals)
 
 
-def _outward_normals(contours: ContourBatch, edge_next_ids: np.ndarray,
-                     edge_ring_ids: np.ndarray, ring_is_hole: np.ndarray,
-                     lengths: np.ndarray) -> np.ndarray:
+def _outward_normals(
+    contours: ContourBatch,
+    edge_next_ids: np.ndarray,
+    edge_ring_ids: np.ndarray,
+    ring_is_hole: np.ndarray,
+    lengths: np.ndarray,
+) -> np.ndarray:
     """根据环绕向和 hole 标志解析计算从材料指向空区的单位法向。"""
     starts = contours.vertices.astype(np.float64)
     ends = contours.vertices[edge_next_ids].astype(np.float64)
@@ -192,8 +211,9 @@ def _outward_normals(contours: ContourBatch, edge_next_ids: np.ndarray,
     return np.ascontiguousarray(np.where(use_left[:, None], left, right))
 
 
-def fragment_edges(contours: ContourBatch, config: FragmentationConfig,
-                   polarity: MaskPolarity | str = MaskPolarity.CLEAR) -> SegmentBatch:
+def fragment_edges(
+    contours: ContourBatch, config: FragmentationConfig, polarity: MaskPolarity | str = MaskPolarity.CLEAR
+) -> SegmentBatch:
     """按角部短段和均衡中段策略向量化切分全部物理数学边。"""
     edge_count = len(contours.vertices)
     edge_next_ids = np.arange(edge_count, dtype=np.int32) + 1
@@ -202,8 +222,8 @@ def fragment_edges(contours: ContourBatch, config: FragmentationConfig,
     ring_lengths = np.diff(contours.ring_offsets)
     edge_ring_ids = np.repeat(np.arange(contours.ring_count, dtype=np.int32), ring_lengths)
     ring_polygon_ids = np.repeat(
-        np.arange(contours.polygon_count, dtype=np.int32),
-        np.diff(contours.polygon_ring_offsets))
+        np.arange(contours.polygon_count, dtype=np.int32), np.diff(contours.polygon_ring_offsets)
+    )
     edge_polygon_ids = np.repeat(ring_polygon_ids, ring_lengths)
     ring_is_hole = np.ones(contours.ring_count, dtype=np.bool_)
     ring_is_hole[contours.polygon_ring_offsets[:-1]] = False
@@ -214,8 +234,7 @@ def fragment_edges(contours: ContourBatch, config: FragmentationConfig,
     maximum, corner = config.max_segment_length_dbu, config.corner_length_dbu
     counts = _count_edge_fragments(lengths, corner, maximum)
     long_edges = lengths > 2.0 * maximum
-    if len(counts) and (int(counts.max()) > np.iinfo(np.int32).max or
-                        int(counts.sum()) > np.iinfo(np.int32).max):
+    if len(counts) and (int(counts.max()) > np.iinfo(np.int32).max or int(counts.sum()) > np.iinfo(np.int32).max):
         raise OverflowError("segment count exceeds compact int32 index capacity")
     edge_offsets = np.empty(len(counts) + 1, dtype=np.int64)
     edge_offsets[0] = 0
@@ -247,15 +266,20 @@ def fragment_edges(contours: ContourBatch, config: FragmentationConfig,
     # edge_offsets 和 lengths 到此完成使命，不进入常驻 SegmentBatch；诊断若需要
     # 分组或长度，可分别从 edge_ids 和物化端点向量化推导，不拖慢多轮热路径。
     ring_offsets = edge_offsets[contours.ring_offsets]
-    normals = _outward_normals(
-        contours, edge_next_ids, edge_ring_ids, ring_is_hole, lengths)
+    normals = _outward_normals(contours, edge_next_ids, edge_ring_ids, ring_is_hole, lengths)
     normalized = polarity if isinstance(polarity, MaskPolarity) else MaskPolarity(polarity)
     # `_outward_normals` 从源多边形内部指向外部。clear 时这正是透光→不透光；
     # opaque 时透光位于外部，反向后仍保持公共法向不变量，迭代器无需极性分支。
     if normalized is MaskPolarity.OPAQUE:
         normals = np.ascontiguousarray(-normals)
     # 关键字传参：字段顺序调整（如按段级/边级分组）不会使位置实参错位。
-    return SegmentBatch(contours=contours, edge_ids=edge_ids,
-                        edge_next_ids=edge_next_ids,
-                        edge_polygon_ids=edge_polygon_ids, edge_normals=normals,
-                        ring_segment_offsets=ring_offsets, t0=t0, t1=t1)
+    return SegmentBatch(
+        contours=contours,
+        edge_ids=edge_ids,
+        edge_next_ids=edge_next_ids,
+        edge_polygon_ids=edge_polygon_ids,
+        edge_normals=normals,
+        ring_segment_offsets=ring_offsets,
+        t0=t0,
+        t1=t1,
+    )

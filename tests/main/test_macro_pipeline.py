@@ -1,19 +1,19 @@
 """双轮 macro-core 迭代管线的配置校验与端到端生成式测试。"""
 
-import warnings  # resolve warning 捕获
-from decimal import Decimal  # nm/DBU 精确十进制
+import warnings
+from decimal import Decimal
 from pathlib import Path
 
 import klayout.db as kdb
 import numpy as np
 import pytest
-import torch  # 存根模型设备对象
+import torch
 
 import main.run_macro_pipeline as pipeline
 from layout import DbuBox, LayerSpec, LayoutDB
-from main._macro_pipeline import resolve_field_bounds  # 处理框解析
-from main.configuration import LayoutConfig  # [layout] 段
-from opc.input import rasterize_mask_canvas  # 期望画布独立重算
+from main._macro_pipeline import resolve_field_bounds
+from main.configuration import LayoutConfig
+from opc.input import rasterize_mask_canvas
 from opc.input.edge import MacroProblem, reconstruct_region
 
 # 测试版图：DBU=1nm，bar 图形使目标层 bbox 为 (20,20)-(140,60)，
@@ -60,10 +60,17 @@ def _write_asymmetric_gds(tmp_path):
 def _write_config(tmp_path, layout_path, **overrides):
     """按默认契约生成 TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值全部满足网格与分段契约
-        "macro_grid": "[2, 2]", "core_size_nm": 30, "context_nm": 10,
-        "pixel_nm": 1, "corner_nm": 4, "segment_nm": 10,
-        "max_displacement_nm": 8, "miter_limit": 4.0, "deltas": "[2, -2]",
-        "final_cell_mode": "single_cell"}
+        "macro_grid": "[2, 2]",
+        "core_size_nm": 30,
+        "context_nm": 10,
+        "pixel_nm": 1,
+        "corner_nm": 4,
+        "segment_nm": 10,
+        "max_displacement_nm": 8,
+        "miter_limit": 4.0,
+        "deltas": "[2, -2]",
+        "final_cell_mode": "single_cell",
+    }
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
 [layout]
@@ -103,7 +110,7 @@ final_cell_mode = "{values["final_cell_mode"]}"
 
 def _load(config_path):
     """统一加载六 Config（ValidationConfig 承接 [iteration] 段冻结校验）。"""
-    from main.configuration import (  # 按业务划分的配置类型
+    from main.configuration import (
         EdgeConfig,
         LayoutConfig,
         LithographyConfig,
@@ -112,9 +119,10 @@ def _load(config_path):
         ValidationConfig,
         load_config,
     )
+
     return load_config(  # 六 Config 元组（顺序与请求一致）
-        config_path, LayoutConfig, PartitionConfig, LithographyConfig,
-        EdgeConfig, ValidationConfig, OutputConfig)
+        config_path, LayoutConfig, PartitionConfig, LithographyConfig, EdgeConfig, ValidationConfig, OutputConfig
+    )
 
 
 def _prepare(configs):
@@ -140,7 +148,8 @@ class TestConfigValidation:
         gds = _write_gds(tmp_path)  # 生成 GDS
         path = _write_config(tmp_path, gds)  # 生成配置
         text = path.read_text(encoding="utf-8").replace(  # 注入未知键
-            "[partition]", "[partition]\nbogus = 1")  # 在 grid 段加键
+            "[partition]", "[partition]\nbogus = 1"
+        )  # 在 grid 段加键
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="未知键"):  # 必须报错
             _load(path)  # 加载
@@ -149,15 +158,18 @@ class TestConfigValidation:
         """macro_grid 与 macro_size_nm 同现或同缺都失败。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
         both = _write_config(  # 同时给出两种入口
-            tmp_path, gds, macro_grid="[2, 2]")  # 数量模式
+            tmp_path, gds, macro_grid="[2, 2]"
+        )  # 数量模式
         text = both.read_text(encoding="utf-8").replace(  # 再加尺寸模式
-            "macro_grid = [2, 2]", "macro_grid = [2, 2]\nmacro_size_nm = 60")  # 注入
+            "macro_grid = [2, 2]", "macro_grid = [2, 2]\nmacro_size_nm = 60"
+        )  # 注入
         both.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="恰好填写一个"):  # 必须报错
             _load(both)  # 加载
         neither = _write_config(tmp_path, gds)  # 数量模式配置
         text = neither.read_text(encoding="utf-8").replace(  # 删除唯一入口
-            "macro_grid = [2, 2]", "")  # 移除
+            "macro_grid = [2, 2]", ""
+        )  # 移除
         neither.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="恰好填写一个"):  # 必须报错
             _load(neither)  # 加载
@@ -174,7 +186,8 @@ class TestConfigValidation:
         """context 小于最大位移时阶段 0 校验失败。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
         config = _load(  # context=2 < max_disp=8
-            _write_config(tmp_path, gds, context_nm=2))  # 配置
+            _write_config(tmp_path, gds, context_nm=2)
+        )  # 配置
         with pytest.raises(ValueError, match="max_displacement_nm"):  # 必须报错
             _prepare(config)  # 执行
 
@@ -195,18 +208,21 @@ class TestConfigValidation:
         gds = tmp_path / "odd_dbu.gds"  # 输出路径
         layout.write(str(gds))  # 写盘
         config_path = _write_config(  # 全部参数取 2.5 的倍数
-            tmp_path, gds, pixel_nm=2.5, corner_nm=5, segment_nm=10,
-            max_displacement_nm=5)  # 只有 2nm 常量无法落格点
+            tmp_path, gds, pixel_nm=2.5, corner_nm=5, segment_nm=10, max_displacement_nm=5
+        )  # 只有 2nm 常量无法落格点
         with pytest.raises(ValueError, match="round_deltas_nm"):  # 报错含参数名
             pipeline.run(config_path)  # 落格点换算在 run 内用实际 dbu 执行
 
     @pytest.mark.parametrize(
         ("old", "new", "field"),
-        [("layer = 1", "layer = 1.5", "layer"),
-         ("layer = 1", "layer = true", "layer"),
-         ("canvas_pixels = 256", "canvas_pixels = 256.0", "canvas_pixels"),
-         ("canvas_pixels = 256", "canvas_pixels = true", "canvas_pixels")],
-        ids=["layer=1.5", "layer=true", "canvas=256.0", "canvas=true"])
+        [
+            ("layer = 1", "layer = 1.5", "layer"),
+            ("layer = 1", "layer = true", "layer"),
+            ("canvas_pixels = 256", "canvas_pixels = 256.0", "canvas_pixels"),
+            ("canvas_pixels = 256", "canvas_pixels = true", "canvas_pixels"),
+        ],
+        ids=["layer=1.5", "layer=true", "canvas=256.0", "canvas=true"],
+    )
     def test_non_integer_layer_or_canvas_rejected(self, tmp_path, old, new, field):
         """浮点或布尔的 layer/canvas_pixels 被严格拒绝（审查 P1.3 回归）。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
@@ -233,9 +249,13 @@ class TestPrepareProblems:
     def test_macro_ownership_partitions_layer_bbox(self, prepared):
         """全部 macro ownership 面积和恰等于目标层 bbox 面积。"""
         _, plan = prepared  # 解包
-        area = sum((box[2] - box[0]) * (box[3] - box[1])  # 逐 macro 面积
-                   for box in (entry["ownership_box"]  # 取四元组
-                               for entry in plan["macros"]))  # 遍历条目
+        area = sum(
+            (box[2] - box[0]) * (box[3] - box[1])  # 逐 macro 面积
+            for box in (
+                entry["ownership_box"]  # 取四元组
+                for entry in plan["macros"]
+            )
+        )  # 遍历条目
         assert area == 120 * 40  # 目标层 bbox 面积 (20,20)-(140,60)
 
 
@@ -254,8 +274,12 @@ class TestTwoRounds:
         for entry in plan["macros"]:  # 逐 macro 检查
             problem = self._problem(plan, entry)  # 加载 problem
             owned = problem.owner_indices >= 0  # owner 掩码
-            with np.load(entry["problem_file"].replace(  # problem 路径换算到 result 路径
-                    "problems", "round_001/results"), allow_pickle=False) as data:  # 打开 result
+            with np.load(
+                entry["problem_file"].replace(  # problem 路径换算到 result 路径
+                    "problems", "round_001/results"
+                ),
+                allow_pickle=False,
+            ) as data:  # 打开 result
                 displacements = data["segment_displacements"]  # 位移状态
                 written = int(data["written_owner_count"][0])  # 写入计数
             assert np.all(displacements[owned] == 2.0)  # owner 恰 +2
@@ -271,12 +295,15 @@ class TestTwoRounds:
         with np.load(target, allow_pickle=False) as data:  # 读取
             arrays = {name: data[name] for name in data.files}  # 全量复制
         problem = MacroProblem.load(  # 加载同 macro problem
-            work / "problems" / "mr0c0.npz")  # 路径
+            work / "problems" / "mr0c0.npz"
+        )  # 路径
         arrays["segment_displacements"][problem.owner_indices >= 0] = 5.0  # owner 置 5
         np.savez(target, **arrays)  # 写回
         pipeline.run_round(plan, 2, -2)  # 第二轮 -2
-        with np.load(work / "round_002" / "results" / "mr0c0.npz",  # 读第二轮
-                     allow_pickle=False) as data:  # 打开
+        with np.load(
+            work / "round_002" / "results" / "mr0c0.npz",  # 读第二轮
+            allow_pickle=False,
+        ) as data:  # 打开
             displacements = data["segment_displacements"]  # 位移
         # 续读证明：owner = 5 - 2 = 3，而不是从零重启的 -2。
         assert np.all(displacements[problem.owner_indices >= 0] == 3.0)  # 断言
@@ -287,8 +314,12 @@ class TestTwoRounds:
         pipeline.run_round(plan, 1, 2)  # 第一轮
         pipeline.run_round(plan, 2, -2)  # 第二轮
         for entry in plan["macros"]:  # 逐 macro
-            with np.load(entry["problem_file"].replace(  # 定位第二轮 result
-                    "problems", "round_002/results"), allow_pickle=False) as data:  # 打开
+            with np.load(
+                entry["problem_file"].replace(  # 定位第二轮 result
+                    "problems", "round_002/results"
+                ),
+                allow_pickle=False,
+            ) as data:  # 打开
                 displacements = data["segment_displacements"]  # 位移
             assert np.all(displacements == 0.0)  # 全部精确为零
 
@@ -314,9 +345,12 @@ class TestTwoRounds:
         for entry in plan["macros"]:  # 逐 macro
             problem = self._problem(plan, entry)  # 加载
             for round_name in ("round_001", "round_002"):  # 两轮
-                with np.load(entry["problem_file"].replace(  # 定位 result
-                        "problems", f"{round_name}/results"),  # 路径
-                        allow_pickle=False) as data:  # 打开
+                with np.load(
+                    entry["problem_file"].replace(  # 定位 result
+                        "problems", f"{round_name}/results"
+                    ),  # 路径
+                    allow_pickle=False,
+                ) as data:  # 打开
                     sums = data["core_transmission_sums"]  # 读总和
                 assert len(sums) == problem.macro.core_count  # 每 core 一项
                 assert np.all(np.isfinite(sums))  # 全部有限
@@ -331,12 +365,17 @@ class TestTwoRounds:
             problem = self._problem(plan, entry)  # 加载
             zeros = np.zeros(problem.segments.segment_count)  # 零位移
             reference = reconstruct_region(problem, zeros)  # 参考重建
-            gds_path = entry["problem_file"].replace(  # 定位 GDS
-                "problems", "round_002/gds").replace(".npz", ".gds")  # 后缀
+            gds_path = (
+                entry["problem_file"]
+                .replace(  # 定位 GDS
+                    "problems", "round_002/gds"
+                )
+                .replace(".npz", ".gds")
+            )  # 后缀
             with LayoutDB.open(gds_path) as database:  # 回读
                 batch = database.query(  # 全框查询
-                    [(problem.layer.layer, problem.layer.datatype)],
-                    DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)).materialize()  # 物化
+                    [(problem.layer.layer, problem.layer.datatype)], DbuBox(-(2**30), -(2**30), 2**30, 2**30)
+                ).materialize()  # 物化
             assert int((batch.region(problem.layer) ^ reference).area()) == 0  # XOR 零
 
     def test_iteration_order_does_not_change_results(self, tmp_path, monkeypatch):
@@ -346,12 +385,14 @@ class TestTwoRounds:
         gds = _write_gds(shared)  # 生成一份源版图
         finals = {}  # 顺序 → 最终版图路径
         plans = {}  # 顺序 → 计划
-        import main._macro_pipeline as macro_pipeline  # plan_macros 现居共享模块
+        import main._macro_pipeline as macro_pipeline
+
         real_plan_macros = macro_pipeline.plan_macros  # 循环外捕获，闭包不绑定循环变量
 
         def _reversed_macros(*args, **kwargs):
             """反转 macro 规划顺序，验证迭代顺序无关性。"""
             return tuple(reversed(real_plan_macros(*args, **kwargs)))
+
         for tag, reverse in (("forward", False), ("reverse", True)):  # 两种顺序
             base = tmp_path / tag  # 独立工作目录
             base.mkdir()  # 创建
@@ -366,52 +407,78 @@ class TestTwoRounds:
             pipeline.run_round(plan, 1, 2)  # 第一轮 +2（冻结步长）
             pipeline.run_round(plan, 2, -2)  # 第二轮 -2
             finals[tag] = pipeline.merge_macro_results(  # 合并
-                plan, pipeline.collect_round_macro_gds(plan, 2),  # 校验并显式映射
-                base / "final.gds", cell_mode="single_cell")  # 固定模式
+                plan,
+                pipeline.collect_round_macro_gds(plan, 2),  # 校验并显式映射
+                base / "final.gds",
+                cell_mode="single_cell",
+            )  # 固定模式
         # ① 两轮每 macro 的位移数组逐位一致（按 macro_id 配对，顺序不同）。
         reverse_by_id = {e["macro_id"]: e for e in plans["reverse"]["macros"]}  # 索引
         for entry_f in plans["forward"]["macros"]:  # 正序条目
             entry_r = reverse_by_id[entry_f["macro_id"]]  # 同 macro 逆序条目
             for round_name in ("round_001", "round_002"):  # 两轮
-                path_f = Path(entry_f["problem_file"].replace(  # 正序 result
-                    "problems", f"{round_name}/results"))  # 换算
-                path_r = Path(entry_r["problem_file"].replace(  # 逆序 result
-                    "problems", f"{round_name}/results"))  # 换算
-                with np.load(path_f, allow_pickle=False) as df, np.load(  # 同时打开
-                        path_r, allow_pickle=False) as dr:  # 打开
-                    assert np.array_equal(df["segment_displacements"],  # 比较
-                                          dr["segment_displacements"])  # 一致
+                path_f = Path(
+                    entry_f["problem_file"].replace(  # 正序 result
+                        "problems", f"{round_name}/results"
+                    )
+                )  # 换算
+                path_r = Path(
+                    entry_r["problem_file"].replace(  # 逆序 result
+                        "problems", f"{round_name}/results"
+                    )
+                )  # 换算
+                with (
+                    np.load(path_f, allow_pickle=False) as df,
+                    np.load(  # 同时打开
+                        path_r, allow_pickle=False
+                    ) as dr,
+                ):  # 打开
+                    assert np.array_equal(
+                        df["segment_displacements"],  # 比较
+                        dr["segment_displacements"],
+                    )  # 一致
         # ② 最终顶层物理覆盖 XOR 为零（比较覆盖，不比较 GDS 字节）。
         layer = LayerSpec(1, 0)  # 目标层
         coverage = {}  # 顺序 → 覆盖 Region
         for tag, path in finals.items():  # 两个最终版图
             with LayoutDB.open(path) as database:  # 回读
-                coverage[tag] = database.query(  # 全框查询
-                    [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-                ).materialize().region(layer)  # 物化
+                coverage[tag] = (
+                    database.query(  # 全框查询
+                        [layer], DbuBox(-(2**30), -(2**30), 2**30, 2**30)
+                    )
+                    .materialize()
+                    .region(layer)
+                )  # 物化
         assert (coverage["forward"] ^ coverage["reverse"]).area() == 0  # XOR 零
 
     def test_stage_two_never_repeats_stage_one(self, prepared, monkeypatch):
         """阶段二不调用 LayoutDB 物化或 problem 准备（调用计数证明）。"""
         _, plan = prepared  # 解包
         calls = {"prepare": 0, "materialize": 0}  # 计数器
-        import main._macro_pipeline as macro_pipeline  # 准备函数现居共享模块
+        import main._macro_pipeline as macro_pipeline
+
         real_prepare = macro_pipeline.prepare_macro_problem  # 原函数
 
         def _counting_prepare(*args, **kwargs):
             """计数 problem 准备调用并透传，证明阶段二零调用。"""
             calls["prepare"] += 1  # 计数
             return real_prepare(*args, **kwargs)  # 透传
+
         monkeypatch.setattr(macro_pipeline, "prepare_macro_problem", _counting_prepare)  # 替换入口
-        from layout.query import ShapeQuery  # 物化入口类
+        from layout.query import ShapeQuery
+
         real_materialize = ShapeQuery.materialize_intersecting  # 原方法
 
         def _counting_materialize(self, *args, **kwargs):
             """计数物化调用并透传，证明阶段二零调用。"""
             calls["materialize"] += 1  # 计数
             return real_materialize(self, *args, **kwargs)  # 透传
-        monkeypatch.setattr(ShapeQuery, "materialize_intersecting",  # 替换方法
-                            _counting_materialize)  # 完成
+
+        monkeypatch.setattr(
+            ShapeQuery,
+            "materialize_intersecting",  # 替换方法
+            _counting_materialize,
+        )  # 完成
         pipeline.run_round(plan, 1, 2)  # 第一轮
         pipeline.run_round(plan, 2, -2)  # 第二轮
         assert calls == {"prepare": 0, "materialize": 0}  # 零调用
@@ -420,7 +487,8 @@ class TestTwoRounds:
         """阶段 0 取层 bbox 走原生路径：全程不触碰公共 shape 迭代器。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
         config = _load(_write_config(tmp_path, gds))  # 配置
-        from layout import LayoutDB as _LayoutDB  # 迭代器宿主类
+        from layout import LayoutDB as _LayoutDB
+
         real_iterate = _LayoutDB.recursive_polygon_shapes  # 原方法
         calls = {"iterate": 0}  # 计数器
 
@@ -428,8 +496,12 @@ class TestTwoRounds:
             """计数 shape 迭代器调用并透传，证明阶段 0 零逐 shape 遍历。"""
             calls["iterate"] += 1  # 计数
             return real_iterate(self, *args, **kwargs)  # 透传
-        monkeypatch.setattr(_LayoutDB, "recursive_polygon_shapes",  # 替换方法
-                            _counting_iterate)  # 完成
+
+        monkeypatch.setattr(
+            _LayoutDB,
+            "recursive_polygon_shapes",  # 替换方法
+            _counting_iterate,
+        )  # 完成
         _prepare(config)  # 执行阶段 0/1
         assert calls["iterate"] == 0  # 层 bbox 全程来自原生 bbox_per_layer
 
@@ -451,8 +523,7 @@ class TestFinalMerge:
         _, summary = full  # 解包
         layer = LayerSpec(1, 0)  # 目标层
         with LayoutDB.open(summary["final_layout"]) as db:  # 回读最终版图
-            region = db.query([layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-                              ).materialize().region(layer)  # 物化
+            region = db.query([layer], DbuBox(-(2**30), -(2**30), 2**30, 2**30)).materialize().region(layer)  # 物化
             hierarchy = db.cell_hierarchy()  # Cell 结构
         assert summary["final_xor_area"] == 0  # 回零 XOR 为零
         assert region.count() == 3  # 两锚框与内条各一个 polygon，跨界处无 seam
@@ -462,7 +533,8 @@ class TestFinalMerge:
         """macro_cells 输出含预期数量的 macro 子 Cell。"""
         gds = _write_gds(tmp_path)  # 生成 GDS
         config_path = _write_config(  # macro_cells 模式
-            tmp_path, gds, final_cell_mode="macro_cells")  # 覆盖模式
+            tmp_path, gds, final_cell_mode="macro_cells"
+        )  # 覆盖模式
         summary = pipeline.run(config_path)  # 完整流程
         assert summary["final_cell_mode"] == "macro_cells"  # 模式确认
         with LayoutDB.open(summary["final_layout"]) as db:  # 回读
@@ -478,12 +550,17 @@ class TestFinalMerge:
             base = tmp_path / mode  # 独立目录
             base.mkdir()  # 创建
             config_path = _write_config(  # 各自配置
-                base, gds, final_cell_mode=mode)  # 覆盖模式
+                base, gds, final_cell_mode=mode
+            )  # 覆盖模式
             summary = pipeline.run(config_path)  # 完整流程
             with LayoutDB.open(summary["final_layout"]) as db:  # 回读
-                coverage[mode] = db.query(  # 全框查询
-                    [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-                ).materialize().region(layer)  # 物化
+                coverage[mode] = (
+                    db.query(  # 全框查询
+                        [layer], DbuBox(-(2**30), -(2**30), 2**30, 2**30)
+                    )
+                    .materialize()
+                    .region(layer)
+                )  # 物化
         assert (coverage["single_cell"] ^ coverage["macro_cells"]).area() == 0  # XOR 零
 
     def test_merge_does_not_change_coverage_area(self, full):
@@ -500,16 +577,27 @@ class TestFinalMerge:
         pipeline.run_round(plan, 1, 2)  # 仅第一轮
         round_one_final = tmp_path / "round1.gds"  # 第一轮合并输出
         pipeline.merge_macro_results(  # 合并第一轮
-            plan, pipeline.collect_round_macro_gds(plan, 1),  # 第一轮显式映射
-            round_one_final, cell_mode=config[-1].final_cell_mode)  # 输出段模式
+            plan,
+            pipeline.collect_round_macro_gds(plan, 1),  # 第一轮显式映射
+            round_one_final,
+            cell_mode=config[-1].final_cell_mode,
+        )  # 输出段模式
         with LayoutDB.open(gds) as db:  # 原始版图
-            reference = db.query(  # 全框查询
-                [LayerSpec(1, 0)], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-            ).materialize_intersecting().region(LayerSpec(1, 0))  # 完整原图形
+            reference = (
+                db.query(  # 全框查询
+                    [LayerSpec(1, 0)], DbuBox(-(2**30), -(2**30), 2**30, 2**30)
+                )
+                .materialize_intersecting()
+                .region(LayerSpec(1, 0))
+            )  # 完整原图形
         with LayoutDB.open(round_one_final) as db:  # 第一轮结果
-            moved = db.query(  # 全框查询
-                [LayerSpec(1, 0)], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-            ).materialize().region(LayerSpec(1, 0))  # 物化
+            moved = (
+                db.query(  # 全框查询
+                    [LayerSpec(1, 0)], DbuBox(-(2**30), -(2**30), 2**30, 2**30)
+                )
+                .materialize()
+                .region(LayerSpec(1, 0))
+            )  # 物化
         assert int((moved ^ reference).area()) > 0  # 外扩 2nm 必然产生非零 XOR
 
     def test_missing_macro_gds_fails_merge(self, full, tmp_path):
@@ -518,12 +606,16 @@ class TestFinalMerge:
         target = tmp_path / "work" / "round_002" / "gds" / "mr0c0.gds"  # 待删文件
         target.unlink()  # 删除
         config = _load(  # 重新加载配置以重建 plan 路径
-            tmp_path / "pipeline.toml")  # 配置
+            tmp_path / "pipeline.toml"
+        )  # 配置
         plan = _prepare(config)  # 重新准备（problems 目录已存在会被覆盖）
         with pytest.raises(FileNotFoundError, match="macro GDS"):  # 明确失败
             pipeline.merge_macro_results(  # 合并（缺文件在映射检查后失败）
-                plan, pipeline.collect_round_macro_gds(plan, 2),  # 第二轮显式映射
-                tmp_path / "final2.gds", cell_mode="single_cell")  # 固定模式
+                plan,
+                pipeline.collect_round_macro_gds(plan, 2),  # 第二轮显式映射
+                tmp_path / "final2.gds",
+                cell_mode="single_cell",
+            )  # 固定模式
 
     def test_duplicate_macro_id_fails_merge(self, full, tmp_path):
         """重复 macro ID 时合并明确失败。"""
@@ -533,8 +625,11 @@ class TestFinalMerge:
         plan["macros"].append(dict(plan["macros"][0]))  # 注入重复条目
         with pytest.raises(ValueError, match="重复 macro ID"):  # 明确失败
             pipeline.merge_macro_results(  # 合并（计划条目重复即失败）
-                plan, pipeline.collect_round_macro_gds(plan, 2),  # 第二轮显式映射
-                tmp_path / "final3.gds", cell_mode="single_cell")  # 固定模式
+                plan,
+                pipeline.collect_round_macro_gds(plan, 2),  # 第二轮显式映射
+                tmp_path / "final3.gds",
+                cell_mode="single_cell",
+            )  # 固定模式
 
     def test_result_round_mismatch_fails_merge(self, full, tmp_path):
         """result 轮次与合并轮次不一致时明确失败。"""
@@ -548,8 +643,11 @@ class TestFinalMerge:
         plan = _prepare(config)  # 重新准备
         with pytest.raises(ValueError, match="轮次"):  # 明确失败
             pipeline.merge_macro_results(  # 轮次校验在收集映射时失败
-                plan, pipeline.collect_round_macro_gds(plan, 2),  # 篡改后被拒
-                tmp_path / "final4.gds", cell_mode="single_cell")  # 固定模式
+                plan,
+                pipeline.collect_round_macro_gds(plan, 2),  # 篡改后被拒
+                tmp_path / "final4.gds",
+                cell_mode="single_cell",
+            )  # 固定模式
 
     def test_unprocessed_layers_are_not_copied(self, full, tmp_path):
         """源含 1/0 与 2/0 两层时，最终版图只保留处理过的目标层 1/0。"""
@@ -562,18 +660,21 @@ class TestFinalMerge:
 
 class _StubLithoConfig:
     """留档消费的最小配置视图。"""
+
     canvas = 256  # 画布
     print_threshold = 0.5  # 二值阈值
 
 
 class _StubLithoModel:
     """直通 stub：forward_many 原样返回 mask（无光刻计算）。"""
+
     device = torch.device("cpu")  # CPU 设备
     config = _StubLithoConfig()  # 配置视图
 
     def condition(self, name):
         """按名返回占位条件（stub 不消费）。"""
-        from types import SimpleNamespace  # stub 条件对象
+        from types import SimpleNamespace
+
         return SimpleNamespace(name=name)
 
     def forward_many(self, mask, conditions):
@@ -590,9 +691,11 @@ class TestSaveFinalLithography:
         configs = _load(_write_config(tmp_path, gds))  # 统一加载
         plan = _prepare(configs)  # 阶段 0/1（plan 含留档所需键）
         out_dir = tmp_path / "final_png"  # 留档目录
-        from main._macro_pipeline import save_final_lithography  # 公共后处理真身
+        from main._macro_pipeline import save_final_lithography
+
         manifest = save_final_lithography(  # 直测
-            plan, gds, _StubLithoModel(), 4, out_dir)
+            plan, gds, _StubLithoModel(), 4, out_dir
+        )
         assert manifest["format_version"] == 1  # manifest 版本
         assert manifest["pixel_dbu"] == plan["pixel_dbu"]  # 像素一致
         assert manifest["tile_count"] == len(manifest["tiles"])  # 数目一致
@@ -604,23 +707,24 @@ class TestSaveFinalLithography:
 
     def test_nominal_and_binary_pngs_are_top_down_flipped(self, tmp_path):
         """PNG 内容必须等于 flipud(画布)：图片行 0 在顶部、模型行 0 在底部。"""
-        from PIL import Image  # PNG 像素读回
+        from PIL import Image
 
         gds = _write_asymmetric_gds(tmp_path)  # 上下不对称版图（镜像版测不出翻转）
         plan = _prepare(_load(_write_config(tmp_path, gds)))  # 阶段 0/1
         out_dir = tmp_path / "flip_png"  # 留档目录
-        from main._macro_pipeline import save_final_lithography  # 公共后处理真身
+        from main._macro_pipeline import save_final_lithography
+
         manifest = save_final_lithography(  # 直测
-            plan, gds, _StubLithoModel(), 4, out_dir)
+            plan, gds, _StubLithoModel(), 4, out_dir
+        )
         layer = LayerSpec(1, 0)  # 目标层
         with LayoutDB.open(gds) as database:  # 期望画布的独立数据源
             tile = manifest["tiles"][0]  # 首 tile 足以暴露翻转
             context = DbuBox(*tile["context_box"])  # 该 tile 查询框（manifest 带全坐标）
-            region = (database.query([layer], context)
-                      .materialize_intersecting().region(layer))
+            region = database.query([layer], context).materialize_intersecting().region(layer)
             expected = rasterize_mask_canvas(  # float 画布，行 0 = 最低 Y
-                region, context, int(plan["pixel_dbu"]),
-                int(plan["canvas_pixels"]), polarity="clear")
+                region, context, int(plan["pixel_dbu"]), int(plan["canvas_pixels"]), polarity="clear"
+            )
         # 反退化：该 tile 覆盖率上下确实不同，方向断言有判别力
         assert not np.array_equal(expected, np.flipud(expected))
         nominal = np.rint(expected * 255.0).astype(np.uint8)  # 灰度期望（存根直通）
@@ -637,8 +741,7 @@ class TestResolveFieldBounds:
     @staticmethod
     def _layout(**overrides):
         """以最小 [layout] 字段构造配置。"""
-        base = {"layout": Path("x.gds"), "layer": 1, "datatype": 0,
-                "polarity": "clear"}
+        base = {"layout": Path("x.gds"), "layer": 1, "datatype": 0, "polarity": "clear"}
         base.update(overrides)
         return LayoutConfig(**base)
 
@@ -649,8 +752,7 @@ class TestResolveFieldBounds:
         """双 None：原样返回 layer bbox 且不发 warning。"""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = resolve_field_bounds(
-                self._layout(), self.LAYER, self.UNIT)
+            result = resolve_field_bounds(self._layout(), self.LAYER, self.UNIT)
         assert result == self.LAYER and not caught
 
     def test_field_box_exact_equal_no_warning(self):
@@ -658,9 +760,8 @@ class TestResolveFieldBounds:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = resolve_field_bounds(
-                self._layout(field_box_nm=(Decimal(0), Decimal(0),
-                                          Decimal(100), Decimal(60))),
-                self.LAYER, self.UNIT)
+                self._layout(field_box_nm=(Decimal(0), Decimal(0), Decimal(100), Decimal(60))), self.LAYER, self.UNIT
+            )
         assert result == self.LAYER and not caught
 
     def test_field_box_strictly_larger_warns(self):
@@ -668,11 +769,11 @@ class TestResolveFieldBounds:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = resolve_field_bounds(
-                self._layout(field_box_nm=(Decimal(-30), Decimal(-15),
-                                          Decimal(130), Decimal(75))),
-                self.LAYER, self.UNIT)
-        assert (result.left, result.bottom, result.right, result.top) == (
-            -30, -15, 130, 75)
+                self._layout(field_box_nm=(Decimal(-30), Decimal(-15), Decimal(130), Decimal(75))),
+                self.LAYER,
+                self.UNIT,
+            )
+        assert (result.left, result.bottom, result.right, result.top) == (-30, -15, 130, 75)
         assert len(caught) == 1 and "天然不透光" in str(caught[0].message)
 
     def test_field_box_larger_opaque_defers_to_prepare(self):
@@ -680,45 +781,37 @@ class TestResolveFieldBounds:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = resolve_field_bounds(
-                self._layout(polarity="opaque",
-                             field_box_nm=(Decimal(-30), Decimal(-15),
-                                           Decimal(130), Decimal(75))),
-                self.LAYER, self.UNIT)
-        assert (result.left, result.bottom, result.right, result.top) == (
-            -30, -15, 130, 75)
+                self._layout(polarity="opaque", field_box_nm=(Decimal(-30), Decimal(-15), Decimal(130), Decimal(75))),
+                self.LAYER,
+                self.UNIT,
+            )
+        assert (result.left, result.bottom, result.right, result.top) == (-30, -15, 130, 75)
         assert len(caught) == 0
 
     def test_field_box_not_containing_rejected(self):
         """不包含 layer bbox（偏移出界/更小）：ValueError。"""
         with pytest.raises(ValueError, match="四向包含"):
             resolve_field_bounds(
-                self._layout(field_box_nm=(Decimal(10), Decimal(10),
-                                          Decimal(120), Decimal(70))),
-                self.LAYER, self.UNIT)
+                self._layout(field_box_nm=(Decimal(10), Decimal(10), Decimal(120), Decimal(70))), self.LAYER, self.UNIT
+            )
 
     def test_field_size_centered_even_and_odd(self):
         """居中推导：偶 slack 对半；奇 slack 归高侧（判别 30/31）。"""
-        even = resolve_field_bounds(
-            self._layout(field_size_nm=(Decimal(160), Decimal(90))),
-            self.LAYER, self.UNIT)
-        assert (even.left, even.bottom, even.right, even.top) == (
-            -30, -15, 130, 75)
-        odd = resolve_field_bounds(
-            self._layout(field_size_nm=(Decimal(161), Decimal(90))),
-            self.LAYER, self.UNIT)
+        even = resolve_field_bounds(self._layout(field_size_nm=(Decimal(160), Decimal(90))), self.LAYER, self.UNIT)
+        assert (even.left, even.bottom, even.right, even.top) == (-30, -15, 130, 75)
+        odd = resolve_field_bounds(self._layout(field_size_nm=(Decimal(161), Decimal(90))), self.LAYER, self.UNIT)
         assert (odd.left, odd.right) == (-30, 131)  # slack 61 = 低 30 + 高 31
 
     def test_field_size_smaller_than_layer_rejected(self):
         """尺寸小于 layer 尺寸：包含性校验统一拒绝。"""
         with pytest.raises(ValueError, match="四向包含"):
-            resolve_field_bounds(
-                self._layout(field_size_nm=(Decimal(50), Decimal(90))),
-                self.LAYER, self.UNIT)
+            resolve_field_bounds(self._layout(field_size_nm=(Decimal(50), Decimal(90))), self.LAYER, self.UNIT)
 
     def test_exact_dbu_fraction_rejected(self):
         """非 dbu 整数倍的坐标在换算层拒绝。"""
         with pytest.raises(ValueError, match="field_box_nm"):
             resolve_field_bounds(
-                self._layout(field_box_nm=(Decimal("0.5"), Decimal(0),
-                                          Decimal(100), Decimal(60))),
-                self.LAYER, Decimal(1))
+                self._layout(field_box_nm=(Decimal("0.5"), Decimal(0), Decimal(100), Decimal(60))),
+                self.LAYER,
+                Decimal(1),
+            )

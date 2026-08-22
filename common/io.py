@@ -1,18 +1,17 @@
 """JSON/NPZ 载荷的同目录临时文件原子写出。"""
 
-import json  # 序列化 JSON 载荷
-import os  # 原子替换与句柄管理
-import tempfile  # 创建与目标同目录的临时文件
-from pathlib import Path  # 全部路径统一使用 Path 对象
+import json
+import os
+import tempfile
+from pathlib import Path
 
-import numpy as np  # NPZ 数组载体
+import numpy as np
 
 
 def atomic_write_json(path: Path, payload: dict) -> Path:
     """把 JSON 载荷经同目录临时文件原子写出，避免留下半截 plan。"""
     # 与目标同目录同卷的临时文件（os.replace 的原子性要求）
-    handle, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.stem}-", suffix=".json", dir=path.parent)
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=".json", dir=path.parent)
     os.close(handle)  # 只借用文件名，内容用文本模式重写
     temporary = Path(temporary_name)  # Path 化
     try:  # 写入并原子替换
@@ -28,8 +27,7 @@ def atomic_write_json(path: Path, payload: dict) -> Path:
 def atomic_write_npz(path: Path, **arrays: np.ndarray) -> Path:
     """把 NPZ 载荷经同目录临时文件原子写出。"""
     # 与目标同目录同卷的临时文件（os.replace 的原子性要求）
-    handle, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.stem}-", suffix=".npz", dir=path.parent)
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=".npz", dir=path.parent)
     os.close(handle)  # 关闭句柄
     temporary = Path(temporary_name)  # Path 化
     try:  # 写出并原子替换

@@ -22,17 +22,15 @@ def _ring_signed_areas2(contours: ContourBatch) -> np.ndarray:
     following = current + 1
     following[contours.ring_offsets[1:] - 1] = contours.ring_offsets[:-1]
     vertices = contours.vertices.astype(np.float64, copy=False)
-    crosses = (vertices[:, 0] * vertices[following, 1] -
-               vertices[:, 1] * vertices[following, 0])
+    crosses = vertices[:, 0] * vertices[following, 1] - vertices[:, 1] * vertices[following, 0]
     return np.add.reduceat(crosses, contours.ring_offsets[:-1])
 
 
-def _validate_reference_topology(reference: ContourBatch,
-                                 candidate: ContourBatch) -> None:
+def _validate_reference_topology(reference: ContourBatch, candidate: ContourBatch) -> None:
     """拒绝 ring 翻转及 hole 越出所属 hull 的候选轮廓。"""
-    if (candidate.ring_count != reference.ring_count or
-            not np.array_equal(candidate.polygon_ring_offsets,
-                               reference.polygon_ring_offsets)):
+    if candidate.ring_count != reference.ring_count or not np.array_equal(
+        candidate.polygon_ring_offsets, reference.polygon_ring_offsets
+    ):
         raise ReconstructionError("reconstructed contours changed ring topology")
     reference_areas = _ring_signed_areas2(reference)
     candidate_areas = _ring_signed_areas2(candidate)
@@ -46,27 +44,22 @@ def _validate_reference_topology(reference: ContourBatch,
     if not len(hole_ids):
         return
     ring_polygon_ids = np.repeat(
-        np.arange(candidate.polygon_count, dtype=np.int64),
-        np.diff(candidate.polygon_ring_offsets))
+        np.arange(candidate.polygon_count, dtype=np.int64), np.diff(candidate.polygon_ring_offsets)
+    )
     for hole_id in hole_ids:
         polygon_id = ring_polygon_ids[hole_id]
         hull_id = candidate.polygon_ring_offsets[polygon_id]
-        hull_start, hull_end = candidate.ring_offsets[hull_id:hull_id + 2]
-        hole_start, hole_end = candidate.ring_offsets[hole_id:hole_id + 2]
-        hull = kdb.Region(kdb.Polygon([
-            kdb.Point(int(x), int(y))
-            for x, y in candidate.vertices[hull_start:hull_end]]))
-        hole = kdb.Region(kdb.Polygon([
-            kdb.Point(int(x), int(y))
-            for x, y in candidate.vertices[hole_start:hole_end]]))
+        hull_start, hull_end = candidate.ring_offsets[hull_id : hull_id + 2]
+        hole_start, hole_end = candidate.ring_offsets[hole_id : hole_id + 2]
+        hull = kdb.Region(kdb.Polygon([kdb.Point(int(x), int(y)) for x, y in candidate.vertices[hull_start:hull_end]]))
+        hole = kdb.Region(kdb.Polygon([kdb.Point(int(x), int(y)) for x, y in candidate.vertices[hole_start:hole_end]]))
         # hole 与 hull 的关系不是单 ring 有效性可以表达的；任意 hole 面积落到
         # hull 外都意味着内外线交叉，必须整轮拒绝而不能让 Region 布尔运算修补。
         if not (hole - hull).is_empty():
             raise ReconstructionError("reconstructed hole escaped its hull")
 
 
-def _validated_displacements(segments: SegmentBatch, displacements: object,
-                             config: FragmentationConfig) -> np.ndarray:
+def _validated_displacements(segments: SegmentBatch, displacements: object, config: FragmentationConfig) -> np.ndarray:
     """规范化位移向量，并在几何计算前执行一次全局范围检查。"""
     values = np.ascontiguousarray(displacements, dtype=np.float64)
     if values.ndim != 1 or len(values) != segments.segment_count:
@@ -82,12 +75,13 @@ def _validated_displacements(segments: SegmentBatch, displacements: object,
 class ReconstructionResult:
     """保存一次重构的轻量产物：整数轮廓与可选的各段采样中点。"""
 
-    contours: ContourBatch                # np.rint 取整与去重后的整数轮廓
+    contours: ContourBatch  # np.rint 取整与去重后的整数轮廓
     segment_midpoints: np.ndarray | None  # [S,2] float64；未请求时 None
 
 
-def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
-                          with_midpoints: bool = False) -> ReconstructionResult:
+def _reconstruct_geometry(
+    problem: MacroProblem, displacements: object, *, with_midpoints: bool = False
+) -> ReconstructionResult:
     """核心重构：junction/bevel 拼装整数轮廓；按需附带各段采样中点。
 
     中点需要 following 与三个 [S,2] 数组（约 56S 字节临时内存）——仅
@@ -100,9 +94,7 @@ def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
     geometry = segments.materialize(values)
     count = segments.segment_count
     if not count:
-        return ReconstructionResult(
-            segments.contours,
-            np.empty((0, 2), dtype=np.float64) if with_midpoints else None)
+        return ReconstructionResult(segments.contours, np.empty((0, 2), dtype=np.float64) if with_midpoints else None)
     # 构造previous，让每条边段知道自己前一条是什么
     previous = np.arange(count, dtype=np.int64) - 1
     previous[segments.ring_segment_offsets[:-1]] = segments.ring_segment_offsets[1:] - 1
@@ -124,11 +116,9 @@ def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
         # 压缩到拐角子集：前一/当前段的数学边起点顶点索引，后续全部向量化
         first_ids, second_ids = previous_edges[corners], current_edges[corners]
         # 前一条边的方向向量（终点顶点 − 起点顶点），定义拐角处第一条无限直线
-        first_vectors = (vertices[segments.edge_next_ids[first_ids]] -
-                         vertices[first_ids]).astype(np.float64)
+        first_vectors = (vertices[segments.edge_next_ids[first_ids]] - vertices[first_ids]).astype(np.float64)
         # 当前边的方向向量，定义第二条无限直线
-        second_vectors = (vertices[segments.edge_next_ids[second_ids]] -
-                          vertices[second_ids]).astype(np.float64)
+        second_vectors = (vertices[segments.edge_next_ids[second_ids]] - vertices[second_ids]).astype(np.float64)
         # 位移后两线不再共点：delta = 当前段起点 − 前一段终点，是两条直线的相对错位
         delta = current_starts[corners] - previous_ends[corners]
         # 二维叉积（z 分量）= |a||b|·sinθ：两条边方向的平行判定基础
@@ -140,8 +130,7 @@ def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
         safe_cross = np.where(parallel, 1.0, cross)
         # 克莱姆法则解 previous_end + t·first = current_start + s·second 中的 t：
         # 分子是 delta 与 second 的叉积，分母是两方向的叉积
-        factor = (delta[:, 0] * second_vectors[:, 1] -
-                  delta[:, 1] * second_vectors[:, 0]) / safe_cross
+        factor = (delta[:, 0] * second_vectors[:, 1] - delta[:, 1] * second_vectors[:, 0]) / safe_cross
         # 参数 t 代回第一条直线得到精确交点，即拐角的 miter（斜接）顶点
         intersections = previous_ends[corners] + factor[:, None] * first_vectors
         # 拐角的原始顶点（前一条边的终点顶点 = 位移前两人共享的角点）
@@ -150,8 +139,9 @@ def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
         distance = np.linalg.norm(intersections - original, axis=1)
         # 位移幅度标尺：取两侧位移绝对值与 1（DBU）的最大者；下界 1 保证零位移
         # 时阈值不退化为 0，miter_limit 以「位移的倍数」表达允许的尖刺长度
-        scale = np.maximum.reduce((np.abs(values[previous[corners]]),
-                                   np.abs(values[corners]), np.ones(np.count_nonzero(corners))))
+        scale = np.maximum.reduce(
+            (np.abs(values[previous[corners]]), np.abs(values[corners]), np.ones(np.count_nonzero(corners)))
+        )
         # 两种情况放弃 miter 改用 bevel（保留 previous_end/current_start 两个点平接）：
         # ① 平行无交点；② 交点偏移超过 miter_limit 倍位移（尖刺过长）
         corner_bevel = parallel | (distance > config.miter_limit * scale)
@@ -172,13 +162,9 @@ def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
         # float64 连续域，不随下方 np.rint 整数化——梯度采样需要追踪
         # fragment 身份而非最终轮廓顶点。
         following = np.arange(count, dtype=np.int64) + 1  # 环内下一段
-        following[segments.ring_segment_offsets[1:] - 1] = (
-            segments.ring_segment_offsets[:-1])  # 各环尾段回卷到首段
-        segment_starts = np.where(two_points[:, None], current_starts,
-                                  junctions)
-        segment_ends = np.where(two_points[following, None],
-                                previous_ends[following],
-                                junctions[following])
+        following[segments.ring_segment_offsets[1:] - 1] = segments.ring_segment_offsets[:-1]  # 各环尾段回卷到首段
+        segment_starts = np.where(two_points[:, None], current_starts, junctions)
+        segment_ends = np.where(two_points[following, None], previous_ends[following], junctions[following])
         segment_midpoints = (segment_starts + segment_ends) * 0.5
     output_counts = np.where(same_position, 0, np.where(two_points, 2, 1)).astype(np.int64)
     output_offsets = np.empty(count + 1, dtype=np.int64)
@@ -207,8 +193,7 @@ def _reconstruct_geometry(problem: MacroProblem, displacements: object, *,
     clean_offsets = np.empty(len(clean_counts) + 1, dtype=np.int64)
     clean_offsets[0] = 0
     np.cumsum(clean_counts, out=clean_offsets[1:])
-    contours = ContourBatch(vertices[keep], clean_offsets,
-                            segments.contours.polygon_ring_offsets)
+    contours = ContourBatch(vertices[keep], clean_offsets, segments.contours.polygon_ring_offsets)
     _validate_reference_topology(segments.contours, contours)
     report = validate_contours(contours, problem.layer)
     if not report.is_valid:
@@ -230,9 +215,7 @@ def reconstruct_region(problem: MacroProblem, displacements: object) -> kdb.Regi
     return region
 
 
-def reconstruct_region_with_midpoints(
-        problem: MacroProblem,
-        displacements: object) -> tuple[kdb.Region, np.ndarray]:
+def reconstruct_region_with_midpoints(problem: MacroProblem, displacements: object) -> tuple[kdb.Region, np.ndarray]:
     """一次重构同时返回 Region 与各段实际采样中点（梯度路径专用）。
 
     两产物来自同一次几何计算：Region 供栅格化与评价、中点供梯度采样，

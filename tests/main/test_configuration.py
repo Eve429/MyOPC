@@ -81,7 +81,7 @@ class TestSingleAndMultiConfig:
 
     def test_single_config(self, tmp_path):
         """只请求 MBOPCConfig：类型与字段正确。"""
-        cfg, = load_config(_write(tmp_path), MBOPCConfig)  # 尾随单元素解包
+        (cfg,) = load_config(_write(tmp_path), MBOPCConfig)  # 尾随单元素解包
         assert isinstance(cfg, MBOPCConfig)  # 类型
         assert cfg.iterations == 8  # 整数原样
         assert cfg.initial_step_nm == Decimal(8)  # Decimal 精确
@@ -91,8 +91,8 @@ class TestSingleAndMultiConfig:
     def test_multi_config_order_and_types(self, tmp_path):
         """多 Config：返回顺序与请求一致、类型正确。"""
         layout, partition, litho, mbopc, output = load_config(
-            _write(tmp_path), LayoutConfig, PartitionConfig,
-            LithographyConfig, MBOPCConfig, OutputConfig)
+            _write(tmp_path), LayoutConfig, PartitionConfig, LithographyConfig, MBOPCConfig, OutputConfig
+        )
         assert isinstance(layout, LayoutConfig)  # 顺序 1
         assert isinstance(partition, PartitionConfig)  # 顺序 2
         assert isinstance(litho, LithographyConfig)  # 顺序 3
@@ -124,9 +124,16 @@ class TestSingleRead:
             return real(text)
 
         monkeypatch.setattr(configuration, "toml_loads", counting)
-        load_config(_write(tmp_path), LayoutConfig, PartitionConfig,
-                    LithographyConfig, MBOPCConfig, GradientConfig,
-                    SinglePassConfig, OutputConfig)  # 请求全部七类
+        load_config(
+            _write(tmp_path),
+            LayoutConfig,
+            PartitionConfig,
+            LithographyConfig,
+            MBOPCConfig,
+            GradientConfig,
+            SinglePassConfig,
+            OutputConfig,
+        )  # 请求全部七类
         assert calls == [1]  # 恰一次读盘
 
 
@@ -135,13 +142,15 @@ class TestUnrequestedSections:
 
     def test_unrequested_sections_allowed(self, tmp_path):
         """TOML 含全部段、只请求 MBOPCConfig：成功。"""
-        cfg, = load_config(_write(tmp_path), MBOPCConfig)
+        (cfg,) = load_config(_write(tmp_path), MBOPCConfig)
         assert cfg.iterations == 8  # 解析不受影响
 
     def test_unknown_field_in_unrequested_section_still_fails(self, tmp_path):
         """未请求 [gradient] 内的拼错键仍必须报错。"""
-        text = _FULL_TOML.replace("weight_pvband = 0.1",  # 注入拼错
-                                  "weight_pvband = 0.1\nweigth_nominal = 1.0")  # 未知键
+        text = _FULL_TOML.replace(
+            "weight_pvband = 0.1",  # 注入拼错
+            "weight_pvband = 0.1\nweigth_nominal = 1.0",
+        )  # 未知键
         with pytest.raises(ValueError, match=r"\[gradient\] 含未知键.*weigth_nominal"):
             load_config(_write(tmp_path, text), MBOPCConfig)  # 只请求 simple
 
@@ -160,30 +169,32 @@ class TestStrictness:
     def test_missing_required_fails(self, tmp_path):
         """删掉请求 Config 的必填键必须报错。"""
         text = _FULL_TOML.replace("iterations = 8\n", "")  # 删必填
-        with pytest.raises(ValueError,
-                           match=r"\[mbopc\] 缺少必填键：\['iterations'\]"):
+        with pytest.raises(ValueError, match=r"\[mbopc\] 缺少必填键：\['iterations'\]"):
             load_config(_write(tmp_path, text), MBOPCConfig)
 
     def test_default_applied_when_field_absent(self, tmp_path):
         """有默认值的字段缺省时使用 dataclass 默认。"""
         text = _FULL_TOML.replace('top_cell = "TOP"\n', "")  # 删可选 top_cell
-        layout, output = load_config(_write(tmp_path, text),
-                                     LayoutConfig, OutputConfig)
+        layout, output = load_config(_write(tmp_path, text), LayoutConfig, OutputConfig)
         assert layout.top_cell is None  # 默认 None
         assert output.save_final_lithography is False  # 默认 False
         assert output.show_progress is False  # 默认 False
 
     @pytest.mark.parametrize(
         ("inject", "field"),
-        [("layer = 11.5", "layer"), ("layer = true", "layer"),
-         ('layer = "11"', "layer"), ("datatype = 0.5", "datatype"),
-         ("iterations = 1.5", "iterations"), ("iterations = true", "iterations")],
-        ids=["layer=1.5", "layer=true", "layer=str", "dt=0.5",
-             "iter=1.5", "iter=true"])
+        [
+            ("layer = 11.5", "layer"),
+            ("layer = true", "layer"),
+            ('layer = "11"', "layer"),
+            ("datatype = 0.5", "datatype"),
+            ("iterations = 1.5", "iterations"),
+            ("iterations = true", "iterations"),
+        ],
+        ids=["layer=1.5", "layer=true", "layer=str", "dt=0.5", "iter=1.5", "iter=true"],
+    )
     def test_strict_types_reject_bad_values(self, tmp_path, inject, field):
         """整数字段拒绝 float/bool/string（沿用 P1-3 严格语义）。"""
-        original = {"layer": "layer = 11", "datatype": "datatype = 0",
-                    "iterations": "iterations = 8"}[field]  # 原行
+        original = {"layer": "layer = 11", "datatype": "datatype = 0", "iterations": "iterations = 8"}[field]  # 原行
         text = _FULL_TOML.replace(original, inject)  # 注入非法值
         requested = (LayoutConfig, MBOPCConfig)[field == "iterations"]  # 请求类
         with pytest.raises(ValueError, match=field):
@@ -197,8 +208,7 @@ class TestStrictness:
 
     def test_partition_mutex_in_post_init(self, tmp_path):
         """macro_grid/macro_size_nm 同现或同缺在构造期失败。"""
-        both = _FULL_TOML.replace("macro_grid = [2, 2]",
-                                  "macro_grid = [2, 2]\nmacro_size_nm = 4096")
+        both = _FULL_TOML.replace("macro_grid = [2, 2]", "macro_grid = [2, 2]\nmacro_size_nm = 4096")
         with pytest.raises(ValueError, match="恰好填写一个"):
             load_config(_write(tmp_path, both), PartitionConfig)
         neither = _FULL_TOML.replace("macro_grid = [2, 2]\n", "")
@@ -222,8 +232,9 @@ batch_size = 4
     def test_section_parses_to_config(self, tmp_path):
         """合法段解析为 LevelSetILTConfig（全部字段无默认）。"""
         from opc.iteration.ilt import LevelSetILTConfig
+
         path = _write(tmp_path, _FULL_TOML + self._SECTION)
-        config, = load_config(path, LevelSetILTConfig)
+        (config,) = load_config(path, LevelSetILTConfig)
         assert config.iterations == 2
         assert config.step_size == pytest.approx(0.2)
         assert config.batch_size == 4
@@ -232,16 +243,16 @@ batch_size = 4
     def test_missing_required_key_fails(self, tmp_path):
         """缺 step_size 必填键在加载期失败。"""
         from opc.iteration.ilt import LevelSetILTConfig
+
         text = _FULL_TOML + self._SECTION.replace("step_size = 0.2\n", "")
-        with pytest.raises(ValueError,
-                           match=r"\[levelset_ilt\] 缺少必填键：\['step_size'\]"):
+        with pytest.raises(ValueError, match=r"\[levelset_ilt\] 缺少必填键：\['step_size'\]"):
             load_config(_write(tmp_path, text), LevelSetILTConfig)
 
     def test_bool_rejected_for_iterations(self, tmp_path):
         """iterations 传 bool 冒充 int 在加载期失败。"""
         from opc.iteration.ilt import LevelSetILTConfig
-        text = _FULL_TOML + self._SECTION.replace(
-            "iterations = 2", "iterations = true")
+
+        text = _FULL_TOML + self._SECTION.replace("iterations = 2", "iterations = true")
         with pytest.raises(ValueError, match="iterations"):
             load_config(_write(tmp_path, text), LevelSetILTConfig)
 
@@ -260,20 +271,17 @@ class TestPaths:
     def test_absolute_path_kept(self, tmp_path):
         """绝对路径原样保留。"""
         target = tmp_path / "elsewhere" / "reticle.gds"  # 绝对路径
-        text = _FULL_TOML.replace('layout = "reticle.gds"',
-                                  f'layout = "{target.as_posix()}"')  # 注入
-        layout, = load_config(_write(tmp_path, text), LayoutConfig)
+        text = _FULL_TOML.replace('layout = "reticle.gds"', f'layout = "{target.as_posix()}"')  # 注入
+        (layout,) = load_config(_write(tmp_path, text), LayoutConfig)
         assert layout.layout == target.resolve()  # 绝对语义保持
 
     def test_tilde_expanded(self, tmp_path, monkeypatch):
         """~ 前缀按用户主目录展开（用假 HOME 隔离）。"""
         monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows expanduser 锚
         monkeypatch.setenv("HOME", str(tmp_path))  # 跨平台保险
-        text = _FULL_TOML.replace('layout = "reticle.gds"',
-                                  'layout = "~/reticle.gds"')  # ~ 路径
-        layout, = load_config(_write(tmp_path, text), LayoutConfig)
+        text = _FULL_TOML.replace('layout = "reticle.gds"', 'layout = "~/reticle.gds"')  # ~ 路径
+        (layout,) = load_config(_write(tmp_path, text), LayoutConfig)
         assert layout.layout == (tmp_path / "reticle.gds").resolve()  # 展开正确
-
 
 
 class TestFieldBoxSection:
@@ -282,39 +290,34 @@ class TestFieldBoxSection:
     def test_field_box_parses_four_decimals(self, tmp_path):
         """field_box_nm 四元 Decimal 定长元组解析。"""
         text = _FULL_TOML.replace(
-            'polarity = "clear"',
-            'polarity = "clear"\nfield_box_nm = [-512.0, -512.0, 1536.0, 1536.0]')
-        layout, = load_config(_write(tmp_path, text), LayoutConfig)
-        assert layout.field_box_nm == (Decimal("-512.0"), Decimal("-512.0"),
-                                       Decimal("1536.0"), Decimal("1536.0"))
+            'polarity = "clear"', 'polarity = "clear"\nfield_box_nm = [-512.0, -512.0, 1536.0, 1536.0]'
+        )
+        (layout,) = load_config(_write(tmp_path, text), LayoutConfig)
+        assert layout.field_box_nm == (Decimal("-512.0"), Decimal("-512.0"), Decimal("1536.0"), Decimal("1536.0"))
 
     def test_field_size_parses_two_decimals(self, tmp_path):
         """field_size_nm 二元 Decimal 定长元组解析。"""
-        text = _FULL_TOML.replace(
-            'polarity = "clear"',
-            'polarity = "clear"\nfield_size_nm = [2048.0, 2048.0]')
-        layout, = load_config(_write(tmp_path, text), LayoutConfig)
+        text = _FULL_TOML.replace('polarity = "clear"', 'polarity = "clear"\nfield_size_nm = [2048.0, 2048.0]')
+        (layout,) = load_config(_write(tmp_path, text), LayoutConfig)
         assert layout.field_size_nm == (Decimal("2048.0"), Decimal("2048.0"))
 
     def test_both_fields_rejected(self, tmp_path):
         """双填即意图不明，构造期拒绝。"""
         text = _FULL_TOML.replace(
             'polarity = "clear"',
-            'polarity = "clear"\nfield_box_nm = [0.0, 0.0, 1.0, 1.0]\n'
-            'field_size_nm = [2048.0, 2048.0]')
+            'polarity = "clear"\nfield_box_nm = [0.0, 0.0, 1.0, 1.0]\nfield_size_nm = [2048.0, 2048.0]',
+        )
         with pytest.raises(ValueError, match="至多填写一个"):
             load_config(_write(tmp_path, text), LayoutConfig)
 
     def test_neither_field_keeps_defaults(self, tmp_path):
         """双空 = 现行 layer bbox 行为，字段为 None。"""
-        layout, = load_config(_write(tmp_path), LayoutConfig)
+        (layout,) = load_config(_write(tmp_path), LayoutConfig)
         assert layout.field_box_nm is None and layout.field_size_nm is None
 
     def test_field_box_length_strict(self, tmp_path):
         """三元组按定长形状拒绝（防漏写坐标）。"""
-        text = _FULL_TOML.replace(
-            'polarity = "clear"',
-            'polarity = "clear"\nfield_box_nm = [0.0, 0.0, 1.0]')
+        text = _FULL_TOML.replace('polarity = "clear"', 'polarity = "clear"\nfield_box_nm = [0.0, 0.0, 1.0]')
         with pytest.raises(ValueError, match="列表"):
             load_config(_write(tmp_path, text), LayoutConfig)
 
@@ -325,16 +328,13 @@ class TestGridRuntime:
     @staticmethod
     def _partition(**overrides):
         """按数量模式默认值组装划分配置。"""
-        values = {"core_size_nm": Decimal(1024), "context_nm": Decimal(400),
-                  "macro_grid": (2, 2)}
+        values = {"core_size_nm": Decimal(1024), "context_nm": Decimal(400), "macro_grid": (2, 2)}
         values.update(overrides)
         return configuration.PartitionConfig(**values)
 
     def test_count_mode_grid_values(self):
         """nm→DBU 精确换算；数量模式 macro_size_dbu 保持 None。"""
-        grid = configuration.resolve_grid_config(
-            self._partition(), LithographyConfig(pixel_nm=Decimal(8)),
-            Decimal(1))
+        grid = configuration.resolve_grid_config(self._partition(), LithographyConfig(pixel_nm=Decimal(8)), Decimal(1))
         assert isinstance(grid, configuration.GridRuntime)
         assert (grid.core_dbu, grid.context_dbu, grid.pixel_dbu) == (1024, 400, 8)
         assert grid.macro_size_dbu is None
@@ -342,25 +342,22 @@ class TestGridRuntime:
     def test_size_mode_converts_macro_size(self):
         """尺寸模式换算 macro_size_dbu（0.1nm DBU 台阶放大十倍）。"""
         partition = self._partition(macro_grid=None, macro_size_nm=Decimal(4096))
-        grid = configuration.resolve_grid_config(
-            partition, LithographyConfig(pixel_nm=Decimal(8)), Decimal("0.1"))
+        grid = configuration.resolve_grid_config(partition, LithographyConfig(pixel_nm=Decimal(8)), Decimal("0.1"))
         assert grid.macro_size_dbu == 40960
 
     def test_nonexact_pixel_fails(self):
         """不能整除的 pixel_nm 在解析期失败，不四舍五入。"""
         with pytest.raises(ValueError):
-            configuration.resolve_grid_config(
-                self._partition(), LithographyConfig(pixel_nm=Decimal("2.5")),
-                Decimal(1))
+            configuration.resolve_grid_config(self._partition(), LithographyConfig(pixel_nm=Decimal("2.5")), Decimal(1))
 
     def test_prepare_runtime_composes_grid(self):
         """resolve_prepare_config 组合 GridRuntime 与边段配置，数值不变。"""
         edge = configuration.EdgeConfig(
-            corner_nm=Decimal(16), segment_nm=Decimal(32),
-            max_displacement_nm=Decimal(24), miter_limit=4.0)
+            corner_nm=Decimal(16), segment_nm=Decimal(32), max_displacement_nm=Decimal(24), miter_limit=4.0
+        )
         runtime = configuration.resolve_prepare_config(
-            self._partition(), LithographyConfig(pixel_nm=Decimal(8)),
-            edge, Decimal(1))
+            self._partition(), LithographyConfig(pixel_nm=Decimal(8)), edge, Decimal(1)
+        )
         assert runtime.grid.core_dbu == 1024  # 旧平铺字段值经 grid 到达
         assert runtime.grid.context_dbu == 400
         assert runtime.grid.pixel_dbu == 8
@@ -372,9 +369,9 @@ class TestGridRuntime:
     def test_prepare_runtime_keeps_context_contract(self):
         """max_displacement 超过 context 的既有契约在组合结构下不变。"""
         edge = configuration.EdgeConfig(
-            corner_nm=Decimal(16), segment_nm=Decimal(32),
-            max_displacement_nm=Decimal(800), miter_limit=4.0)
+            corner_nm=Decimal(16), segment_nm=Decimal(32), max_displacement_nm=Decimal(800), miter_limit=4.0
+        )
         with pytest.raises(ValueError, match="context_nm"):
             configuration.resolve_prepare_config(
-                self._partition(), LithographyConfig(pixel_nm=Decimal(8)),
-                edge, Decimal(1))
+                self._partition(), LithographyConfig(pixel_nm=Decimal(8)), edge, Decimal(1)
+            )

@@ -1,6 +1,5 @@
 """单遍偏置扩张管线的环双向扩张与产物契约生成式测试。"""
 
-
 import klayout.db as kdb
 import pytest
 
@@ -61,10 +60,17 @@ def _donut(outer, hole):
 def _write_config(tmp_path, layout_path, **overrides):
     """按默认契约生成单遍 TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值全部满足网格与位移契约
-        "macro_grid": "[2, 2]", "core_size_nm": 30, "context_nm": 10,
-        "pixel_nm": 1, "corner_nm": 4, "segment_nm": 10,
-        "max_displacement_nm": 8, "miter_limit": 4.0, "displacement_nm": 5,
-        "final_cell_mode": "single_cell"}
+        "macro_grid": "[2, 2]",
+        "core_size_nm": 30,
+        "context_nm": 10,
+        "pixel_nm": 1,
+        "corner_nm": 4,
+        "segment_nm": 10,
+        "max_displacement_nm": 8,
+        "miter_limit": 4.0,
+        "displacement_nm": 5,
+        "final_cell_mode": "single_cell",
+    }
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
 [layout]
@@ -103,7 +109,7 @@ final_cell_mode = "{values["final_cell_mode"]}"
 
 def _load(path):
     """经统一 load_config 加载单遍六 Config 并按序返回元组。"""
-    from main.configuration import (  # 按业务顺序请求六 Config
+    from main.configuration import (
         EdgeConfig,
         LayoutConfig,
         LithographyConfig,
@@ -112,9 +118,16 @@ def _load(path):
         SinglePassConfig,
         load_config,
     )
-    return load_config(path, LayoutConfig, PartitionConfig,  # 六 Config 元组
-                       LithographyConfig, EdgeConfig, SinglePassConfig,
-                       OutputConfig)
+
+    return load_config(
+        path,
+        LayoutConfig,
+        PartitionConfig,  # 六 Config 元组
+        LithographyConfig,
+        EdgeConfig,
+        SinglePassConfig,
+        OutputConfig,
+    )
 
 
 def _final_region(path, layer=None):
@@ -136,9 +149,11 @@ class TestRingExpansion:
         configs = _load(_write_config(tmp_path, gds))  # 加载
         final = single_pass.run_single_pass(*configs)  # 执行
         # donut 外扩 5、孔缩 5；锚框外扩被 bbox 裁剪，仅内边各进 5。
-        expected = (kdb.Region(kdb.Box(20, 20, 100, 31)) +  # 下锚框（顶边 26→31）
-                    kdb.Region(kdb.Box(20, 69, 100, 80)) +  # 上锚框（底边 74→69）
-                    _donut((30, 32, 90, 68), (57, 47, 63, 53)))  # donut 双向扩张（孔 16×16→6×6）
+        expected = (
+            kdb.Region(kdb.Box(20, 20, 100, 31))  # 下锚框（顶边 26→31）
+            + kdb.Region(kdb.Box(20, 69, 100, 80))  # 上锚框（底边 74→69）
+            + _donut((30, 32, 90, 68), (57, 47, 63, 53))
+        )  # donut 双向扩张（孔 16×16→6×6）
         actual = _final_region(final)  # 实际覆盖
         assert (actual ^ expected).area() == 0  # XOR 零
         assert actual.count() == 3  # 两个锚框 + 一个带孔 polygon，无 seam
@@ -147,7 +162,8 @@ class TestRingExpansion:
         """-5 nm：外环内收 5、孔壁外扩 5，环带宽 20→10。"""
         gds = _write_plain_donut_gds(tmp_path)  # 生成独立 donut 版图
         configs = _load(  # 加载（负位移）
-            _write_config(tmp_path, gds, displacement_nm=-5))  # 覆盖位移
+            _write_config(tmp_path, gds, displacement_nm=-5)
+        )  # 覆盖位移
         final = single_pass.run_single_pass(*configs)  # 执行
         expected = _donut((25, 25, 95, 75), (37, 37, 77, 63))  # 手算期望（孔 30×16 扩 5）
         actual = _final_region(final)  # 实际覆盖
@@ -187,8 +203,12 @@ class TestArtifactContract:
             base = tmp_path / mode  # 独立目录
             base.mkdir()  # 创建
             coverage[mode] = _final_region(  # 覆盖
-                single_pass.run_single_pass(*_load(  # 逐模式加载执行
-                    _write_config(base, gds, final_cell_mode=mode))))
+                single_pass.run_single_pass(
+                    *_load(  # 逐模式加载执行
+                        _write_config(base, gds, final_cell_mode=mode)
+                    )
+                )
+            )
         assert (coverage["single_cell"] ^ coverage["macro_cells"]).area() == 0  # XOR 零
 
 
@@ -199,7 +219,8 @@ class TestConfigValidation:
         """位移无法精确落 DBU 格点时失败并写明参数名。"""
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
         configs = _load(  # 0.5nm 无法落 1nm 格点
-            _write_config(tmp_path, gds, displacement_nm=5.5))  # 覆盖位移
+            _write_config(tmp_path, gds, displacement_nm=5.5)
+        )  # 覆盖位移
         with pytest.raises(ValueError, match="displacement_nm"):  # 报错含参数名
             single_pass.run_single_pass(*configs)  # 执行
 
@@ -207,7 +228,8 @@ class TestConfigValidation:
         """位移绝对值超过 max_displacement 时阶段 0 校验失败。"""
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
         configs = _load(  # 9 > max_disp=8
-            _write_config(tmp_path, gds, displacement_nm=9))  # 覆盖位移
+            _write_config(tmp_path, gds, displacement_nm=9)
+        )  # 覆盖位移
         with pytest.raises(ValueError, match="max_displacement"):  # 必须报错
             single_pass.run_single_pass(*configs)  # 执行
 
@@ -216,26 +238,38 @@ class TestConfigValidation:
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
         both = _write_config(tmp_path, gds)  # 基础配置
         text = both.read_text(encoding="utf-8").replace(  # 注入尺寸模式
-            "macro_grid = [2, 2]", "macro_grid = [2, 2]\nmacro_size_nm = 60")  # 双入口
+            "macro_grid = [2, 2]", "macro_grid = [2, 2]\nmacro_size_nm = 60"
+        )  # 双入口
         both.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="恰好填写一个"):  # 必须报错
             _load(both)  # 统一加载（解析即校验）
 
     @pytest.mark.parametrize(
         ("original", "injected", "field"),
-        [("layer = 1", "layer = 1.5", "layer"),
-         ("layer = 1", "layer = true", "layer"),
-         ("layer = 1", 'layer = "1"', "layer"),
-         ("datatype = 0", "datatype = 0.5", "datatype"),
-         ("datatype = 0", "datatype = true", "datatype"),
-         ("datatype = 0", 'datatype = "0"', "datatype"),
-         ("canvas_pixels = 256", "canvas_pixels = 256.0", "canvas_pixels"),
-         ("canvas_pixels = 256", "canvas_pixels = true", "canvas_pixels"),
-         ("canvas_pixels = 256", 'canvas_pixels = "256"', "canvas_pixels")],
-        ids=["layer=1.5", "layer=true", "layer=str", "dt=0.5", "dt=true",
-             "dt=str", "canvas=256.0", "canvas=true", "canvas=str"])
-    def test_common_integer_fields_strictly_typed(
-            self, tmp_path, original, injected, field):
+        [
+            ("layer = 1", "layer = 1.5", "layer"),
+            ("layer = 1", "layer = true", "layer"),
+            ("layer = 1", 'layer = "1"', "layer"),
+            ("datatype = 0", "datatype = 0.5", "datatype"),
+            ("datatype = 0", "datatype = true", "datatype"),
+            ("datatype = 0", 'datatype = "0"', "datatype"),
+            ("canvas_pixels = 256", "canvas_pixels = 256.0", "canvas_pixels"),
+            ("canvas_pixels = 256", "canvas_pixels = true", "canvas_pixels"),
+            ("canvas_pixels = 256", 'canvas_pixels = "256"', "canvas_pixels"),
+        ],
+        ids=[
+            "layer=1.5",
+            "layer=true",
+            "layer=str",
+            "dt=0.5",
+            "dt=true",
+            "dt=str",
+            "canvas=256.0",
+            "canvas=true",
+            "canvas=str",
+        ],
+    )
+    def test_common_integer_fields_strictly_typed(self, tmp_path, original, injected, field):
         """公共整数字段拒绝 float/bool/string（审查 P1-3 回归）。
 
         修复前 single-pass 复制的解析层用裸 int()：1.5 截断为 1、true 当 1、
@@ -261,7 +295,8 @@ class TestConfigValidation:
         gds = _write_anchored_gds(tmp_path)  # 生成 GDS
         path = _write_config(tmp_path, gds)  # 基础配置
         text = path.read_text(encoding="utf-8").replace(  # 注入浮点层号
-            "layer = 1", "layer = 1.5")  # 同款非法值
+            "layer = 1", "layer = 1.5"
+        )  # 同款非法值
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="layer"):  # 单 Config 请求拒绝
             load_config(path, LayoutConfig)  # 只请求版图

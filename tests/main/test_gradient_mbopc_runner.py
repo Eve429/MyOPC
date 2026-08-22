@@ -27,12 +27,14 @@ def _write_gds(tmp_path):
     top = layout.create_cell("TOP")  # 唯一顶层
     shapes = top.shapes(layout.layer(1, 0))  # 目标层
     shapes.insert(kdb.Box(10, 10, 90, 80))  # 左侧实心矩形
-    hole_region = (kdb.Region(kdb.Box(100, 10, 150, 80)) -  # 右侧外框
-                   kdb.Region(kdb.Box(115, 25, 135, 65)))  # 中心 hole
-    hole_region.insert_into(layout, top.cell_index(),
-                            layout.layer(1, 0))  # 插入带孔图形
+    hole_region = (
+        kdb.Region(kdb.Box(100, 10, 150, 80))  # 右侧外框
+        - kdb.Region(kdb.Box(115, 25, 135, 65))
+    )  # 中心 hole
+    hole_region.insert_into(layout, top.cell_index(), layout.layer(1, 0))  # 插入带孔图形
     top.shapes(layout.layer(1, 0)).insert(  # 底部斜边三角形
-        kdb.Polygon([(20, 82), (60, 82), (20, 88)]))
+        kdb.Polygon([(20, 82), (60, 82), (20, 88)])
+    )
     path = tmp_path / "reticle.gds"  # 输出路径
     layout.write(str(path))  # 写盘
     return path  # 返回路径
@@ -41,15 +43,27 @@ def _write_gds(tmp_path):
 def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", **overrides):
     """按默认契约生成梯度 MB-OPC TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值满足全部网格与梯度契约
-        "macro_grid": macro_grid, "core_size_nm": 40, "context_nm": 20,
-        "pixel_nm": 4, "corner_nm": 8, "segment_nm": 16,
-        "max_displacement_nm": 10, "miter_limit": 4.0,
-        "iterations": 1, "learning_rate_nm": 1.0,
-        "weight_nominal_l2": 1.0, "weight_process_l2": 0.5,
-        "weight_pvband": 0.1, "epe_distance_nm": 4, "batch_size": 4,
-        "target_cache_mb": 16, "device": "cpu",
+        "macro_grid": macro_grid,
+        "core_size_nm": 40,
+        "context_nm": 20,
+        "pixel_nm": 4,
+        "corner_nm": 8,
+        "segment_nm": 16,
+        "max_displacement_nm": 10,
+        "miter_limit": 4.0,
+        "iterations": 1,
+        "learning_rate_nm": 1.0,
+        "weight_nominal_l2": 1.0,
+        "weight_process_l2": 0.5,
+        "weight_pvband": 0.1,
+        "epe_distance_nm": 4,
+        "batch_size": 4,
+        "target_cache_mb": 16,
+        "device": "cpu",
         "save_final_lithography": "true",
-        "show_progress": "false", "final_cell_mode": "single_cell"}
+        "show_progress": "false",
+        "final_cell_mode": "single_cell",
+    }
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
 [layout]
@@ -100,9 +114,13 @@ final_cell_mode = "{values["final_cell_mode"]}"
 def _coverage(path, layer=_TARGET_LAYER):
     """回读 GDS 目标层全框覆盖 Region。"""
     with LayoutDB.open(path) as database:  # 打开
-        return database.query(  # 全框物化
-            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-        ).materialize().region(layer)  # 覆盖
+        return (
+            database.query(  # 全框物化
+                [layer], DbuBox(-(2**30), -(2**30), 2**30, 2**30)
+            )
+            .materialize()
+            .region(layer)
+        )  # 覆盖
 
 
 class TestGradientConfig:
@@ -116,7 +134,7 @@ class TestGradientConfig:
     def test_valid_config_loads(self, tmp_path):
         """合法配置解析出 Gradient/Lithography/Output 三 Config 字段。"""
         gds = _write_gds(tmp_path)  # 生成版图
-        from main.configuration import (  # 按入口顺序请求六 Config
+        from main.configuration import (
             EdgeConfig,
             GradientConfig,
             LayoutConfig,
@@ -124,9 +142,16 @@ class TestGradientConfig:
             OutputConfig,
             PartitionConfig,
         )
+
         _, _, litho, _, gradient, output = load_config(
-            _write_config(tmp_path, gds), LayoutConfig, PartitionConfig,
-            LithographyConfig, EdgeConfig, GradientConfig, OutputConfig)
+            _write_config(tmp_path, gds),
+            LayoutConfig,
+            PartitionConfig,
+            LithographyConfig,
+            EdgeConfig,
+            GradientConfig,
+            OutputConfig,
+        )
         assert gradient.iterations == 1  # 迭代
         assert str(gradient.learning_rate_nm) == "1.0"  # Decimal 学习率
         assert gradient.weight_pvband == pytest.approx(0.1)  # 权重
@@ -137,7 +162,8 @@ class TestGradientConfig:
         """[gradient] 段未知键失败。"""
         path = self._config_path(tmp_path)  # 基准配置
         text = path.read_text(encoding="utf-8").replace(  # 注入未知键
-            "[gradient]", "[gradient]\nbogus = 1")
+            "[gradient]", "[gradient]\nbogus = 1"
+        )
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="未知键"):
             workflow.run_gradient_mbopc(path)  # 统一加载在入口内
@@ -146,34 +172,49 @@ class TestGradientConfig:
         """缺必填键失败。"""
         path = self._config_path(tmp_path)  # 基准配置
         text = path.read_text(encoding="utf-8").replace(  # 删除一行必填键
-            "learning_rate_nm = 1.0\n", "")
+            "learning_rate_nm = 1.0\n", ""
+        )
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="缺少必填键"):
             workflow.run_gradient_mbopc(path)  # 统一加载在入口内
 
     @pytest.mark.parametrize(
         "overrides, pattern",
-        [({"iterations": 1.5}, "iterations"),
-         ({"iterations": "true"}, "iterations"),
-         ({"batch_size": 2.0}, "batch_size"),
-         ({"target_cache_mb": "true"}, "target_cache_mb"),
-         ({"iterations": 0}, "必须为正"),
-         ({"learning_rate_nm": 0}, "必须为正"),
-         ({"learning_rate_nm": -1.5}, "必须为正"),
-         ({"weight_nominal_l2": -0.1}, "非负"),
-         ({"weight_nominal_l2": 0, "weight_process_l2": 0,
-           "weight_pvband": 0}, "至少一个为正"),
-         ({"weight_pvband": '"0.1"'}, "必须是数值"),
-         ({"epe_distance_nm": 21}, "不得超过 context_nm"),
-         ({"device": "gpu"}, "device")],
-        ids=["iter=1.5", "iter=true", "batch=2.0", "cache=true", "iter=0",
-             "lr=0", "lr<0", "w<0", "全零权重", "w=字符串", "epe>context",
-             "device=gpu"])
+        [
+            ({"iterations": 1.5}, "iterations"),
+            ({"iterations": "true"}, "iterations"),
+            ({"batch_size": 2.0}, "batch_size"),
+            ({"target_cache_mb": "true"}, "target_cache_mb"),
+            ({"iterations": 0}, "必须为正"),
+            ({"learning_rate_nm": 0}, "必须为正"),
+            ({"learning_rate_nm": -1.5}, "必须为正"),
+            ({"weight_nominal_l2": -0.1}, "非负"),
+            ({"weight_nominal_l2": 0, "weight_process_l2": 0, "weight_pvband": 0}, "至少一个为正"),
+            ({"weight_pvband": '"0.1"'}, "必须是数值"),
+            ({"epe_distance_nm": 21}, "不得超过 context_nm"),
+            ({"device": "gpu"}, "device"),
+        ],
+        ids=[
+            "iter=1.5",
+            "iter=true",
+            "batch=2.0",
+            "cache=true",
+            "iter=0",
+            "lr=0",
+            "lr<0",
+            "w<0",
+            "全零权重",
+            "w=字符串",
+            "epe>context",
+            "device=gpu",
+        ],
+    )
     def test_invalid_values_fail(self, tmp_path, overrides, pattern):
         """类型、数值与语义非法的配置全部失败（ERR-001）。"""
         with pytest.raises(ValueError, match=pattern):
             workflow.run_gradient_mbopc(  # 类型错在加载层、跨段错在装配层
-                self._config_path(tmp_path, **overrides))
+                self._config_path(tmp_path, **overrides)
+            )
 
     def test_float_epe_not_exact_dbu_fails(self, tmp_path):
         """探针距离不能精确换整数 DBU 时在运行准备期失败。"""
@@ -187,23 +228,27 @@ class TestGradientConfig:
         gds = _write_gds(tmp_path)  # 生成版图（max_displacement_nm 默认 10）
         with pytest.warns(UserWarning, match="max_displacement"):  # 风险提示
             summary = workflow.run_gradient_mbopc(  # 完整小跑（CPU 生成式图）
-                _write_config(tmp_path, gds, learning_rate_nm=20))
+                _write_config(tmp_path, gds, learning_rate_nm=20)
+            )
         assert summary["macro_count"] >= 1  # 流程照常完成（参数未被拒绝）
 
     def test_normal_learning_rate_does_not_warn(self, tmp_path):
         """lr 不超过位移上限时全程不产生该提示。"""
-        import warnings as warnings_module  # 局部捕获
+        import warnings as warnings_module
+
         gds = _write_gds(tmp_path)  # 生成版图
         for learning_rate_nm in (10, 1):  # 恰等于限与常规值
             with warnings_module.catch_warnings(record=True) as caught:
                 warnings_module.simplefilter("always")  # 全部捕获
                 workflow.run_gradient_mbopc(  # 完整小跑（无提示断言在下方）
-                    _write_config(tmp_path, gds,
-                                  learning_rate_nm=learning_rate_nm))
-                assert not [w for w in caught  # 只过滤本提示
-                            if "max_displacement" in str(w.message)]
-            assert not [w for w in caught
-                        if "max_displacement" in str(w.message)]  # 无提示
+                    _write_config(tmp_path, gds, learning_rate_nm=learning_rate_nm)
+                )
+                assert not [
+                    w
+                    for w in caught  # 只过滤本提示
+                    if "max_displacement" in str(w.message)
+                ]
+            assert not [w for w in caught if "max_displacement" in str(w.message)]  # 无提示
 
 
 class TestGradientRunner:
@@ -216,7 +261,8 @@ class TestGradientRunner:
         tmp = tmp_path_factory.mktemp("gradient_single")  # 独立目录
         gds = _write_gds(tmp)  # 生成版图
         summary = workflow.run_gradient_mbopc(  # 完整流程
-            _write_config(tmp, gds))
+            _write_config(tmp, gds)
+        )
         return tmp, summary  # 两件套
 
     def test_summary_contract(self, run):
@@ -226,12 +272,22 @@ class TestGradientRunner:
         assert summary["macro_count"] == 1  # 恰一个 macro
         assert summary["device"].startswith("cpu")  # 测试固定 CPU
         assert set(summary["loss_weights"]) == {  # 四权重（EPE additive）
-            "nominal_l2", "process_l2", "pvband", "epe"}
+            "nominal_l2",
+            "process_l2",
+            "pvband",
+            "epe",
+        }
         assert "epe_steepness" in summary  # EPE 陡度顶层键
-        for key in ("rss_start_bytes", "rss_after_prepare_bytes",  # 资源字段
-                    "peak_rss_bytes", "cuda_peak_bytes",
-                    "final_lithography_tiles", "source_lithography_tiles",
-                    "merge_seconds", "total_seconds"):
+        for key in (
+            "rss_start_bytes",
+            "rss_after_prepare_bytes",  # 资源字段
+            "peak_rss_bytes",
+            "cuda_peak_bytes",
+            "final_lithography_tiles",
+            "source_lithography_tiles",
+            "merge_seconds",
+            "total_seconds",
+        ):
             assert key in summary, key
         assert summary["cuda_peak_bytes"] is None  # CPU 时无 CUDA 峰值
         assert summary["peak_rss_bytes"] >= summary["rss_start_bytes"] > 0
@@ -243,26 +299,40 @@ class TestGradientRunner:
         tmp, summary = run  # 解包
         macro = summary["macros"][0]  # 唯一 macro 摘要
         macro_dir = tmp / "work" / "macros" / macro["macro_id"]
-        for name in ("gradient_result.npz", "gradient_metrics.json",
-                     "best.gds"):  # 三件梯度产物
+        for name in ("gradient_result.npz", "gradient_metrics.json", "best.gds"):  # 三件梯度产物
             assert (macro_dir / name).is_file(), name
         assert not (macro_dir / "result.npz").exists()  # 不覆盖 simple 产物名
-        with np.load(macro_dir / "gradient_result.npz",  # NPZ 契约
-                     allow_pickle=False) as data:
+        with np.load(
+            macro_dir / "gradient_result.npz",  # NPZ 契约
+            allow_pickle=False,
+        ) as data:
             assert set(data.files) == {
-                "format_version", "macro_id", "best_state_index",
-                "best_displacements", "stop_reason"}
+                "format_version",
+                "macro_id",
+                "best_state_index",
+                "best_displacements",
+                "stop_reason",
+            }
             assert data["format_version"].dtype == np.int32  # 版本类型
             assert str(data["macro_id"][0]) == macro["macro_id"]
             assert data["best_state_index"][0] == macro["best_state_index"]
             assert data["best_displacements"].dtype == np.float64  # 位移类型
         metrics = json.loads(  # JSON records 契约
-            (macro_dir / "gradient_metrics.json").read_text(encoding="utf-8"))
+            (macro_dir / "gradient_metrics.json").read_text(encoding="utf-8")
+        )
         records = metrics["records"]
         assert [record["state_index"] for record in records] == [0, 1]  # 基线+1
-        for field in ("total_loss", "nominal_l2_loss", "process_l2_loss",
-                      "pvband_loss", "l2", "pvband", "epe",
-                      "displaced_segments", "elapsed_seconds"):
+        for field in (
+            "total_loss",
+            "nominal_l2_loss",
+            "process_l2_loss",
+            "pvband_loss",
+            "l2",
+            "pvband",
+            "epe",
+            "displaced_segments",
+            "elapsed_seconds",
+        ):
             assert field in records[0], field  # 记录字段齐全
         assert metrics["best_state_index"] == macro["best_state_index"]
 
@@ -273,7 +343,8 @@ class TestGradientRunner:
         assert int(_coverage(tmp / "final.gds").area()) > 0  # 覆盖非空
         out_dir = tmp / "work" / "final_lithography"  # 留档目录
         manifest = json.loads(  # 读清单
-            (out_dir / "manifest.json").read_text(encoding="utf-8"))
+            (out_dir / "manifest.json").read_text(encoding="utf-8")
+        )
         for tile in manifest["tiles"]:  # 逐 tile 检查
             assert (out_dir / tile["nominal_png"]).is_file()  # 连续 PNG
             assert (out_dir / tile["binary_png"]).is_file()  # 二值 PNG
@@ -317,7 +388,8 @@ class TestGradientMultiMacro:
         """2×2 macro 各自独立产物、merge 恰一次、最终 GDS 落盘。"""
         gds = _write_gds(tmp_path)  # 生成版图
         config = _write_config(tmp_path, gds, macro_grid="[2, 2]")  # 配置
-        import main._mbopc_workflow as workflow_host  # merge 调用宿主（公共循环）
+        import main._mbopc_workflow as workflow_host
+
         calls = []  # 合并计数
         real = workflow_host.merge_macro_results  # 原函数
 
@@ -334,14 +406,14 @@ class TestGradientMultiMacro:
         assert len(ids) == 4  # 四个不同 macro
         for macro in summary["macros"]:  # 逐 macro 三件梯度产物
             macro_dir = tmp_path / "work" / "macros" / macro["macro_id"]
-            for name in ("gradient_result.npz", "gradient_metrics.json",
-                         "best.gds"):
+            for name in ("gradient_result.npz", "gradient_metrics.json", "best.gds"):
                 assert (macro_dir / name).is_file(), name
         assert (tmp_path / "final.gds").is_file()  # 最终版图
 
     def test_macro_order_does_not_change_coverage(self, tmp_path, monkeypatch):
         """macro 正逆序求解的最终物理覆盖 XOR 为零（独立 macro 性质）。"""
-        import main._macro_pipeline as macro_pipeline  # plan_macros 宿主
+        import main._macro_pipeline as macro_pipeline
+
         gds = _write_gds(tmp_path)  # 生成版图
         real_plan = macro_pipeline.plan_macros  # 原函数
 
@@ -358,8 +430,15 @@ class TestGradientMultiMacro:
                 monkeypatch.setattr(macro_pipeline, "plan_macros", _reversed)
             finals[tag] = workflow.run_gradient_mbopc(config)["final_layout"]
             monkeypatch.undo()  # 立即恢复
-        assert int((_coverage(finals["forward"]) ^  # 覆盖一致
-                    _coverage(finals["reverse"])).area()) == 0
+        assert (
+            int(
+                (
+                    _coverage(finals["forward"])  # 覆盖一致
+                    ^ _coverage(finals["reverse"])
+                ).area()
+            )
+            == 0
+        )
 
 
 class TestGradientProgress:
@@ -367,7 +446,8 @@ class TestGradientProgress:
 
     def test_progress_counts_completed_tiles(self, tmp_path, monkeypatch):
         """进度更新总数恰等于（iterations+1）×core 数。"""
-        import tqdm as tqdm_module  # 进度库宿主
+        import tqdm as tqdm_module
+
         gds = _write_gds(tmp_path)  # 生成版图
         totals = {"updates": 0, "closed": 0, "total": None}  # 观测
         real_tqdm = tqdm_module.tqdm  # 原类
@@ -399,7 +479,8 @@ class TestGradientProgress:
 
     def test_progress_bar_closes_on_error(self, tmp_path, monkeypatch):
         """求解异常时进度条仍被关闭，异常原样传播。"""
-        import tqdm as tqdm_module  # 进度库宿主
+        import tqdm as tqdm_module
+
         gds = _write_gds(tmp_path)  # 生成版图
         closed = {"n": 0}  # 关闭计数
         real_tqdm = tqdm_module.tqdm  # 原类
@@ -425,9 +506,11 @@ class TestGradientProgress:
             """模拟求解期未知程序异常。"""
             raise RuntimeError("求解崩溃")
 
-        from dataclasses import replace  # frozen 适配器实例的字段替换
+        from dataclasses import replace
+
         exploding_method = replace(  # 注入替身 optimizer 的方法实例副本
-            workflow.GRADIENT_METHOD, optimize_macro=exploding)
+            workflow.GRADIENT_METHOD, optimize_macro=exploding
+        )
         monkeypatch.setattr(workflow, "GRADIENT_METHOD", exploding_method)
         config = _write_config(tmp_path, gds, show_progress="true")  # 开进度
         with pytest.raises(RuntimeError, match="求解崩溃"):  # 异常传播
@@ -437,7 +520,8 @@ class TestGradientProgress:
 
     def test_outer_bar_closes_on_midway_error(self, tmp_path, monkeypatch):
         """多 macro 求解中途抛异常时外层进度条也被 finally 收尾。"""
-        import tqdm as tqdm_module  # 进度库宿主
+        import tqdm as tqdm_module
+
         gds = _write_gds(tmp_path)  # 生成版图
         counters = {"created": 0, "closed": 0}  # 进度条生命周期计数
         real_tqdm = tqdm_module.tqdm  # 原类
@@ -464,12 +548,13 @@ class TestGradientProgress:
             """首个 macro 求解即抛未知程序异常。"""
             raise RuntimeError("中途崩溃")
 
-        from dataclasses import replace  # frozen 适配器实例的字段替换
+        from dataclasses import replace
+
         exploding_method = replace(  # 注入替身 optimizer 的方法实例副本
-            workflow.GRADIENT_METHOD, optimize_macro=exploding)
+            workflow.GRADIENT_METHOD, optimize_macro=exploding
+        )
         monkeypatch.setattr(workflow, "GRADIENT_METHOD", exploding_method)
-        config = _write_config(tmp_path, gds, macro_grid="[2, 2]",
-                               show_progress="true")  # 多 macro 开进度
+        config = _write_config(tmp_path, gds, macro_grid="[2, 2]", show_progress="true")  # 多 macro 开进度
         with pytest.raises(RuntimeError, match="中途崩溃"):  # 异常原样传播
             workflow.run_gradient_mbopc(config)
         # 外层 1 条 + 首个 macro 内层 1 条全部关闭；修复前外层条漏关（1 != 2）。
@@ -483,11 +568,18 @@ class TestGradientDirectExecution:
 
     def _run(self, script, config_path, cwd):
         """以子进程直跑入口脚本。"""
-        import os  # 环境变量
+        import os
+
         env = {**os.environ}  # 继承环境
         return subprocess.run(  # 直跑（免安装）
-            [sys.executable, str(script), str(config_path)], cwd=cwd,
-            capture_output=True, text=True, timeout=600, check=False, env=env)
+            [sys.executable, str(script), str(config_path)],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+            env=env,
+        )
 
     def test_runs_outside_repository(self, tmp_path, project_root):
         """从仓库外直跑梯度入口退出码 0 并产出全部关键标记。"""
@@ -496,15 +588,20 @@ class TestGradientDirectExecution:
         script = project_root / "main" / "run_mbopc_gradient.py"  # 入口
         completed = self._run(script, config, tmp_path)  # cwd=仓库外
         assert completed.returncode == 0, completed.stderr  # 正常退出
-        for marker in ("梯度 MB-OPC 执行完成", "device：",  # 摘要标记
-                       "loss 权重", "合并", "最终版图"):
+        for marker in (
+            "梯度 MB-OPC 执行完成",
+            "device：",  # 摘要标记
+            "loss 权重",
+            "合并",
+            "最终版图",
+        ):
             assert marker in completed.stdout, marker
 
     def test_missing_argument_returns_usage(self, project_root):
         """无参数运行打印用法并以退出码 2 结束。"""
         script = project_root / "main" / "run_mbopc_gradient.py"  # 入口
         completed = subprocess.run(  # 无参数直跑
-            [sys.executable, str(script)], cwd=project_root,
-            capture_output=True, text=True, timeout=60, check=False)
+            [sys.executable, str(script)], cwd=project_root, capture_output=True, text=True, timeout=60, check=False
+        )
         assert completed.returncode == 2  # 参数错误退出码
         assert "用法" in completed.stderr  # 用法提示

@@ -34,14 +34,20 @@ class LayoutDB:
             self._layer_indexes[LayerSpec(info.layer, info.datatype)] = index
 
     @classmethod
-    def open(cls, path: str | Path, top_cell: str | None = None,
-             glp_layer_map: Mapping[str, LayerSpec | tuple[int, int]] | None = None) -> Self:
+    def open(
+        cls,
+        path: str | Path,
+        top_cell: str | None = None,
+        glp_layer_map: Mapping[str, LayerSpec | tuple[int, int]] | None = None,
+    ) -> Self:
         """只解析一次 GDS/OASIS/GLP，并以确定规则选择顶层 Cell。"""
         source = Path(path).expanduser().resolve()
         if not source.is_file():
             raise LayoutOpenError(f"layout file does not exist: {source}")
-        normalized = {name: value if isinstance(value, LayerSpec) else LayerSpec(*value)
-                      for name, value in (glp_layer_map or {}).items()}
+        normalized = {
+            name: value if isinstance(value, LayerSpec) else LayerSpec(*value)
+            for name, value in (glp_layer_map or {}).items()
+        }
         # 格式分派是 open 的职责：source 层只提供单一职责读取器，GLP 的
         # 符号层映射也只在 GLP 分支消费，非 GLP 输入携带映射即参数误用。
         if source.suffix.lower() == ".glp":
@@ -135,14 +141,17 @@ class LayoutDB:
             hierarchy[cell.name] = tuple(sorted(children))
         return hierarchy
 
-    def query(self, layers: tuple[LayerSpec | tuple[int, int], ...] | list[LayerSpec | tuple[int, int]],
-              box: DbuBox, cell: str | None = None,
-              preserve_properties: bool = False) -> ShapeQuery:
+    def query(
+        self,
+        layers: tuple[LayerSpec | tuple[int, int], ...] | list[LayerSpec | tuple[int, int]],
+        box: DbuBox,
+        cell: str | None = None,
+        preserve_properties: bool = False,
+    ) -> ShapeQuery:
         """校验少量元数据后创建惰性的 Cell/Layer/ROI 查询。"""
         # Layer 只在查询入口规范化一次；集合去重后排序，使缓存键、诊断和测试输出
         # 与调用顺序无关。空集合在接触 KLayout 前失败，避免产生语义不明的空查询。
-        normalized = tuple(sorted({item if isinstance(item, LayerSpec) else LayerSpec(*item)
-                                   for item in layers}))
+        normalized = tuple(sorted({item if isinstance(item, LayerSpec) else LayerSpec(*item) for item in layers}))
         if not normalized:
             raise ValueError("at least one layer must be requested")
         for layer in normalized:
@@ -154,16 +163,16 @@ class LayoutDB:
         return ShapeQuery(self, selected, normalized, box, preserve_properties)
 
     def recursive_polygon_shapes(
-            self, layer: LayerSpec, box: DbuBox,
-            cell: str | None = None) -> kdb.RecursiveShapeIterator:
+        self, layer: LayerSpec, box: DbuBox, cell: str | None = None
+    ) -> kdb.RecursiveShapeIterator:
         """创建只读层级 Polygon 类图形迭代器，供物化前容量扫描使用。"""
         # 迭代器仍借用当前 LayoutDB 的原生数据库，调用方必须在数据库关闭前
         # 完成遍历。公共方法统一解析 Cell/Layer 和 shape flags，上层无需访问
         # `_native_*` 私有对象，也不会因查询不存在的 Layer 创建空层。
         selected = cell or self._top_cell
         iterator = kdb.RecursiveShapeIterator(
-            self._native_layout, self._native_cell(selected),
-            self._native_layer_index(layer), box.to_native(), True)
+            self._native_layout, self._native_cell(selected), self._native_layer_index(layer), box.to_native(), True
+        )
         iterator.shape_flags = kdb.Shapes.SBoxes | kdb.Shapes.SPaths | kdb.Shapes.SPolygons
         return iterator
 

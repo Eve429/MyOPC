@@ -17,8 +17,7 @@ class TargetCanvasCache:
             raise ValueError("max_bytes 必须是非负整数")
         self._max_bytes = max_bytes  # 0 表示完全禁用缓存
         # (macro_id, core_index) → uint8 canvas，最新在尾
-        self._entries: OrderedDict[tuple[str, int], NDArray[np.uint8]] = (
-            OrderedDict())
+        self._entries: OrderedDict[tuple[str, int], NDArray[np.uint8]] = OrderedDict()
         self._used_bytes = 0  # 当前缓存占用字节数
 
     def get(self, macro_id: str, core_index: int) -> NDArray[np.uint8] | None:
@@ -30,8 +29,7 @@ class TargetCanvasCache:
         self._entries.move_to_end(key)  # LRU：刚访问的移到最新端
         return entry  # 只读语义由调用方遵守
 
-    def put(self, macro_id: str, core_index: int,
-            value: NDArray[np.uint8]) -> None:
+    def put(self, macro_id: str, core_index: int, value: NDArray[np.uint8]) -> None:
         """写入或替换一个 target canvas，超上限时从最旧端驱逐。"""
         if self._max_bytes == 0:  # 0 上限禁用缓存
             return  # 不存任何条目

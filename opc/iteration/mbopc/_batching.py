@@ -40,19 +40,21 @@ class MacroStaticPack:
     pixel_dbu: int
     canvas_pixels: int
     core_count: int
-    ownership: list[NDArray[np.bool_]]       # 每 core 唯一计分画布（静态）
-    total_pixels: int                        # loss 归一分母：全部 core 计分像素数
-    owner_members: list[NDArray[np.int32]]   # 每 core owner 段号（探针/写回）
+    ownership: list[NDArray[np.bool_]]  # 每 core 唯一计分画布（静态）
+    total_pixels: int  # loss 归一分母：全部 core 计分像素数
+    owner_members: list[NDArray[np.int32]]  # 每 core owner 段号（探针/写回）
     probe_inner_xy: list[NDArray[np.float64] | None]  # 参考探针 canvas 坐标
     probe_outer_xy: list[NDArray[np.float64] | None]
-    reference_region: kdb.Region             # target 缓存 miss 的零位移候选源
+    reference_region: kdb.Region  # target 缓存 miss 的零位移候选源
 
 
 def pack_macro_statics(
-        problem: MacroProblem, *, epe_distance_dbu: float,
-        reference_geometry: SegmentGeometry,
-        reference_region: kdb.Region,
-        to_canvas,
+    problem: MacroProblem,
+    *,
+    epe_distance_dbu: float,
+    reference_geometry: SegmentGeometry,
+    reference_region: kdb.Region,
+    to_canvas,
 ) -> MacroStaticPack:
     """一次构造全部状态迭代复用的计分画布与参考探针坐标。
 
@@ -68,8 +70,7 @@ def pack_macro_statics(
     total_pixels = 0
     for core_index in range(problem.macro.core_count):
         spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
-        canvas = ownership_canvas(
-            spec.ownership_box, spec.context_box, pixel_dbu, canvas_pixels)
+        canvas = ownership_canvas(spec.ownership_box, spec.context_box, pixel_dbu, canvas_pixels)
         ownership.append(canvas)
         total_pixels += int(canvas.sum())
         members = problem.owner_segments_for_core(core_index)
@@ -78,27 +79,35 @@ def pack_macro_statics(
             inner_dbu, outer_dbu = edge_probe_points(
                 reference_geometry.starts[members],
                 reference_geometry.ends[members],
-                reference_geometry.normals[members], epe_distance_dbu)
-            inner_list.append(to_canvas(
-                inner_dbu, spec.context_box, pixel_dbu, canvas_pixels))
-            outer_list.append(to_canvas(
-                outer_dbu, spec.context_box, pixel_dbu, canvas_pixels))
+                reference_geometry.normals[members],
+                epe_distance_dbu,
+            )
+            inner_list.append(to_canvas(inner_dbu, spec.context_box, pixel_dbu, canvas_pixels))
+            outer_list.append(to_canvas(outer_dbu, spec.context_box, pixel_dbu, canvas_pixels))
         else:
             inner_list.append(None)
             outer_list.append(None)
     return MacroStaticPack(
-        macro_id=problem.macro.macro_id, pixel_dbu=pixel_dbu,
+        macro_id=problem.macro.macro_id,
+        pixel_dbu=pixel_dbu,
         canvas_pixels=canvas_pixels,
         core_count=problem.macro.core_count,
-        ownership=ownership, total_pixels=total_pixels,
+        ownership=ownership,
+        total_pixels=total_pixels,
         owner_members=owner_members,
-        probe_inner_xy=inner_list, probe_outer_xy=outer_list,
-        reference_region=reference_region)
+        probe_inner_xy=inner_list,
+        probe_outer_xy=outer_list,
+        reference_region=reference_region,
+    )
 
 
 def cached_target_canvas(
-        problem: MacroProblem, pack: MacroStaticPack,
-        target_cache, core_index: int, *, rasterize,
+    problem: MacroProblem,
+    pack: MacroStaticPack,
+    target_cache,
+    core_index: int,
+    *,
+    rasterize,
 ) -> NDArray[np.uint8]:
     """返回该 core 的 target uint8 画布：命中直接用，miss 栅格化并回填。
 
@@ -108,20 +117,25 @@ def cached_target_canvas(
     cached = target_cache.get(pack.macro_id, core_index)
     if cached is None:
         spec = problem.macro.core(core_index)
-        cached = np.rint(rasterize(
-            pack.reference_region, spec.context_box, pack.pixel_dbu,
-            pack.canvas_pixels, polarity=problem.polarity) * 255.0).astype(
-                np.uint8)
+        cached = np.rint(
+            rasterize(
+                pack.reference_region, spec.context_box, pack.pixel_dbu, pack.canvas_pixels, polarity=problem.polarity
+            )
+            * 255.0
+        ).astype(np.uint8)
         target_cache.put(pack.macro_id, core_index, cached)
     return cached
 
 
 def iter_core_batches(
-        problem: MacroProblem, pack: MacroStaticPack,
-        current_region: kdb.Region, target_cache, *,
-        batch_size: int, rasterize,
-) -> Iterator[tuple[list[int], NDArray[np.uint8],
-                    NDArray[np.float32], NDArray[np.bool_]]]:
+    problem: MacroProblem,
+    pack: MacroStaticPack,
+    current_region: kdb.Region,
+    target_cache,
+    *,
+    batch_size: int,
+    rasterize,
+) -> Iterator[tuple[list[int], NDArray[np.uint8], NDArray[np.float32], NDArray[np.bool_]]]:
     """按批产出 (core_indices, targets, masks, ownership) 的 numpy 组批结果。
 
     与更新策略无关的公共组批段（simple/gradient 评价函数共用，防漂移）：
@@ -131,47 +145,41 @@ def iter_core_batches(
     """
     for batch_start in range(0, pack.core_count, batch_size):
         # 本批 core（行优先稳定序）
-        core_indices = list(range(
-            batch_start, min(batch_start + batch_size, pack.core_count)))
+        core_indices = list(range(batch_start, min(batch_start + batch_size, pack.core_count)))
         batch_count = len(core_indices)  # 本批 tile 数
-        targets = np.empty(
-            (batch_count, pack.canvas_pixels, pack.canvas_pixels),
-            dtype=np.uint8)
-        masks = np.empty(
-            (batch_count, pack.canvas_pixels, pack.canvas_pixels),
-            dtype=np.float32)
-        ownership = np.empty(
-            (batch_count, pack.canvas_pixels, pack.canvas_pixels),
-            dtype=np.bool_)
+        targets = np.empty((batch_count, pack.canvas_pixels, pack.canvas_pixels), dtype=np.uint8)
+        masks = np.empty((batch_count, pack.canvas_pixels, pack.canvas_pixels), dtype=np.float32)
+        ownership = np.empty((batch_count, pack.canvas_pixels, pack.canvas_pixels), dtype=np.bool_)
         for slot, core_index in enumerate(core_indices):  # 逐 core 组批
             spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
-            targets[slot] = cached_target_canvas(
-                problem, pack, target_cache, core_index, rasterize=rasterize)
+            targets[slot] = cached_target_canvas(problem, pack, target_cache, core_index, rasterize=rasterize)
             masks[slot] = rasterize(
-                current_region, spec.context_box, pack.pixel_dbu,
-                pack.canvas_pixels, polarity=problem.polarity)
+                current_region, spec.context_box, pack.pixel_dbu, pack.canvas_pixels, polarity=problem.polarity
+            )
             ownership[slot] = pack.ownership[core_index]
         yield core_indices, targets, masks, ownership
 
 
 def upload_eval_batch(
-        targets: NDArray[np.uint8], masks: NDArray[np.float32],
-        ownership: NDArray[np.bool_], device: torch.device,
+    targets: NDArray[np.uint8],
+    masks: NDArray[np.float32],
+    ownership: NDArray[np.bool_],
+    device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """批 numpy 上设备：target 转 float32/255，mask/ownership 直传。
 
     uint8 LRU 缓存值到连续 target 的 /255 换算在此单源；from_numpy().to()
     不构造计算图，调用方 no_grad 边界不影响数值。
     """
-    target_tensor = torch.from_numpy(targets).to(
-        device=device, dtype=torch.float32).div_(255.0)
+    target_tensor = torch.from_numpy(targets).to(device=device, dtype=torch.float32).div_(255.0)
     mask_tensor = torch.from_numpy(masks).to(device=device)
     ownership_tensor = torch.from_numpy(ownership).to(device=device)
     return target_tensor, mask_tensor, ownership_tensor
 
 
 def assemble_probe_batch(
-        pack: MacroStaticPack, core_indices: list[int],
+    pack: MacroStaticPack,
+    core_indices: list[int],
 ) -> tuple[NDArray[np.int64], NDArray[np.float64], NDArray[np.float64]]:
     """按批内 slot 顺序拼接有 owner 段 core 的探针槽位与坐标。"""
     slots: list[NDArray[np.int64]] = []
@@ -184,17 +192,22 @@ def assemble_probe_batch(
             inner_parts.append(pack.probe_inner_xy[core_index])
             outer_parts.append(pack.probe_outer_xy[core_index])
     if not slots:  # 整批无 owner 段：返回空数组，诊断层按无探针跳过
-        return (np.empty(0, dtype=np.int64), np.empty((0, 2), dtype=np.float64),
-                np.empty((0, 2), dtype=np.float64))
-    return (np.concatenate(slots), np.concatenate(inner_parts),
-            np.concatenate(outer_parts))
+        return (np.empty(0, dtype=np.int64), np.empty((0, 2), dtype=np.float64), np.empty((0, 2), dtype=np.float64))
+    return (np.concatenate(slots), np.concatenate(inner_parts), np.concatenate(outer_parts))
 
 
 def discrete_batch_diagnostics(
-        target_tensor, printed, ownership_tensor, threshold: float,
-        probe_slots: NDArray[np.int64],
-        inner_xy: NDArray[np.float64], outer_xy: NDArray[np.float64], *,
-        binary_l2, pvband, edge_probes,
+    target_tensor,
+    printed,
+    ownership_tensor,
+    threshold: float,
+    probe_slots: NDArray[np.int64],
+    inner_xy: NDArray[np.float64],
+    outer_xy: NDArray[np.float64],
+    *,
+    binary_l2,
+    pvband,
+    edge_probes,
 ) -> tuple[int, int, EPEEvaluation | None]:
     """批后离散诊断：ownership 像素 L2/PVBand +（有探针时）EPE 评价。
 
@@ -203,15 +216,17 @@ def discrete_batch_diagnostics(
     返回 epe_result=None，由调用方跳过探针统计与方向消费。
     """
     nominal = printed["nominal"]
-    l2 = binary_l2(target_tensor, nominal, threshold=threshold,
-                   ownership_mask=ownership_tensor)
-    pv = pvband(printed["dose_max"], printed["defocus_min"],
-                threshold=threshold, ownership_mask=ownership_tensor)
+    l2 = binary_l2(target_tensor, nominal, threshold=threshold, ownership_mask=ownership_tensor)
+    pv = pvband(printed["dose_max"], printed["defocus_min"], threshold=threshold, ownership_mask=ownership_tensor)
     if len(probe_slots):
         epe_result = edge_probes(
-            target_tensor, nominal, torch.from_numpy(probe_slots),
-            torch.from_numpy(inner_xy), torch.from_numpy(outer_xy),
-            threshold=threshold)
+            target_tensor,
+            nominal,
+            torch.from_numpy(probe_slots),
+            torch.from_numpy(inner_xy),
+            torch.from_numpy(outer_xy),
+            threshold=threshold,
+        )
     else:
         epe_result = None
     return int(l2), int(pv), epe_result

@@ -24,23 +24,27 @@ from opc.iteration.mbopc import (
 LAYER = LayerSpec(1, 0)
 # 廉价契约：80² 版图、单 macro、core 40、context 20、pixel 4 → 2×2 core。
 BOUNDS = DbuBox(0, 0, 80, 80)
-FRAG = FragmentationConfig(corner_length_dbu=8.0, max_segment_length_dbu=16.0,
-                           max_displacement_dbu=10.0, miter_limit=4.0)
-_SOLVER_DEFAULTS = {"iterations": 2, "initial_step_dbu": 2.0, "decay_every": 2,
-                    "epe_distance_dbu": 4.0, "batch_size": 2,
-                    "target_cache_bytes": 256 * 256 * 8}
+FRAG = FragmentationConfig(
+    corner_length_dbu=8.0, max_segment_length_dbu=16.0, max_displacement_dbu=10.0, miter_limit=4.0
+)
+_SOLVER_DEFAULTS = {
+    "iterations": 2,
+    "initial_step_dbu": 2.0,
+    "decay_every": 2,
+    "epe_distance_dbu": 4.0,
+    "batch_size": 2,
+    "target_cache_bytes": 256 * 256 * 8,
+}
 
 
 def _macro(**overrides):
     """返回单 macro 规划（默认 80² 版图 2×2 core）。"""
-    values = {"macro_grid": (1, 1), "core_size_dbu": 40, "context_dbu": 20,
-              "pixel_dbu": 4, "canvas_pixels": 256}
+    values = {"macro_grid": (1, 1), "core_size_dbu": 40, "context_dbu": 20, "pixel_dbu": 4, "canvas_pixels": 256}
     values.update(overrides)
     return plan_macros(BOUNDS, **values)[0]
 
 
-def _problem(region, macro=None, polarity="clear", frag=FRAG,
-             data_bounds=BOUNDS):
+def _problem(region, macro=None, polarity="clear", frag=FRAG, data_bounds=BOUNDS):
     """把原生 Region 直接包装为 RegionBatch 并生成单 macro problem。
 
     data_bounds 默认为规划包络 BOUNDS（负板补铬的减区基准）；自定义
@@ -48,8 +52,7 @@ def _problem(region, macro=None, polarity="clear", frag=FRAG,
     """
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
-    return prepare_macro_problem(batch, LAYER, polarity, frag, macro,
-                                 data_bounds=data_bounds)
+    return prepare_macro_problem(batch, LAYER, polarity, frag, macro, data_bounds=data_bounds)
 
 
 def _config(**overrides):
@@ -183,12 +186,18 @@ class TestConfigValidation:
 
     @pytest.mark.parametrize(
         "overrides",
-        [{"iterations": 0}, {"iterations": 1.5},
-         {"initial_step_dbu": 0.0}, {"initial_step_dbu": float("nan")},
-         {"decay_every": 0}, {"epe_distance_dbu": -1.0},
-         {"batch_size": 0}, {"target_cache_bytes": -8}],
-        ids=["iter=0", "iter=小数", "step=0", "step=nan", "decay=0",
-             "epe<0", "batch=0", "cache<0"])
+        [
+            {"iterations": 0},
+            {"iterations": 1.5},
+            {"initial_step_dbu": 0.0},
+            {"initial_step_dbu": float("nan")},
+            {"decay_every": 0},
+            {"epe_distance_dbu": -1.0},
+            {"batch_size": 0},
+            {"target_cache_bytes": -8},
+        ],
+        ids=["iter=0", "iter=小数", "step=0", "step=nan", "decay=0", "epe<0", "batch=0", "cache<0"],
+    )
     def test_invalid_values_fail(self, overrides):
         """越界参数在构造期失败。"""
         with pytest.raises(ValueError):
@@ -203,8 +212,7 @@ class TestThresholdPropagation:
         model = _PhaseModel([_identity])  # 直通变换
         model.config = _StubConfig(threshold=0.45)  # 非默认打印阈值
         captured = {}  # 指标名 → 收到的 threshold 列表
-        for name in ("evaluate_binary_l2", "evaluate_pvband",
-                     "evaluate_edge_probes"):
+        for name in ("evaluate_binary_l2", "evaluate_pvband", "evaluate_edge_probes"):
             real = getattr(simple, name)  # 真实现（透传）
 
             def spy(*args, _name=name, _real=real, **kwargs):
@@ -214,8 +222,7 @@ class TestThresholdPropagation:
 
             monkeypatch.setattr(simple, name, spy)
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
-        optimize_simple_macro(problem, model, _config(iterations=1),
-                       TargetCanvasCache(256 * 256 * 8))
+        optimize_simple_macro(problem, model, _config(iterations=1), TargetCanvasCache(256 * 256 * 8))
         for name, values in captured.items():  # 全部收到模型阈值
             assert values, name  # 至少一次
             assert all(value == 0.45 for value in values), name
@@ -234,33 +241,53 @@ class TestEntryContracts:
         """位移长度不等于段数时失败。"""
         problem, _ = self._rectangle()
         with pytest.raises(ValueError, match="有限向量"):
-            evaluate_state(problem, kdb.Region(), np.zeros(3),
-                                 _PhaseModel([_identity]), _config(), 2.0,
-                                 TargetCanvasCache(0), can_update=True)
+            evaluate_state(
+                problem,
+                kdb.Region(),
+                np.zeros(3),
+                _PhaseModel([_identity]),
+                _config(),
+                2.0,
+                TargetCanvasCache(0),
+                can_update=True,
+            )
 
     def test_nonfinite_fails(self):
         """含 nan 的位移失败。"""
         problem, zeros = self._rectangle()
         zeros[0] = float("nan")  # 注入 nan
         with pytest.raises(ValueError, match="有限向量"):
-            evaluate_state(problem, kdb.Region(), zeros,
-                                 _PhaseModel([_identity]), _config(), 2.0,
-                                 TargetCanvasCache(0), can_update=True)
+            evaluate_state(
+                problem,
+                kdb.Region(),
+                zeros,
+                _PhaseModel([_identity]),
+                _config(),
+                2.0,
+                TargetCanvasCache(0),
+                can_update=True,
+            )
 
     def test_context_displacement_fails(self):
         """context 段（owner=-1）位移非零时失败。"""
         # bbox 外、query_box 内的小块产生 owner=-1 的纯 context 段。
-        region = (kdb.Region(kdb.Box(20, 20, 60, 60)) +
-                  kdb.Region(kdb.Box(-15, -15, -5, -5)))
+        region = kdb.Region(kdb.Box(20, 20, 60, 60)) + kdb.Region(kdb.Box(-15, -15, -5, -5))
         problem = _problem(region)
         context = np.flatnonzero(problem.owner_indices < 0)
         assert len(context) > 0  # 外部小块必为 context 段
         zeros = np.zeros(problem.segments.segment_count)
         zeros[context[0]] = 1.0  # context 段注入位移
         with pytest.raises(ValueError, match="恒为 0"):
-            evaluate_state(problem, kdb.Region(), zeros,
-                                 _PhaseModel([_identity]), _config(), 2.0,
-                                 TargetCanvasCache(0), can_update=True)
+            evaluate_state(
+                problem,
+                kdb.Region(),
+                zeros,
+                _PhaseModel([_identity]),
+                _config(),
+                2.0,
+                TargetCanvasCache(0),
+                can_update=True,
+            )
 
     def test_canvas_mismatch_fails(self):
         """模型画布与 problem 画布不一致时失败。"""
@@ -268,17 +295,22 @@ class TestEntryContracts:
         model = _PhaseModel([_identity])
         model.config = _StubConfig(canvas=128)  # 与 problem 的 256 不一致
         with pytest.raises(ValueError, match="画布"):
-            evaluate_state(problem, kdb.Region(), zeros, model,
-                                 _config(), 2.0, TargetCanvasCache(0),
-                                 can_update=True)
+            evaluate_state(problem, kdb.Region(), zeros, model, _config(), 2.0, TargetCanvasCache(0), can_update=True)
 
     def test_negative_step_fails(self):
         """负步长失败。"""
         problem, zeros = self._rectangle()
         with pytest.raises(ValueError, match="step_dbu"):
-            evaluate_state(problem, kdb.Region(), zeros,
-                                 _PhaseModel([_identity]), _config(), -1.0,
-                                 TargetCanvasCache(0), can_update=True)
+            evaluate_state(
+                problem,
+                kdb.Region(),
+                zeros,
+                _PhaseModel([_identity]),
+                _config(),
+                -1.0,
+                TargetCanvasCache(0),
+                can_update=True,
+            )
 
 
 class TestEvaluatePropose:
@@ -294,8 +326,8 @@ class TestEvaluatePropose:
         zeros = np.zeros(problem.segments.segment_count)
         region = reconstruct_region(problem, zeros)  # 零位移候选
         step = evaluate_state(
-            problem, region, zeros, model, _config(**overrides),
-            step_dbu, TargetCanvasCache(0), can_update=can_update)
+            problem, region, zeros, model, _config(**overrides), step_dbu, TargetCanvasCache(0), can_update=can_update
+        )
         return step, problem, zeros
 
     def test_stub_identity_gives_zero_epe_and_no_move(self):
@@ -325,8 +357,7 @@ class TestEvaluatePropose:
 
     def test_can_update_false_returns_current(self):
         """can_update=False 只评价不提案：next 等于 current、moved=0。"""
-        step, _, zeros = self._evaluate(
-            _PhaseModel([_zero]), can_update=False, step_dbu=0.0)
+        step, _, zeros = self._evaluate(_PhaseModel([_zero]), can_update=False, step_dbu=0.0)
         assert step.epe > 0  # 指标照常计算
         np.testing.assert_array_equal(step.next_displacements, zeros)
         assert step.moved_segments == 0
@@ -339,8 +370,8 @@ class TestEvaluatePropose:
         current[problem.owner_indices >= 0] = 10.0  # 全部顶到上限
         region = reconstruct_region(problem, current)
         step = evaluate_state(
-            problem, region, current, _PhaseModel([_zero]), _config(),
-            4.0, TargetCanvasCache(0), can_update=True)
+            problem, region, current, _PhaseModel([_zero]), _config(), 4.0, TargetCanvasCache(0), can_update=True
+        )
         # 全暗 → +1 外移：10+4 超上限 10，裁回 10。
         assert np.all(step.next_displacements[problem.owner_indices >= 0] == 10.0)
 
@@ -351,7 +382,8 @@ class TestEvaluatePropose:
         assert single.epe == full.epe  # 指标一致
         assert single.l2 == full.l2
         np.testing.assert_array_equal(  # 提案一致（同步读同一 current）
-            single.next_displacements, full.next_displacements)
+            single.next_displacements, full.next_displacements
+        )
 
     def test_forward_many_once_per_batch(self, monkeypatch, cpu_model):
         """每个 GPU batch 恰一次三条件 forward_many。"""
@@ -362,15 +394,15 @@ class TestEvaluatePropose:
             """记录每次调用的条件数并透传。"""
             calls.append(len(conditions))
             return real(self, mask, conditions)
+
         monkeypatch.setattr(ICCAD13Lithography, "forward_many", _counting)
         problem = _problem(self.RECT)
         zeros = np.zeros(problem.segments.segment_count)
         region = reconstruct_region(problem, zeros)
         evaluate_state(  # 4 core / batch 2 → 恰 2 次调用
-            problem, region, zeros, cpu_model, _config(batch_size=2),
-            2.0, TargetCanvasCache(0), can_update=True)
+            problem, region, zeros, cpu_model, _config(batch_size=2), 2.0, TargetCanvasCache(0), can_update=True
+        )
         assert calls == [3, 3]  # 每批一次、每次三条件
-
 
     def test_mask_canvas_receives_surround_geometry(self, monkeypatch):
         """负板组批栅格化的 Region 已含包络外补铬（覆盖到查询边界）。
@@ -390,16 +422,22 @@ class TestEvaluatePropose:
         monkeypatch.setattr(simple, "rasterize_mask_canvas", spy)
         zeros = np.zeros(problem.segments.segment_count)
         evaluate_state(
-            problem, reconstruct_region(problem, zeros), zeros,
-            _PhaseModel([_identity]), _config(), 2.0,
-            TargetCanvasCache(0), can_update=False)
+            problem,
+            reconstruct_region(problem, zeros),
+            zeros,
+            _PhaseModel([_identity]),
+            _config(),
+            2.0,
+            TargetCanvasCache(0),
+            can_update=False,
+        )
         query = problem.macro.query_box
         # 零位移候选含补铬：Region 包络覆盖到 query 四角（宽高由 context
         # 扩张与 BOUNDS 规划共同决定），clear 对照仅覆盖图形自身包络。
         assert seen and all(
-            box.left <= query.left and box.bottom <= query.bottom
-            and box.right >= query.right and box.top >= query.top
-            for box in seen)
+            box.left <= query.left and box.bottom <= query.bottom and box.right >= query.right and box.top >= query.top
+            for box in seen
+        )
 
     def test_cache_hit_avoids_retarget_rasterization(self, monkeypatch):
         """第二次评价命中缓存：target 不再栅格化，只有当前 mask 栅格。"""
@@ -415,12 +453,11 @@ class TestEvaluatePropose:
             """计数栅格化调用并透传。"""
             counts.append(1)
             return real_raster(region_, box, pixel, canvas, polarity=polarity)
+
         monkeypatch.setattr(simple, "rasterize_mask_canvas", _counting)
-        evaluate_state(problem, region, zeros, model, _config(),
-                             2.0, cache, can_update=True)
+        evaluate_state(problem, region, zeros, model, _config(), 2.0, cache, can_update=True)
         first = len(counts)  # 4 core × (target + mask) = 8 次
-        evaluate_state(problem, region, zeros, model, _config(),
-                             2.0, cache, can_update=True)
+        evaluate_state(problem, region, zeros, model, _config(), 2.0, cache, can_update=True)
         second = len(counts) - first  # 第二次新增的栅格调用
         assert first == 8
         assert second == 4  # target 全命中 → 只剩 4 次 mask 栅格
@@ -433,9 +470,16 @@ class TestEvaluatePropose:
         region = reconstruct_region(problem, zeros)
         tiles = []
         evaluate_state(  # 全部 4 core 都要过一遍
-            problem, region, zeros, _PhaseModel([_identity]), _config(),
-            2.0, TargetCanvasCache(0), can_update=True,
-            on_tiles_completed=tiles.append)
+            problem,
+            region,
+            zeros,
+            _PhaseModel([_identity]),
+            _config(),
+            2.0,
+            TargetCanvasCache(0),
+            can_update=True,
+            on_tiles_completed=tiles.append,
+        )
         assert sum(tiles) == problem.macro.core_count  # 空 core 也计入
         assert tiles == [2, 2]  # batch 2 → 每批报告 2 个 tile
 
@@ -455,10 +499,8 @@ class TestOptimizeMacro:
 
     def _run(self, model, region=None, **overrides):
         """按默认配置跑单 macro 完整迭代。"""
-        problem = _problem(region if region is not None
-                           else kdb.Region(kdb.Box(20, 20, 60, 60)))
-        return optimize_simple_macro(problem, model, _config(**overrides),
-                              TargetCanvasCache(0))
+        problem = _problem(region if region is not None else kdb.Region(kdb.Box(20, 20, 60, 60)))
+        return optimize_simple_macro(problem, model, _config(**overrides), TargetCanvasCache(0))
 
     def test_baseline_only_when_zero_epe(self):
         """直通模型 baseline 无违规：只评价一次，best 是零位移。"""
@@ -467,9 +509,7 @@ class TestOptimizeMacro:
         assert result.stop_reason == "zero_epe"
         assert len(result.records) == 1  # 无移动后状态
         assert result.best_state_index == 0  # baseline 最优
-        np.testing.assert_array_equal(
-            result.best_displacements,
-            np.zeros_like(result.best_displacements))
+        np.testing.assert_array_equal(result.best_displacements, np.zeros_like(result.best_displacements))
         assert result.stop_detail is None
 
     def test_records_semantics_for_one_iteration(self):
@@ -500,8 +540,7 @@ class TestOptimizeMacro:
 
     def test_zero_epe_during_iteration_with_pixel_aligned_step(self):
         """步长为像素整数倍时移动后直通输出达成零违规（循环内 zero_epe）。"""
-        result = self._run(_PhaseModel([_zero, _identity, _identity]),
-                           iterations=2, initial_step_dbu=4.0)
+        result = self._run(_PhaseModel([_zero, _identity, _identity]), iterations=2, initial_step_dbu=4.0)
         assert result.stop_reason == "zero_epe"
         assert len(result.records) == 3  # baseline + 两轮（Round 2 归零）
         assert result.records[-1].epe == 0  # 最后一轮零违规
@@ -509,8 +548,7 @@ class TestOptimizeMacro:
 
     def test_iteration_limit_records_all_rounds(self):
         """持续违规且持续移动时跑满轮次并按 iteration_limit 停止。"""
-        result = self._run(_PhaseModel([_zero, _zero, _zero, _zero]),
-                           iterations=2)
+        result = self._run(_PhaseModel([_zero, _zero, _zero, _zero]), iterations=2)
         assert result.stop_reason == "iteration_limit"
         assert [r.state_index for r in result.records] == [0, 1, 2]
         assert result.best_state_index == 0  # EPE 相同（全违规）保留较早 baseline
@@ -528,10 +566,10 @@ class TestOptimizeMacro:
                 if calls["moved"] == 1:
                     raise ReconstructionError("hole escaped its hull")
             return real_reconstruct(problem_, displacements)
+
         monkeypatch.setattr(simple, "reconstruct_region", _failing_on_first_moved)
         model = _PhaseModel([_zero, _zero, _zero])
-        result = optimize_simple_macro(problem, model, _config(),
-                                TargetCanvasCache(0))
+        result = optimize_simple_macro(problem, model, _config(), TargetCanvasCache(0))
         assert result.stop_reason == "invalid_geometry"
         assert "hole escaped" in result.stop_detail  # 原因不吞掉
         assert len(result.records) == 1  # Round 1 未能评价
@@ -540,8 +578,8 @@ class TestOptimizeMacro:
     def test_step_decays_every_configured_rounds(self):
         """步长按 decay_every 周期减半（decay=1 即每轮减半）。"""
         result = self._run(  # 持续全暗保证每轮都移动（2+1+0.5 远离上限）
-            _PhaseModel([_zero, _zero, _zero, _zero]),
-            iterations=3, initial_step_dbu=2.0, decay_every=1)
+            _PhaseModel([_zero, _zero, _zero, _zero]), iterations=3, initial_step_dbu=2.0, decay_every=1
+        )
         steps = [r.step_dbu for r in result.records]
         assert steps[0] == 0.0  # baseline 无步长
         assert steps[1] == pytest.approx(2.0)  # Round 1 用初始步长
@@ -553,9 +591,9 @@ class TestOptimizeMacro:
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         model = _PhaseModel([_zero, _zero, _zero])  # 持续全暗 → 各轮 EPE 相同
         monkeypatch.setattr(  # L2 恒 0（若参与比较也偏向不了任何轮）
-            simple, "evaluate_binary_l2", lambda *a, **kw: 0)
-        result = optimize_simple_macro(problem, model, _config(iterations=2),
-                                TargetCanvasCache(0))
+            simple, "evaluate_binary_l2", lambda *a, **kw: 0
+        )
+        result = optimize_simple_macro(problem, model, _config(iterations=2), TargetCanvasCache(0))
         assert result.stop_reason == "iteration_limit"
         assert result.best_state_index == 0  # EPE 平局 → 保留最早（baseline）
 
@@ -564,8 +602,12 @@ class TestOptimizeMacro:
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         tiles = []
         result = optimize_simple_macro(  # 全暗持续移动 → 3 次评价全跑
-            problem, _PhaseModel([_zero, _zero, _zero]), _config(iterations=2),
-            TargetCanvasCache(0), on_tiles_completed=tiles.append)
+            problem,
+            _PhaseModel([_zero, _zero, _zero]),
+            _config(iterations=2),
+            TargetCanvasCache(0),
+            on_tiles_completed=tiles.append,
+        )
         core_count = problem.macro.core_count
         assert sum(tiles) == 3 * core_count  # baseline + 2 轮 × 全部 core
         assert all(count <= 2 for count in tiles)  # 每批不超 batch_size
@@ -575,11 +617,13 @@ class TestOptimizeMacro:
         """步长超过 problem 位移上限时入口失败。"""
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
         with pytest.raises(ValueError, match="位移上限"):
-            optimize_simple_macro(problem, _PhaseModel([_identity]),
-                           _config(initial_step_dbu=11.0), TargetCanvasCache(0))
+            optimize_simple_macro(
+                problem, _PhaseModel([_identity]), _config(initial_step_dbu=11.0), TargetCanvasCache(0)
+            )
         with pytest.raises(ValueError, match="context"):
-            optimize_simple_macro(problem, _PhaseModel([_identity]),
-                           _config(epe_distance_dbu=21.0), TargetCanvasCache(0))
+            optimize_simple_macro(
+                problem, _PhaseModel([_identity]), _config(epe_distance_dbu=21.0), TargetCanvasCache(0)
+            )
 
 
 class TestGeometryMatrix:
@@ -588,9 +632,12 @@ class TestGeometryMatrix:
     def _run(self, region, polarity="clear", **overrides):
         """构造 problem 并以真实 CPU 模型完成一次小规模迭代。"""
         problem = _problem(region, polarity=polarity)
-        return optimize_simple_macro(problem, self._model, _config(
-            iterations=overrides.pop("iterations", 1),
-            batch_size=4, **overrides), TargetCanvasCache(0)), problem
+        return optimize_simple_macro(
+            problem,
+            self._model,
+            _config(iterations=overrides.pop("iterations", 1), batch_size=4, **overrides),
+            TargetCanvasCache(0),
+        ), problem
 
     @pytest.fixture(autouse=True)
     def _shared_model(self, cpu_model):
@@ -600,8 +647,12 @@ class TestGeometryMatrix:
     def _assert_healthy(self, result, problem):
         """断言结果满足全部结构不变量。"""
         assert result.stop_reason in {  # 五种合法停止
-            "zero_epe", "no_update", "invalid_geometry",
-            "insufficient_probes", "iteration_limit"}
+            "zero_epe",
+            "no_update",
+            "invalid_geometry",
+            "insufficient_probes",
+            "iteration_limit",
+        }
         assert result.records[0].state_index == 0  # baseline 在首位
         if result.stop_reason == "invalid_geometry":
             assert result.stop_detail  # 原因非空
@@ -621,24 +672,21 @@ class TestGeometryMatrix:
 
     def test_narrow_wall_with_hole(self):
         """4nm 窄壁中空图形（探针距离 4nm）不产生非法状态。"""
-        region = (kdb.Region(kdb.Box(10, 10, 70, 70)) -
-                  kdb.Region(kdb.Box(14, 14, 66, 66)))  # 壁宽 4nm
+        region = kdb.Region(kdb.Box(10, 10, 70, 70)) - kdb.Region(kdb.Box(14, 14, 66, 66))  # 壁宽 4nm
         result, problem = self._run(region)
         self._assert_healthy(result, problem)
 
     def test_concave_polygon(self):
         """凹（L 形）多边形。"""
-        polygon = kdb.Polygon([(10, 10), (70, 10), (70, 30), (30, 30),
-                               (30, 70), (10, 70)])
+        polygon = kdb.Polygon([(10, 10), (70, 10), (70, 30), (30, 30), (30, 70), (10, 70)])
         result, problem = self._run(kdb.Region(polygon))
         self._assert_healthy(result, problem)
 
     def test_multiple_polygons_and_holes(self):
         """多 polygon 且各带 hole。"""
-        region = ((kdb.Region(kdb.Box(5, 5, 35, 35)) -
-                   kdb.Region(kdb.Box(12, 12, 28, 28))) +
-                  (kdb.Region(kdb.Box(45, 45, 75, 75)) -
-                   kdb.Region(kdb.Box(52, 52, 68, 68))))
+        region = (kdb.Region(kdb.Box(5, 5, 35, 35)) - kdb.Region(kdb.Box(12, 12, 28, 28))) + (
+            kdb.Region(kdb.Box(45, 45, 75, 75)) - kdb.Region(kdb.Box(52, 52, 68, 68))
+        )
         result, problem = self._run(region)
         self._assert_healthy(result, problem)
 
@@ -654,21 +702,22 @@ class TestGeometryMatrix:
         """横跨至少三个 core 的横条。"""
         macro = _macro(core_size_dbu=20)  # 80/20 = 4×4 core
         problem = _problem(kdb.Region(kdb.Box(5, 35, 75, 45)), macro)
-        result = optimize_simple_macro(problem, self._model, _config(
-            iterations=1, batch_size=4), TargetCanvasCache(0))
+        result = optimize_simple_macro(problem, self._model, _config(iterations=1, batch_size=4), TargetCanvasCache(0))
         self._assert_healthy(result, problem)
 
     def test_diagonal_spans_macro_boundary(self):
         """斜边跨 macro 切线的多 macro 场景（2×2 macro 各自独立求解）。"""
         bounds = DbuBox(0, 0, 160, 160)
-        macros = plan_macros(bounds, macro_grid=(2, 2), core_size_dbu=40,
-                             context_dbu=20, pixel_dbu=4, canvas_pixels=256)
+        macros = plan_macros(
+            bounds, macro_grid=(2, 2), core_size_dbu=40, context_dbu=20, pixel_dbu=4, canvas_pixels=256
+        )
         polygon = kdb.Polygon([(10, 10), (150, 10), (10, 150)])  # 斜边跨中心
         region = kdb.Region(polygon)
         for macro in macros:  # 每个 macro 独立跑一轮
             problem = _problem(region, macro, data_bounds=bounds)
-            result = optimize_simple_macro(problem, self._model, _config(
-                iterations=1, batch_size=4), TargetCanvasCache(0))
+            result = optimize_simple_macro(
+                problem, self._model, _config(iterations=1, batch_size=4), TargetCanvasCache(0)
+            )
             self._assert_healthy(result, problem)
 
     def test_opaque_polarity(self):
@@ -681,8 +730,7 @@ class TestGeometryMatrix:
         """空 macro（无任何图形）零段零探针，baseline 即零违规。"""
         problem = _problem(kdb.Region())  # 空 Region
         assert problem.segments.segment_count == 0
-        result = optimize_simple_macro(problem, self._model, _config(iterations=1),
-                                TargetCanvasCache(0))
+        result = optimize_simple_macro(problem, self._model, _config(iterations=1), TargetCanvasCache(0))
         assert result.stop_reason == "zero_epe"  # 无违规即停
         assert len(result.records) == 1
         assert result.best_displacements.shape == (0,)  # 空位移向量
@@ -691,11 +739,11 @@ class TestGeometryMatrix:
         """2nm 窄壁 + 8nm 探针：全部探针无效时报告无法评价而非零违规。"""
         # 壁宽 2nm（外框 10..70、hole 12..68），探针距离 8nm 越过壁落入
         # 异侧，inner/outer 的 target 语义全部不成立 → valid_probes == 0。
-        region = (kdb.Region(kdb.Box(10, 10, 70, 70)) -
-                  kdb.Region(kdb.Box(12, 12, 68, 68)))  # 壁宽 2nm
+        region = kdb.Region(kdb.Box(10, 10, 70, 70)) - kdb.Region(kdb.Box(12, 12, 68, 68))  # 壁宽 2nm
         problem = _problem(region)
-        result = optimize_simple_macro(problem, self._model, _config(
-            iterations=1, epe_distance_dbu=8.0), TargetCanvasCache(0))
+        result = optimize_simple_macro(
+            problem, self._model, _config(iterations=1, epe_distance_dbu=8.0), TargetCanvasCache(0)
+        )
         assert result.stop_reason == "insufficient_probes"  # 不是 zero_epe
         assert result.records[0].valid_probes == 0  # 确无有效探针
         assert result.records[0].epe == 0  # epe 恒 0（无法评价 ≠ 零违规）
@@ -707,12 +755,11 @@ class TestGeometryMatrix:
         """外轮廓内移 + hole 外扩同时进行时 hole 越出 hull，重建守卫拦截。"""
         # 壁 15nm；全亮输出（印刷过量）→ 全 -1：hull 边内移、hole 边外扩，
         # 一轮 10nm 后 hole(25..55) 越出 hull(30..50) → hole escaped its hull。
-        region = (kdb.Region(kdb.Box(20, 20, 60, 60)) -
-                  kdb.Region(kdb.Box(35, 35, 45, 45)))  # 壁 15nm
+        region = kdb.Region(kdb.Box(20, 20, 60, 60)) - kdb.Region(kdb.Box(35, 35, 45, 45))  # 壁 15nm
         problem = _problem(region)
-        result = optimize_simple_macro(problem, _PhaseModel([_ones, _ones]),
-                                _config(iterations=2, initial_step_dbu=10.0),
-                                TargetCanvasCache(0))
+        result = optimize_simple_macro(
+            problem, _PhaseModel([_ones, _ones]), _config(iterations=2, initial_step_dbu=10.0), TargetCanvasCache(0)
+        )
         assert result.stop_reason == "invalid_geometry"  # 守卫拦截
         assert "重建失败" in result.stop_detail  # 原因在案
         assert result.best_state_index == 0  # 非法候选前的 baseline 保留
@@ -723,13 +770,13 @@ class TestGeometryMatrix:
         # 交叉：实测重建以「ring 少于三顶点」的 ValueError 形态失败，被
         # invalid_geometry 路径捕获（更大幅度翻转会被 miter 解析成反向
         # ring，共线退化是最先触发的守卫形态）。
-        wide = FragmentationConfig(corner_length_dbu=8.0,
-                                   max_segment_length_dbu=16.0,
-                                   max_displacement_dbu=30.0, miter_limit=4.0)
+        wide = FragmentationConfig(
+            corner_length_dbu=8.0, max_segment_length_dbu=16.0, max_displacement_dbu=30.0, miter_limit=4.0
+        )
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)), frag=wide)
-        result = optimize_simple_macro(problem, _PhaseModel([_ones, _ones]),
-                                _config(iterations=1, initial_step_dbu=20.0),
-                                TargetCanvasCache(0))
+        result = optimize_simple_macro(
+            problem, _PhaseModel([_ones, _ones]), _config(iterations=1, initial_step_dbu=20.0), TargetCanvasCache(0)
+        )
         assert result.stop_reason == "invalid_geometry"  # 守卫拦截
         assert result.stop_detail is not None  # 原因在案
         assert result.best_state_index == 0  # 非法候选前的 baseline 保留
@@ -739,15 +786,17 @@ class TestGeometryMatrix:
 class TestRealModelCuda:
     """CUDA 可用时的真实模型直通验证。"""
 
-    @pytest.mark.skipif(not torch.cuda.is_available(),
-                        reason="当前环境没有 CUDA")
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="当前环境没有 CUDA")
     def test_cuda_optimize_simple_macro_completes(self):
         """CUDA 设备上完整迭代完成且指标有限。"""
         model = ICCAD13Lithography(device="cuda")
         problem = _problem(kdb.Region(kdb.Box(20, 20, 60, 60)))
-        result = optimize_simple_macro(problem, model, _config(iterations=1),
-                                TargetCanvasCache(0))
+        result = optimize_simple_macro(problem, model, _config(iterations=1), TargetCanvasCache(0))
         assert result.stop_reason in {  # 五种合法停止
-            "zero_epe", "no_update", "invalid_geometry",
-            "insufficient_probes", "iteration_limit"}
+            "zero_epe",
+            "no_update",
+            "invalid_geometry",
+            "insufficient_probes",
+            "iteration_limit",
+        }
         assert np.all(np.isfinite(result.best_displacements))

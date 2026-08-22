@@ -57,9 +57,12 @@ def read_glp(path: Path, layer_map: Mapping[str, LayerSpec] | None = None) -> kd
                 raise LayoutOpenError(f"GLP 第 {line_number} 行 BEGIN 格式无效")
             continue
         if keyword == "EQUIV":
-            if (saw_equiv or len(fields) not in (4, 5) or
-                    fields[3].upper() != "MICRON" or
-                    (len(fields) == 5 and fields[4].upper() != "+X,+Y")):
+            if (
+                saw_equiv
+                or len(fields) not in (4, 5)
+                or fields[3].upper() != "MICRON"
+                or (len(fields) == 5 and fields[4].upper() != "+X,+Y")
+            ):
                 raise LayoutOpenError(f"GLP 第 {line_number} 行 EQUIV 格式无效")
             numerator, denominator = _integer_tokens(fields[1:3], line_number)
             if numerator <= 0 or denominator <= 0:
@@ -94,8 +97,7 @@ def read_glp(path: Path, layer_map: Mapping[str, LayerSpec] | None = None) -> kd
             if layer_name not in resolved:
                 spec = _glp_layer(layer_name, explicit)
                 if spec in resolved.values():
-                    raise LayoutOpenError(
-                        f"GLP 层 {layer_name!r} 与其他已使用符号层映射到同一 layer/datatype")
+                    raise LayoutOpenError(f"GLP 层 {layer_name!r} 与其他已使用符号层映射到同一 layer/datatype")
                 resolved[layer_name] = spec
             values = _integer_tokens(fields[3:], line_number)
             layer_index = layout.layer(resolved[layer_name].layer, resolved[layer_name].datatype)
@@ -107,8 +109,9 @@ def read_glp(path: Path, layer_map: Mapping[str, LayerSpec] | None = None) -> kd
             else:
                 if len(values) < 6 or len(values) % 2:
                     raise LayoutOpenError(f"GLP 第 {line_number} 行 PGON 坐标数量无效")
-                polygon = kdb.Polygon([kdb.Point(values[index], values[index + 1])
-                                       for index in range(0, len(values), 2)])
+                polygon = kdb.Polygon(
+                    [kdb.Point(values[index], values[index + 1]) for index in range(0, len(values), 2)]
+                )
                 region = kdb.Region(polygon)
                 if region.area() <= 0 or not region.has_valid_polygons():
                     raise LayoutOpenError(f"GLP 第 {line_number} 行 PGON 不是有效正面积多边形")

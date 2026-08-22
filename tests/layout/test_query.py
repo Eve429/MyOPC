@@ -25,7 +25,8 @@ def test_generated_materialization_ignores_text_and_reports_it_on_demand(tmp_pat
 def test_materialization_applies_reference_transforms(tmp_path: Path) -> None:
     """递归物化会把 SREF 旋转与 AREF 阵列统一展开到顶层坐标系。"""
     source = tmp_path / "transforms.gds"
-    native = kdb.Layout(); native.dbu = 0.001
+    native = kdb.Layout()
+    native.dbu = 0.001
     index = native.layer(kdb.LayerInfo(1, 0))
     leaf = native.create_cell("LEAF")
     leaf.shapes(index).insert(kdb.Box(0, 0, 10, 10))
@@ -33,8 +34,7 @@ def test_materialization_applies_reference_transforms(tmp_path: Path) -> None:
     # R90 旋转把左下角的 10×10 方块旋到 (990,0)-(1000,10)；2×2 AREF 在
     # 原地铺出 4 份，两种引用方式都必须展开成顶层坐标系的独立 Polygon。
     top.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(kdb.Trans.R90, 1000, 0)))
-    top.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0),
-                                 kdb.Vector(50, 0), kdb.Vector(0, 50), 2, 2))
+    top.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0), kdb.Vector(50, 0), kdb.Vector(0, 50), 2, 2))
     native.write(str(source))
     layer = LayerSpec(1, 0)
     with LayoutDB.open(source) as db:
@@ -92,8 +92,7 @@ def test_preserve_properties_keeps_plain_and_tagged_geometry(tmp_path: Path) -> 
     layer, box = LayerSpec(7, 0), DbuBox(5, -1, 25, 11)
     with LayoutDB.open(source) as database:
         plain = database.query([layer], box).materialize().region(layer)
-        preserved_batch = database.query(
-            [layer], box, preserve_properties=True).materialize(diagnostics=True)
+        preserved_batch = database.query([layer], box, preserve_properties=True).materialize(diagnostics=True)
         preserved = preserved_batch.region(layer)
         assert plain.count() == preserved.count() == 2
         assert all(not polygon.properties() for polygon in plain.each())
@@ -106,8 +105,10 @@ def test_preserve_properties_keeps_plain_and_tagged_geometry(tmp_path: Path) -> 
 def test_intersecting_materialization_keeps_full_crossing_shapes(tmp_path: Path) -> None:
     """未裁剪物化应保留完整相交图形，而普通物化继续精确服从 ROI。"""
     source = tmp_path / "crossing.gds"
-    native = kdb.Layout(); native.dbu = 0.001
-    index = native.layer(kdb.LayerInfo(1, 0)); top = native.create_cell("TOP")
+    native = kdb.Layout()
+    native.dbu = 0.001
+    index = native.layer(kdb.LayerInfo(1, 0))
+    top = native.create_cell("TOP")
     top.shapes(index).insert(kdb.Box(-50, -20, 150, 80))
     top.shapes(index).insert(kdb.Box(300, 300, 400, 400))
     native.write(str(source))
@@ -124,15 +125,15 @@ def test_intersecting_materialization_keeps_full_crossing_shapes(tmp_path: Path)
 def test_intersecting_materialization_preserves_properties(tmp_path: Path) -> None:
     """未裁剪物化启用属性时应保留完整几何及其属性。"""
     source = tmp_path / "crossing-properties.gds"
-    native = kdb.Layout(); index = native.layer(kdb.LayerInfo(7, 0))
+    native = kdb.Layout()
+    index = native.layer(kdb.LayerInfo(7, 0))
     top = native.create_cell("TOP")
     tagged = top.shapes(index).insert(kdb.Box(-20, 0, 80, 40))
     tagged.set_property(7, "macro")
     native.write(str(source))
     layer, box = LayerSpec(7, 0), DbuBox(0, 10, 40, 30)
     with LayoutDB.open(source) as database:
-        complete = database.query(
-            [layer], box, preserve_properties=True).materialize_intersecting().region(layer)
+        complete = database.query([layer], box, preserve_properties=True).materialize_intersecting().region(layer)
     polygon = next(complete.each())
     assert polygon.bbox() == kdb.Box(-20, 0, 80, 40)
     assert polygon.properties() == {7: "macro"}

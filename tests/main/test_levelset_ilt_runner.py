@@ -23,12 +23,21 @@ from tests.main.test_simple_ilt_runner import _write_gds
 def _write_config(tmp_path, layout_path, macro_grid="[2, 2]", **overrides):
     """按默认契约生成 LevelSet ILT TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值满足全部网格与迭代契约（step 取旧 LevelSet 默认）
-        "macro_grid": macro_grid, "core_size_nm": 40, "context_nm": 20,
-        "pixel_nm": 4, "iterations": 1, "step_size": 0.2,
-        "weight_process_l2": 1.0, "weight_pvband": 0.5,
-        "curvature_weight": 0.0, "batch_size": 4, "device": "cpu",
-        "save_final_lithography": "false", "show_progress": "false",
-        "final_cell_mode": "single_cell"}
+        "macro_grid": macro_grid,
+        "core_size_nm": 40,
+        "context_nm": 20,
+        "pixel_nm": 4,
+        "iterations": 1,
+        "step_size": 0.2,
+        "weight_process_l2": 1.0,
+        "weight_pvband": 0.5,
+        "curvature_weight": 0.0,
+        "batch_size": 4,
+        "device": "cpu",
+        "save_final_lithography": "false",
+        "show_progress": "false",
+        "final_cell_mode": "single_cell",
+    }
     values.update(overrides)
     text = f"""  # 组装 TOML 文本
 [layout]
@@ -92,8 +101,7 @@ class TestConfigAndEntry:
         """缺必填键在准备前失败：不创建工作目录。"""
         layout_path = _write_gds(tmp_path)
         config_path = _write_config(tmp_path, layout_path)
-        text = config_path.read_text(encoding="utf-8").replace(
-            "step_size = 0.2\n", "")  # 删除一个必填键
+        text = config_path.read_text(encoding="utf-8").replace("step_size = 0.2\n", "")  # 删除一个必填键
         config_path.write_text(text, encoding="utf-8")
         with pytest.raises(ValueError, match="缺少必填键"):
             levelset_workflow.run_levelset_ilt(config_path)
@@ -104,7 +112,8 @@ class TestConfigAndEntry:
         layout_path = _write_gds(tmp_path)
         config_path = _write_config(tmp_path, layout_path)
         text = config_path.read_text(encoding="utf-8").replace(
-            "[levelset_ilt]", "[levelset_ilt]\nsigmoid_steepness = 4.0")
+            "[levelset_ilt]", "[levelset_ilt]\nsigmoid_steepness = 4.0"
+        )
         config_path.write_text(text, encoding="utf-8")
         with pytest.raises(ValueError, match="未知键"):
             levelset_workflow.run_levelset_ilt(config_path)
@@ -127,9 +136,7 @@ class TestConfigAndEntry:
 
     def test_section_registered_in_configuration(self):
         """LevelSetILTConfig 注册到 [levelset_ilt] 段。"""
-        assert (configuration.CONFIG_SECTIONS
-                [levelset_workflow.LEVELSET_ILT_METHOD.config_type]
-                == "levelset_ilt")
+        assert configuration.CONFIG_SECTIONS[levelset_workflow.LEVELSET_ILT_METHOD.config_type] == "levelset_ilt"
 
     def test_context_below_pixel_rejected_by_workflow(self, tmp_path):
         """context < 1 像素：solver 前置失败传播，无 summary。"""
@@ -145,11 +152,17 @@ class TestConfigAndEntry:
         layout_path = _write_gds(tmp_path / "sub")
         config_path = _write_config(tmp_path / "sub", layout_path)
         result = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve().parents[2]
-                                 / "main" / "run_ilt_levelset.py"),
-             str(config_path)],
-            cwd=str(tmp_path), capture_output=True, text=True,
-            timeout=300, check=False)
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parents[2] / "main" / "run_ilt_levelset.py"),
+                str(config_path),
+            ],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
         assert result.returncode == 0, result.stderr
 
 
@@ -178,16 +191,12 @@ class TestArtifacts:
                 assert data["binary_mask"].dtype == np.uint8
                 phi = data["best_parameters"]
                 # REQ-010：binary == (phi < 0)，soft == sigmoid(-phi)
-                np.testing.assert_array_equal(
-                    data["binary_mask"].astype(bool), phi < 0.0)
-                np.testing.assert_allclose(
-                    data["soft_mask"], 1.0 / (1.0 + np.exp(phi)),
-                    rtol=1e-5, atol=1e-6)
+                np.testing.assert_array_equal(data["binary_mask"].astype(bool), phi < 0.0)
+                np.testing.assert_allclose(data["soft_mask"], 1.0 / (1.0 + np.exp(phi)), rtol=1e-5, atol=1e-6)
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
             assert len(metrics["records"]) == 2  # iterations=1 → N+1
             first = metrics["records"][0]
-            assert (first["state_index"] == 0 and first["stage_index"] == 0
-                    and first["scale"] == 1)
+            assert first["state_index"] == 0 and first["stage_index"] == 0 and first["scale"] == 1
             assert isinstance(metrics["binary_l2"], int)
             assert metrics["core_count"] == entry["core_count"]
 
@@ -197,11 +206,10 @@ class TestArtifacts:
         work = tmp_path / "work"
         plan = json.loads((work / "ilt_plan.json").read_text(encoding="utf-8"))
         from opc.input.pixel import PixelMacroProblem
+
         for entry in plan["macros"]:
             problem = PixelMacroProblem.load(Path(entry["problem_file"]))
-            with np.load(work / "macros" / entry["macro_id"]
-                         / "levelset_ilt_result.npz",
-                         allow_pickle=False) as data:
+            with np.load(work / "macros" / entry["macro_id"] / "levelset_ilt_result.npz", allow_pickle=False) as data:
                 binary = data["binary_mask"].astype(bool)
                 best_state = int(data["best_state_index"][0])
             pixel = problem.macro.pixel_dbu
@@ -210,9 +218,7 @@ class TestArtifacts:
             hm, wm = problem.ownership_shape
             r0 = (box.bottom - query.bottom) // pixel
             c0 = (box.left - query.left) // pixel
-            target_binary = (
-                problem.target_u8[r0:r0 + hm, c0:c0 + wm].astype(
-                    np.float32) / 255.0 >= 0.5)
+            target_binary = problem.target_u8[r0 : r0 + hm, c0 : c0 + wm].astype(np.float32) / 255.0 >= 0.5
             if best_state == 0:  # best 是 state0 时可直接对靶断言
                 assert np.array_equal(binary, target_binary)
 
@@ -232,8 +238,7 @@ class TestFinalContext:
             calls["n"] += 1
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(
-            levelset_module, "signed_distance_initialization", spy)
+        monkeypatch.setattr(levelset_module, "signed_distance_initialization", spy)
         summary = levelset_workflow.run_levelset_ilt(config_path)
         assert calls["n"] == summary["macro_count"]  # 仅 solver 初始化
 
@@ -242,9 +247,11 @@ class TestFinalContext:
         method = levelset_workflow.LEVELSET_ILT_METHOD
         field_names = {field.name for field in dataclasses.fields(method)}
         assert field_names == {
-            "method_name", "config_type", "optimize_macro",
-            "evaluated_states", "build_fixed_context_canvas"}
-        workflow_fields = {
-            field.name for field in dataclasses.fields(
-                ilt_workflow.ILTMethod)}
+            "method_name",
+            "config_type",
+            "optimize_macro",
+            "evaluated_states",
+            "build_fixed_context_canvas",
+        }
+        workflow_fields = {field.name for field in dataclasses.fields(ilt_workflow.ILTMethod)}
         assert workflow_fields == field_names

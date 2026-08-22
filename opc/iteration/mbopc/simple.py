@@ -40,12 +40,12 @@ OnTilesCompleted = Callable[[int], None]
 class SimpleMBOPCConfig:
     """保存已经转换到 DBU 的离散 EPE 迭代参数。"""
 
-    iterations: int              # 最多发布更新次数
-    initial_step_dbu: float      # 初始绝对法向步长
-    decay_every: int             # 步长减半周期（每过这么多状态步长减半）
-    epe_distance_dbu: float      # inner/outer 探针距离
-    batch_size: int              # 一次 forward 的 core 数
-    target_cache_bytes: int      # CPU target uint8 LRU 上限
+    iterations: int  # 最多发布更新次数
+    initial_step_dbu: float  # 初始绝对法向步长
+    decay_every: int  # 步长减半周期（每过这么多状态步长减半）
+    epe_distance_dbu: float  # inner/outer 探针距离
+    batch_size: int  # 一次 forward 的 core 数
+    target_cache_bytes: int  # CPU target uint8 LRU 上限
 
     def __post_init__(self) -> None:
         """校验迭代参数自身的数值契约，跨层参数（步长/上下文）由求解器入口复验。"""
@@ -59,8 +59,7 @@ class SimpleMBOPCConfig:
             raise ValueError("epe_distance_dbu 必须是有限正数")
         if not isinstance(self.batch_size, int) or self.batch_size < 1:
             raise ValueError("batch_size 必须是至少 1 的整数")
-        if (not isinstance(self.target_cache_bytes, int)
-                or self.target_cache_bytes < 0):
+        if not isinstance(self.target_cache_bytes, int) or self.target_cache_bytes < 0:
             raise ValueError("target_cache_bytes 必须是非负整数")
 
 
@@ -81,15 +80,15 @@ class SimpleMBOPCStep:
 class SimpleMBOPCIterationRecord:
     """保存 baseline 或一次移动后状态的实际评价结果。"""
 
-    state_index: int             # 0=baseline；1..N=对应位移完成后的状态
-    step_dbu: float              # 产生本状态时使用的步长；baseline 为 0
-    epe: int                     # 本状态实际 EPE
-    l2: int                      # 本状态实际二值 L2
-    pvband: int                  # 本状态实际 PVBand
-    valid_probes: int            # 本状态有效探针
-    ambiguous_probes: int        # 本状态歧义探针
-    moved_segments: int          # 从上一状态移动到本状态的段数
-    elapsed_seconds: float       # 重建并评价本状态的耗时
+    state_index: int  # 0=baseline；1..N=对应位移完成后的状态
+    step_dbu: float  # 产生本状态时使用的步长；baseline 为 0
+    epe: int  # 本状态实际 EPE
+    l2: int  # 本状态实际二值 L2
+    pvband: int  # 本状态实际 PVBand
+    valid_probes: int  # 本状态有效探针
+    ambiguous_probes: int  # 本状态歧义探针
+    moved_segments: int  # 从上一状态移动到本状态的段数
+    elapsed_seconds: float  # 重建并评价本状态的耗时
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,24 +97,24 @@ class SimpleMBOPCResult:
 
     best_displacements: NDArray[np.float64]
     records: tuple[SimpleMBOPCIterationRecord, ...]  # records[0] 固定为 baseline
-    best_state_index: int                       # 0 表示零位移 baseline 最优
-    stop_reason: str                      # zero_epe/no_update/invalid_geometry/iteration_limit
-    stop_detail: str | None               # 非法候选的明确原因；正常停止为 None
+    best_state_index: int  # 0 表示零位移 baseline 最优
+    stop_reason: str  # zero_epe/no_update/invalid_geometry/iteration_limit
+    stop_detail: str | None  # 非法候选的明确原因；正常停止为 None
 
 
 def evaluate_state(
-        problem: MacroProblem,
-        current_region: kdb.Region,
-        current_displacements: NDArray[np.float64],
-        model: LithographyModel,
-        config: SimpleMBOPCConfig,
-        step_dbu: float,
-        target_cache: TargetCanvasCache,
-        *,
-        can_update: bool,
-        reference: SegmentGeometry | None = None,
-        pack: MacroStaticPack | None = None,
-        on_tiles_completed: OnTilesCompleted | None = None,
+    problem: MacroProblem,
+    current_region: kdb.Region,
+    current_displacements: NDArray[np.float64],
+    model: LithographyModel,
+    config: SimpleMBOPCConfig,
+    step_dbu: float,
+    target_cache: TargetCanvasCache,
+    *,
+    can_update: bool,
+    reference: SegmentGeometry | None = None,
+    pack: MacroStaticPack | None = None,
+    on_tiles_completed: OnTilesCompleted | None = None,
 ) -> SimpleMBOPCStep:
     """评价一个 macro 当前状态，并产生同步 owner 位移提案。
 
@@ -143,42 +142,46 @@ def evaluate_state(
         if reference is None:
             reference = problem.segments.materialize()  # 现算参考几何
         pack = pack_macro_statics(
-            problem, epe_distance_dbu=config.epe_distance_dbu,
+            problem,
+            epe_distance_dbu=config.epe_distance_dbu,
             reference_geometry=reference,
-            reference_region=reconstruct_region(
-                problem, np.zeros(segment_count, dtype=np.float64)),
-            to_canvas=points_to_canvas)
+            reference_region=reconstruct_region(problem, np.zeros(segment_count, dtype=np.float64)),
+            to_canvas=points_to_canvas,
+        )
     max_displacement = float(problem.fragmentation.max_displacement_dbu)  # 位移上限
     next_values = current.copy()  # 提案缓冲（can_update=False 时不写方向）
     written = np.zeros(segment_count, dtype=np.bool_)  # 方向唯一写标记
     # 批间标量累计
-    totals = {"epe": 0, "l2": 0, "pvband": 0,
-              "valid": 0, "ambiguous": 0}
+    totals = {"epe": 0, "l2": 0, "pvband": 0, "valid": 0, "ambiguous": 0}
     threshold = float(model.config.print_threshold)  # 像素指标二值阈值
     device = model.device  # 目标设备
     # 三工艺角条件：标称 / 大剂量 / 离焦小剂量（每 macro 一次，与
     # gradient 的 ctx.conditions 同语义）
-    conditions = (model.condition("nominal"), model.condition("dose_max"),
-                  model.condition("defocus_min"))
+    conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))
     # 公共组批（target 缓存/当前候选栅格/静态计分画布）单源共用；
     # rasterize 钩子传本模块全局，monkeypatch 锚点保持在求解器模块。
     for core_indices, targets, masks, ownership in iter_core_batches(
-            problem, pack, current_region, target_cache,
-            batch_size=config.batch_size, rasterize=rasterize_mask_canvas):
+        problem, pack, current_region, target_cache, batch_size=config.batch_size, rasterize=rasterize_mask_canvas
+    ):
         # 本批 owner 探针（静态坐标）槽位与 canvas 坐标一次拼接
-        probe_slots, inner_xy, outer_xy = assemble_probe_batch(
-            pack, core_indices)
+        probe_slots, inner_xy, outer_xy = assemble_probe_batch(pack, core_indices)
         # 光刻：一次 forward_many 出三工艺角。
         with torch.no_grad():  # 离散方法不需要梯度图
-            target_tensor, mask_tensor, ownership_tensor = upload_eval_batch(
-                targets, masks, ownership, device)
+            target_tensor, mask_tensor, ownership_tensor = upload_eval_batch(targets, masks, ownership, device)
             printed = model.forward_many(mask_tensor, conditions)  # 共享一次 FFT
             # 像素指标与 EPE：公共离散诊断（evaluate_* 补丁锚在本模块）
             l2, pvband, epe_result = discrete_batch_diagnostics(
-                target_tensor, printed, ownership_tensor, threshold,
-                probe_slots, inner_xy, outer_xy,
-                binary_l2=evaluate_binary_l2, pvband=evaluate_pvband,
-                edge_probes=evaluate_edge_probes)
+                target_tensor,
+                printed,
+                ownership_tensor,
+                threshold,
+                probe_slots,
+                inner_xy,
+                outer_xy,
+                binary_l2=evaluate_binary_l2,
+                pvband=evaluate_pvband,
+                edge_probes=evaluate_edge_probes,
+            )
             totals["l2"] += l2
             totals["pvband"] += pvband
             if epe_result is not None:
@@ -191,9 +194,7 @@ def evaluate_state(
                 totals["ambiguous"] += int(ambiguous_all.sum())  # 整批求和
                 if can_update:  # 方向只写提案缓冲，current 全程只读
                     # -1/0/+1 方向 × 当前提案步长（一次取回）
-                    moves = (
-                        epe_result.directions.cpu().numpy()
-                        .astype(np.float64) * step_dbu)
+                    moves = epe_result.directions.cpu().numpy().astype(np.float64) * step_dbu
                     cursor = 0  # 探针游标（按批内 core 顺序回切）
                     for core_index in core_indices:
                         idx = pack.owner_members[core_index]
@@ -218,18 +219,22 @@ def evaluate_state(
     # 指标属于刚评价的输入状态，next 只是提案
     return SimpleMBOPCStep(
         next_displacements=next_values,
-        epe=totals["epe"], l2=totals["l2"], pvband=totals["pvband"],
-        valid_probes=totals["valid"], ambiguous_probes=totals["ambiguous"],
-        moved_segments=moved)
+        epe=totals["epe"],
+        l2=totals["l2"],
+        pvband=totals["pvband"],
+        valid_probes=totals["valid"],
+        ambiguous_probes=totals["ambiguous"],
+        moved_segments=moved,
+    )
 
 
 def optimize_simple_macro(
-        problem: MacroProblem,
-        model: LithographyModel,
-        config: SimpleMBOPCConfig,
-        target_cache: TargetCanvasCache,
-        *,
-        on_tiles_completed: OnTilesCompleted | None = None,
+    problem: MacroProblem,
+    model: LithographyModel,
+    config: SimpleMBOPCConfig,
+    target_cache: TargetCanvasCache,
+    *,
+    on_tiles_completed: OnTilesCompleted | None = None,
 ) -> SimpleMBOPCResult:
     """让单个 macro 独立完成 baseline 和全部离散 EPE 迭代。"""
     # 跨层参数复验（工作流配置层已查过，纯函数入口再挡一次直接调用方）。
@@ -241,8 +246,7 @@ def optimize_simple_macro(
 
     def step_for(target_state: int) -> float:
         """返回产生第 target_state 次位移的步长（每 decay_every 状态减半）。"""
-        return config.initial_step_dbu * 0.5 ** (
-            (target_state - 1) // config.decay_every)
+        return config.initial_step_dbu * 0.5 ** ((target_state - 1) // config.decay_every)
 
     segment_count = problem.segments.segment_count  # 段数 S
     owner_count = int(np.count_nonzero(problem.owner_indices >= 0))  # owner 段数
@@ -256,21 +260,41 @@ def optimize_simple_macro(
     started = time.perf_counter()  # baseline 计时
     baseline_region = reconstruct_region(problem, zeros)  # 零位移候选
     pack = pack_macro_statics(
-        problem, epe_distance_dbu=config.epe_distance_dbu,
-        reference_geometry=reference, reference_region=baseline_region,
-        to_canvas=points_to_canvas)
+        problem,
+        epe_distance_dbu=config.epe_distance_dbu,
+        reference_geometry=reference,
+        reference_region=baseline_region,
+        to_canvas=points_to_canvas,
+    )
     pending_step = step_for(1)  # baseline 提案使用的步长
     # 评价 + State 1 提案
     proposal = evaluate_state(
-        problem, baseline_region, zeros, model, config, pending_step,
-        target_cache, can_update=True, reference=reference, pack=pack,
-        on_tiles_completed=on_tiles_completed)
+        problem,
+        baseline_region,
+        zeros,
+        model,
+        config,
+        pending_step,
+        target_cache,
+        can_update=True,
+        reference=reference,
+        pack=pack,
+        on_tiles_completed=on_tiles_completed,
+    )
     # records[0] 固定是 baseline
-    records = [SimpleMBOPCIterationRecord(
-        state_index=0, step_dbu=0.0, epe=proposal.epe, l2=proposal.l2,
-        pvband=proposal.pvband, valid_probes=proposal.valid_probes,
-        ambiguous_probes=proposal.ambiguous_probes, moved_segments=0,
-        elapsed_seconds=time.perf_counter() - started)]
+    records = [
+        SimpleMBOPCIterationRecord(
+            state_index=0,
+            step_dbu=0.0,
+            epe=proposal.epe,
+            l2=proposal.l2,
+            pvband=proposal.pvband,
+            valid_probes=proposal.valid_probes,
+            ambiguous_probes=proposal.ambiguous_probes,
+            moved_segments=0,
+            elapsed_seconds=time.perf_counter() - started,
+        )
+    ]
     best_epe = proposal.epe  # 最佳状态 EPE（EPE 相同保留较早状态，由严格小于实现）
     best_state_index = 0  # baseline 先当最佳
     best_displacements = zeros.copy()  # 零位移副本
@@ -281,8 +305,7 @@ def optimize_simple_macro(
         # 8nm 探针距离）时全部探针被判无效，epe 恒为 0；此时以零位移为 best
         # 终止并显式记录原因，不冒充收敛。
         stop_reason = "insufficient_probes"
-        stop_detail = (f"有效 EPE 探针 0 个 / owner 段 {owner_count} 个，"
-                       "无法评价（探针距离可能大于最窄特征）")
+        stop_detail = f"有效 EPE 探针 0 个 / owner 段 {owner_count} 个，无法评价（探针距离可能大于最窄特征）"
     elif proposal.epe == 0:  # baseline 已无违规
         stop_reason = "zero_epe"  # 直接以零位移为最佳
     else:  # 常规路径：逐状态移动并评价
@@ -306,32 +329,44 @@ def optimize_simple_macro(
                 # 此处的 ValueError 几乎只可能是几何退化。
                 stop_reason = "invalid_geometry"  # 保留最后合法 best
                 # 错误原因不得吞掉
-                stop_detail = (
-                    f"state {state_index} 候选重建失败：{exc}")
+                stop_detail = f"state {state_index} 候选重建失败：{exc}"
                 break
             can_propose = state_index < config.iterations  # 末状态不再生成
             pending_next = step_for(state_index + 1)  # 被丢弃提案的步长（末状态）
             # 移动后状态评价（末状态纯评价）
             proposal = evaluate_state(
-                problem, candidate_region, candidate, model, config,
-                pending_next, target_cache, can_update=can_propose,
-                reference=reference, pack=pack,
-                on_tiles_completed=on_tiles_completed)
+                problem,
+                candidate_region,
+                candidate,
+                model,
+                config,
+                pending_next,
+                target_cache,
+                can_update=can_propose,
+                reference=reference,
+                pack=pack,
+                on_tiles_completed=on_tiles_completed,
+            )
             # State N 指标属第 N 次位移后状态；moved 为产生本状态时移动的段数
-            records.append(SimpleMBOPCIterationRecord(
-                state_index=state_index, step_dbu=pending_step, epe=proposal.epe,
-                l2=proposal.l2, pvband=proposal.pvband,
-                valid_probes=proposal.valid_probes,
-                ambiguous_probes=proposal.ambiguous_probes,
-                moved_segments=candidate_moved,
-                elapsed_seconds=time.perf_counter() - started))
+            records.append(
+                SimpleMBOPCIterationRecord(
+                    state_index=state_index,
+                    step_dbu=pending_step,
+                    epe=proposal.epe,
+                    l2=proposal.l2,
+                    pvband=proposal.pvband,
+                    valid_probes=proposal.valid_probes,
+                    ambiguous_probes=proposal.ambiguous_probes,
+                    moved_segments=candidate_moved,
+                    elapsed_seconds=time.perf_counter() - started,
+                )
+            )
             pending_step = pending_next  # 下一状态记录使用的步长
             if owner_count and proposal.valid_probes == 0:  # 移动后无法评价
                 # 必须先于 best 比较终止：valid_probes==0 时 epe 恒 0，若放行
                 # 会被 epe<best 误当成改善状态。
                 stop_reason = "insufficient_probes"
-                stop_detail = (f"state {state_index} 有效 EPE 探针 0 个 / "
-                               f"owner 段 {owner_count} 个，无法评价")
+                stop_detail = f"state {state_index} 有效 EPE 探针 0 个 / owner 段 {owner_count} 个，无法评价"
                 break
             if proposal.epe < best_epe:  # 严格更小才更新；相同保留较早状态
                 best_epe = proposal.epe
@@ -351,4 +386,5 @@ def optimize_simple_macro(
         records=tuple(records),
         best_state_index=best_state_index,
         stop_reason=stop_reason,
-        stop_detail=stop_detail)
+        stop_detail=stop_detail,
+    )

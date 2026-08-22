@@ -1,30 +1,30 @@
 """多个真实流程共用的 macro 生命周期：problem 准备、候选写出与最终合并。"""
 
-import os  # 原子替换与文件系统操作
-import sys  # 把仓库根加入模块路径，保证免安装直接运行
-import tempfile  # 创建与目标同目录的临时文件
-import time  # perf_counter 阶段计时
-import warnings  # 处理框大于 layer bbox 的风险提示
-from collections.abc import Mapping  # merge 映射参数的只读类型
-from decimal import Decimal  # nm→DBU 的精确十进制换算
-from pathlib import Path  # 全部路径统一使用 Path 对象
-from typing import Literal  # cell_mode 的字面量类型
+import os
+import sys
+import tempfile
+import time
+import warnings
+from collections.abc import Mapping
+from decimal import Decimal
+from pathlib import Path
+from typing import Literal
 
-import klayout.db as kdb  # 写出 macro GDS 与所有权裁剪的原生版图对象
-import numpy as np  # PNG 栅格与像素变换
-import psutil  # 阶段 RSS 峰值测量；缺失时直接 ImportError 不降级
-import torch  # 最终光刻留档的 no_grad 推理
-from PIL import Image  # 最终光刻 PNG 留档
+import klayout.db as kdb
+import numpy as np
+import psutil
+import torch
+from PIL import Image
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
 
-from common.io import atomic_write_json  # JSON 原子写出
-from common.units import exact_dbu  # 处理框 nm→DBU 精确换算
-from geometry import GeometryPatch, PatchWriter  # 权威 patch 与双模式最终写出
-from layout import (  # 版图打开、层规格与坐标框
+from common.io import atomic_write_json
+from common.units import exact_dbu
+from geometry import GeometryPatch, PatchWriter
+from layout import (
     DbuBox,
     LayerNotFoundError,
     LayerSpec,
@@ -47,14 +47,13 @@ from opc.input import (
     plan_macros,
     rasterize_mask_canvas,
 )
-from opc.input.edge import prepare_macro_problem  # problem 构造
+from opc.input.edge import prepare_macro_problem
 
 # v2 移除 dark_box 键（2026-08-22 环带改几何方案）；v1 显式拒绝。
 _PLAN_FORMAT_VERSION = 2
 
 
-def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
-                         dbu_nm: Decimal) -> DbuBox:
+def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox, dbu_nm: Decimal) -> DbuBox:
     """解析处理框：双 None 用 layer bbox；box 直用；size 以 layer bbox 居中推导。
 
     field 只声明规划口径（macro 网格与输出覆盖范围），本身不携带光学
@@ -64,8 +63,8 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
     """
     if layout.field_box_nm is not None:
         left, bottom, right, top = (
-            exact_dbu(value, dbu_nm, f"field_box_nm[{index}]")
-            for index, value in enumerate(layout.field_box_nm))
+            exact_dbu(value, dbu_nm, f"field_box_nm[{index}]") for index, value in enumerate(layout.field_box_nm)
+        )
         field = DbuBox(left, bottom, right, top)
     elif layout.field_size_nm is not None:
         width = exact_dbu(layout.field_size_nm[0], dbu_nm, "field_size_nm[0]")
@@ -77,25 +76,37 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
         slack_y = height - layer_bounds.height
         low_x, low_y = slack_x // 2, slack_y // 2
         field = DbuBox(
-            layer_bounds.left - low_x, layer_bounds.bottom - low_y,
+            layer_bounds.left - low_x,
+            layer_bounds.bottom - low_y,
             layer_bounds.right + (slack_x - low_x),
-            layer_bounds.top + (slack_y - low_y))
+            layer_bounds.top + (slack_y - low_y),
+        )
     else:
         return layer_bounds  # 未配置：保持 layer bbox 现行行为，零行为变化
-    if (field.left > layer_bounds.left or field.bottom > layer_bounds.bottom
-            or field.right < layer_bounds.right
-            or field.top < layer_bounds.top):
+    if (
+        field.left > layer_bounds.left
+        or field.bottom > layer_bounds.bottom
+        or field.right < layer_bounds.right
+        or field.top < layer_bounds.top
+    ):
         raise ValueError(
             f"处理框 ({field.left},{field.bottom})-({field.right},{field.top}) DBU"
             " 必须四向包含 layer bbox "
             f"({layer_bounds.left},{layer_bounds.bottom})-"
             f"({layer_bounds.right},{layer_bounds.top}) DBU"
-            "——配置比版图小或偏移出界")
-    if ((field.left < layer_bounds.left or field.bottom < layer_bounds.bottom
-             or field.right > layer_bounds.right or field.top > layer_bounds.top)
-            # opaque 的补铬提示由 prepare_problems 统一发出（避免同因双
-            # 警告），这里只对 clear 给一次性说明。
-            and layout.polarity == MaskPolarity.CLEAR):
+            "——配置比版图小或偏移出界"
+        )
+    if (
+        (
+            field.left < layer_bounds.left
+            or field.bottom < layer_bounds.bottom
+            or field.right > layer_bounds.right
+            or field.top > layer_bounds.top
+        )
+        # opaque 的补铬提示由 prepare_problems 统一发出（避免同因双
+        # 警告），这里只对 clear 给一次性说明。
+        and layout.polarity == MaskPolarity.CLEAR
+    ):
         scale = Decimal(dbu_nm)
         warnings.warn(
             "处理框大于 layer bbox：field "
@@ -107,13 +118,15 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox,
             f"{Decimal(layer_bounds.bottom) * scale})-"
             f"({Decimal(layer_bounds.right) * scale},"
             f"{Decimal(layer_bounds.top) * scale}) nm；"
-            "正板（clear）环带无图形、天然不透光", stacklevel=2)
+            "正板（clear）环带无图形、天然不透光",
+            stacklevel=2,
+        )
     return field
 
 
-def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
-                     litho: LithographyConfig, edge: EdgeConfig,
-                     output: OutputConfig) -> dict:
+def prepare_problems(
+    layout: LayoutConfig, partition: PartitionConfig, litho: LithographyConfig, edge: EdgeConfig, output: OutputConfig
+) -> dict:
     """执行阶段 0/1，逐 macro 生成 problem，并写出 plan.json。"""
     if output.work_dir is None:  # 本流程要求工作目录（单遍等流程可不填）
         raise ValueError("此流程要求 [output].work_dir")  # 消费方显式报错
@@ -127,31 +140,33 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         layer_bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生逐层，不物化）
         if layer_bounds is None:  # 目标层在顶层子树内无图形
             # 空层无法规划网格
-            raise ValueError(
-                f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
+            raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
         # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化
         bounds = resolve_field_bounds(layout, layer_bounds, dbu_nm)
         # nm→DBU 换算、context 契约与边段配置构造集中在 resolve_prepare_config。
         runtime = resolve_prepare_config(partition, litho, edge, dbu_nm)
         # 两级网格规划（内部完成像素/画布校验）
         macros = plan_macros(
-            bounds, macro_grid=partition.macro_grid,
+            bounds,
+            macro_grid=partition.macro_grid,
             macro_size_dbu=runtime.grid.macro_size_dbu,
             core_size_dbu=runtime.grid.core_dbu,
             context_dbu=runtime.grid.context_dbu,
             pixel_dbu=runtime.grid.pixel_dbu,
-            canvas_pixels=litho.canvas_pixels)
+            canvas_pixels=litho.canvas_pixels,
+        )
         # ownership 复核——面积和恰等于父框即无正面积重叠。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积守恒
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
         # 负板补铬告知（每运行恰一次，补铬本身在各 prepare 内部按极性进行）：
         # 仅当 field 严格大于数据包络（存在环带）时提示；无 field 的常规运行
         # 仅补 context 扩张带（与原暗界方案光学逐位同值），不另行打扰。
-        if (layout.polarity == MaskPolarity.OPAQUE
-                and (bounds.left < layer_bounds.left
-                     or bounds.bottom < layer_bounds.bottom
-                     or bounds.right > layer_bounds.right
-                     or bounds.top > layer_bounds.top)):
+        if layout.polarity == MaskPolarity.OPAQUE and (
+            bounds.left < layer_bounds.left
+            or bounds.bottom < layer_bounds.bottom
+            or bounds.right > layer_bounds.right
+            or bounds.top > layer_bounds.top
+        ):
             scale = Decimal(dbu_nm)
             warnings.warn(
                 "负板（opaque）：处理框大于数据包络，prepare 阶段已补画包络外"
@@ -164,7 +179,9 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
                 f"({Decimal(layer_bounds.left) * scale},"
                 f"{Decimal(layer_bounds.bottom) * scale})-"
                 f"({Decimal(layer_bounds.right) * scale},"
-                f"{Decimal(layer_bounds.top) * scale}) nm", stacklevel=2)
+                f"{Decimal(layer_bounds.top) * scale}) nm",
+                stacklevel=2,
+            )
         problems_dir = output.work_dir / "problems"  # problem 存放目录
         problems_dir.mkdir(parents=True, exist_ok=True)  # 创建目录结构
         entries = []  # 逐 macro 计划条目
@@ -174,12 +191,11 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         maximum_problem_macro_id = ""  # 最大 problem 所属 macro
         for macro in macros:  # 按行优先顺序逐 macro 准备
             # 完整相交物化（不裁剪 occurrence）
-            batch = database.query(
-                [layer], macro.query_box).materialize_intersecting()
+            batch = database.query([layer], macro.query_box).materialize_intersecting()
             # 一次完成提边/分段/切线分裂/ownership
             problem = prepare_macro_problem(
-                batch, layer, layout.polarity, runtime.fragmentation, macro,
-                data_bounds=layer_bounds)
+                batch, layer, layout.polarity, runtime.fragmentation, macro, data_bounds=layer_bounds
+            )
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
             problem_bytes = problem_path.stat().st_size  # 文件字节数即持久字节数
             segment_count_sum += problem.segments.segment_count  # 累计段数
@@ -188,15 +204,22 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
                 maximum_problem_bytes = problem_bytes  # 记录字节
                 maximum_problem_macro_id = macro.macro_id  # 记录 macro
             # 单 macro 计划条目
-            entries.append({
-                "macro_id": macro.macro_id,
-                "ownership_box": [macro.ownership_box.left, macro.ownership_box.bottom,
-                                  macro.ownership_box.right, macro.ownership_box.top],
-                "core_count": macro.core_count,
-                "segment_count": problem.segments.segment_count,
-                "membership_count": len(problem.member_segment_indices),
-                "problem_file": str(problem_path),
-                "problem_bytes": problem_bytes})
+            entries.append(
+                {
+                    "macro_id": macro.macro_id,
+                    "ownership_box": [
+                        macro.ownership_box.left,
+                        macro.ownership_box.bottom,
+                        macro.ownership_box.right,
+                        macro.ownership_box.top,
+                    ],
+                    "core_count": macro.core_count,
+                    "segment_count": problem.segments.segment_count,
+                    "membership_count": len(problem.member_segment_indices),
+                    "problem_file": str(problem_path),
+                    "problem_bytes": problem_bytes,
+                }
+            )
             peak_rss = max(peak_rss, process.memory_info().rss)  # 采样峰值
             del batch, problem  # 立即释放当前 macro 大对象再进入下一个
     # 全部 problem 成功且 LayoutDB 已关闭，才允许写出表示「准备完成」的 plan。
@@ -219,7 +242,8 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
             "corner_length_dbu": runtime.fragmentation.corner_length_dbu,
             "max_segment_length_dbu": runtime.fragmentation.max_segment_length_dbu,
             "max_displacement_dbu": runtime.fragmentation.max_displacement_dbu,
-            "miter_limit": runtime.fragmentation.miter_limit},
+            "miter_limit": runtime.fragmentation.miter_limit,
+        },
         "work_dir": str(output.work_dir),
         "final_layout": str(output.final_layout),
         "final_cell_mode": output.final_cell_mode,
@@ -229,13 +253,13 @@ def prepare_problems(layout: LayoutConfig, partition: PartitionConfig,
         "maximum_problem_bytes": maximum_problem_bytes,
         "maximum_problem_macro_id": maximum_problem_macro_id,
         "prepare_seconds": prepare_seconds,
-        "prepare_peak_rss_bytes": peak_rss}
+        "prepare_peak_rss_bytes": peak_rss,
+    }
     atomic_write_json(output.work_dir / "plan.json", plan)  # 原子写出计划
     return plan  # 返回内存计划供调用方直接消费
 
 
-def write_macro_gds(layer: LayerSpec, region: kdb.Region, path: Path,
-                    dbu_um: float) -> Path:
+def write_macro_gds(layer: LayerSpec, region: kdb.Region, path: Path, dbu_um: float) -> Path:
     """把单 macro 当前完整候选 Region 写入 RESULT Cell，供检查和最终合并。
 
     layer 显式传入：写出行为只需要目标层号，不绑定 edge MacroProblem——
@@ -249,8 +273,7 @@ def write_macro_gds(layer: LayerSpec, region: kdb.Region, path: Path,
     region.insert_into(layout, cell.cell_index(), index)  # 插入完整候选 Region
     path.parent.mkdir(parents=True, exist_ok=True)  # 确保目录存在
     # 同目录临时文件
-    handle, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.stem}-", suffix=path.suffix, dir=path.parent)
+    handle, temporary_name = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=path.suffix, dir=path.parent)
     os.close(handle)  # 关闭句柄
     temporary = Path(temporary_name)  # Path 化
     try:  # 写出并原子替换
@@ -263,8 +286,12 @@ def write_macro_gds(layer: LayerSpec, region: kdb.Region, path: Path,
 
 
 def merge_macro_results(
-        plan: dict, macro_gds_paths: Mapping[str, Path], output_path: Path, *,
-        cell_mode: Literal["single_cell", "macro_cells"]) -> Path:
+    plan: dict,
+    macro_gds_paths: Mapping[str, Path],
+    output_path: Path,
+    *,
+    cell_mode: Literal["single_cell", "macro_cells"],
+) -> Path:
     """按 plan 选择各 macro ownership 权威覆盖并写出一个全局结果。"""
     if cell_mode not in ("single_cell", "macro_cells"):  # 模式枚举校验
         raise ValueError(f"未知 cell_mode：{cell_mode}")  # 拒绝拼错
@@ -302,8 +329,7 @@ def merge_macro_results(
                 region = kdb.Region()  # 空覆盖直接构造，不查询
             else:
                 # 层包络内查询物化（不用魔法框：
-                batch = database.query(
-                    [layer], layer_bounds).materialize()
+                batch = database.query([layer], layer_bounds).materialize()
                 region = batch.region(layer)  # 候选 Region
         if not region.has_valid_polygons():  # 无效 polygon
             raise RuntimeError(f"{macro_id} 候选 Region 含无效 polygon")  # 明确失败
@@ -314,9 +340,7 @@ def merge_macro_results(
         area_before += int(clipped.area())  # 统计覆盖面积
         patches.append(GeometryPatch(macro_id, layer, clipped, ownership))  # 收集
     # 按配置模式写出最终版图
-    written = PatchWriter.write_macro_results(
-        patches, output_path, dbu_um,
-        cell_mode=cell_mode)
+    written = PatchWriter.write_macro_results(patches, output_path, dbu_um, cell_mode=cell_mode)
     # 回读验证：merge/normalize 只能改变表示方式，不得改变物理覆盖面积。
     # 逐 macro 在自身 ownership 窗口统计面积后累加——ownership 半开不重叠、
     # 最终图形不越出 bbox，分块求和与全量面积数学等价，且避免第二个全量
@@ -328,31 +352,35 @@ def merge_macro_results(
             # 与候选回读同款容忍：全部 macro 均空时最终 GDS 不含目标层，
             # 该窗口面积按 0 计（与 merge 前空覆盖守恒）。
             try:
-                window = (database.query([layer], ownership)
-                          .materialize_intersecting())
+                window = database.query([layer], ownership).materialize_intersecting()
                 # 完整相交会带入跨界 polygon 伸出窗口的部分，必须显式裁回
                 # ownership（与主路径 clipped 同款），否则相邻窗口重复计数。
-                region = (window.region(layer)
-                          & kdb.Region(ownership.to_native()))
+                region = window.region(layer) & kdb.Region(ownership.to_native())
             except LayerNotFoundError:
                 region = kdb.Region()
             if not region.has_valid_polygons():  # 无效 polygon
                 # 明确失败并定位 macro
-                raise RuntimeError(
-                    f"{entry['macro_id']} 窗口含无效 polygon")
+                raise RuntimeError(f"{entry['macro_id']} 窗口含无效 polygon")
             area_after += int(region.area())  # 累计窗口面积
     if area_after != area_before:  # 覆盖面积被 normalize 改变
         # 明确失败
-        raise RuntimeError(
-            f"merge 前后覆盖面积改变：{area_before} -> {area_after}")
+        raise RuntimeError(f"merge 前后覆盖面积改变：{area_before} -> {area_after}")
     return written  # 返回最终版图路径
 
 
 def save_lithography_pngs(
-        gds_path: Path, layer: LayerSpec, polarity: MaskPolarity,
-        core_dbu: int, context_dbu: int, pixel_dbu: int, canvas_pixels: int,
-        model, batch_size: int, output_dir: Path, *,
-        top_cell: str | None = None,
+    gds_path: Path,
+    layer: LayerSpec,
+    polarity: MaskPolarity,
+    core_dbu: int,
+    context_dbu: int,
+    pixel_dbu: int,
+    canvas_pixels: int,
+    model,
+    batch_size: int,
+    output_dir: Path,
+    *,
+    top_cell: str | None = None,
 ) -> dict:
     """流式保存指定版图每 tile 的 nominal 连续/二值 PNG 和 manifest。
 
@@ -367,9 +395,14 @@ def save_lithography_pngs(
             raise ValueError("最终版图目标层为空")
         # 独立规整 tile 网格：单 macro 全 ROI 按 core 切分。可视化网格不必复刻
         # 迭代期 macro 边界，网格参数全部写入 manifest 供对账。
-        macro = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=core_dbu,
-                            context_dbu=context_dbu, pixel_dbu=pixel_dbu,
-                            canvas_pixels=canvas_pixels)[0]
+        macro = plan_macros(
+            bounds,
+            macro_grid=(1, 1),
+            core_size_dbu=core_dbu,
+            context_dbu=context_dbu,
+            pixel_dbu=pixel_dbu,
+            canvas_pixels=canvas_pixels,
+        )[0]
         output_dir.mkdir(parents=True, exist_ok=True)  # 留档目录
         threshold = float(model.config.print_threshold)  # 二值阈值
         core_count = macro.core_count  # tile 总数
@@ -378,29 +411,29 @@ def save_lithography_pngs(
         def _window_region(spec):
             """只物化该 tile context 窗口相交的局部几何，用完即弃。"""
             # 窗口查询
-            region = (database.query([layer], spec.context_box)
-                      .materialize_intersecting()
-                      .region(layer))
+            region = database.query([layer], spec.context_box).materialize_intersecting().region(layer)
             if polarity is MaskPolarity.OPAQUE:
                 # 负板：最终版图包络外到 tile 查询边界补铬（与迭代期
                 # prepare 同一规则），边界 PNG 不出现虚假亮环
-                region = region + (kdb.Region(spec.context_box.to_native())
-                                   - kdb.Region(bounds.to_native()))
+                region = region + (kdb.Region(spec.context_box.to_native()) - kdb.Region(bounds.to_native()))
             return region
 
         with torch.no_grad():  # 纯推理
             for batch_start in range(0, core_count, batch_size):  # 流式分批
                 # 本批 tile
-                specs = [macro.core(index) for index in range(
-                    batch_start, min(batch_start + batch_size, core_count))]
+                specs = [macro.core(index) for index in range(batch_start, min(batch_start + batch_size, core_count))]
                 # 每 tile 窗口就地栅格
-                masks = np.stack([rasterize_mask_canvas(
-                    _window_region(spec), spec.context_box, pixel_dbu,
-                    canvas_pixels, polarity=polarity) for spec in specs])
+                masks = np.stack(
+                    [
+                        rasterize_mask_canvas(
+                            _window_region(spec), spec.context_box, pixel_dbu, canvas_pixels, polarity=polarity
+                        )
+                        for spec in specs
+                    ]
+                )
                 mask_tensor = torch.from_numpy(masks).to(model.device)  # 送设备
                 # 一次标称前向
-                printed = model.forward_many(
-                    mask_tensor, (model.condition("nominal"),))["nominal"]
+                printed = model.forward_many(mask_tensor, (model.condition("nominal"),))["nominal"]
                 images = printed.cpu().numpy()  # 取回 CPU
                 del printed, mask_tensor  # 每 batch 写完立即释放
                 for spec, image in zip(specs, images):  # 逐 tile 写 PNG
@@ -411,65 +444,80 @@ def save_lithography_pngs(
                     top_down = np.flipud(image)
                     nominal_png = output_dir / f"{tile_id}_nominal.png"  # 连续灰度
                     # 连续值 0~255
-                    Image.fromarray(
-                        np.rint(top_down * 255.0).astype(np.uint8),
-                        mode="L").save(nominal_png)
+                    Image.fromarray(np.rint(top_down * 255.0).astype(np.uint8), mode="L").save(nominal_png)
                     binary_png = output_dir / f"{tile_id}_binary.png"  # 阈值二值
                     # 阈值以上 255、其余 0
-                    Image.fromarray(
-                        np.where(top_down >= threshold, 255, 0).astype(np.uint8),
-                        mode="L").save(binary_png)
+                    Image.fromarray(np.where(top_down >= threshold, 255, 0).astype(np.uint8), mode="L").save(binary_png)
                     # manifest 条目
-                    tiles.append({
-                        "tile_id": tile_id,
-                        "ownership_box": [spec.ownership_box.left,
-                                          spec.ownership_box.bottom,
-                                          spec.ownership_box.right,
-                                          spec.ownership_box.top],
-                        "context_box": [spec.context_box.left,
-                                        spec.context_box.bottom,
-                                        spec.context_box.right,
-                                        spec.context_box.top],
-                        "nominal_png": nominal_png.name,
-                        "binary_png": binary_png.name})
+                    tiles.append(
+                        {
+                            "tile_id": tile_id,
+                            "ownership_box": [
+                                spec.ownership_box.left,
+                                spec.ownership_box.bottom,
+                                spec.ownership_box.right,
+                                spec.ownership_box.top,
+                            ],
+                            "context_box": [
+                                spec.context_box.left,
+                                spec.context_box.bottom,
+                                spec.context_box.right,
+                                spec.context_box.top,
+                            ],
+                            "nominal_png": nominal_png.name,
+                            "binary_png": binary_png.name,
+                        }
+                    )
     # 完整清单
     manifest = {
         "format_version": 1,
-        "pixel_dbu": pixel_dbu, "canvas_pixels": canvas_pixels,
+        "pixel_dbu": pixel_dbu,
+        "canvas_pixels": canvas_pixels,
         "threshold": threshold,
         "grid": {"core_size_dbu": core_dbu, "context_dbu": context_dbu},
-        "tile_count": len(tiles), "tiles": tiles}
+        "tile_count": len(tiles),
+        "tiles": tiles,
+    }
     atomic_write_json(output_dir / "manifest.json", manifest)  # 落盘清单
     return manifest  # 供 summary 消费
 
 
 def _plan_lithography_arguments(plan: dict) -> tuple:
     """从 plan 提取留档内核所需六实参（层/极性/网格），final/source 包装共用。"""
-    return (LayerSpec(plan["layer"][0], plan["layer"][1]),
-            MaskPolarity(str(plan["polarity"])),
-            int(plan["core_size_dbu"]), int(plan["context_dbu"]),
-            int(plan["pixel_dbu"]), int(plan["canvas_pixels"]))
+    return (
+        LayerSpec(plan["layer"][0], plan["layer"][1]),
+        MaskPolarity(str(plan["polarity"])),
+        int(plan["core_size_dbu"]),
+        int(plan["context_dbu"]),
+        int(plan["pixel_dbu"]),
+        int(plan["canvas_pixels"]),
+    )
 
 
 def save_final_lithography(
-        plan: dict, final_layout: Path, model, batch_size: int,
-        output_dir: Path,
+    plan: dict,
+    final_layout: Path,
+    model,
+    batch_size: int,
+    output_dir: Path,
 ) -> dict:
     """从 plan 提取网格六键，对最终合并版图留档（save_lithography_pngs 薄包装）。
 
     不传 top_cell：plan["top_cell"] 是源版图顶层名，最终合并 GDS 的顶层
     是合并器写出的唯一结果 Cell，用源名打开反而失败。
     """
-    layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = (
-        _plan_lithography_arguments(plan))
+    layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = _plan_lithography_arguments(plan)
     return save_lithography_pngs(
-        final_layout, layer, polarity, core_dbu, context_dbu, pixel_dbu,
-        canvas_pixels, model, batch_size, output_dir)
+        final_layout, layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels, model, batch_size, output_dir
+    )
 
 
 def save_source_lithography(
-        plan: dict, source_layout: Path, model, batch_size: int,
-        output_dir: Path,
+    plan: dict,
+    source_layout: Path,
+    model,
+    batch_size: int,
+    output_dir: Path,
 ) -> dict:
     """同一内核对源（未 OPC）版图留档：与最终留档同参数、可逐 tile 对照。
 
@@ -478,9 +526,17 @@ def save_source_lithography(
     自身 layer bbox 规划，与最终目录的网格不保证逐 tile 重合，对照以
     各自 manifest 的 ownership_box 对账。
     """
-    layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = (
-        _plan_lithography_arguments(plan))
+    layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = _plan_lithography_arguments(plan)
     return save_lithography_pngs(
-        source_layout, layer, polarity, core_dbu, context_dbu, pixel_dbu,
-        canvas_pixels, model, batch_size, output_dir,
-        top_cell=plan["top_cell"])
+        source_layout,
+        layer,
+        polarity,
+        core_dbu,
+        context_dbu,
+        pixel_dbu,
+        canvas_pixels,
+        model,
+        batch_size,
+        output_dir,
+        top_cell=plan["top_cell"],
+    )

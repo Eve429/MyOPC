@@ -30,8 +30,14 @@ from tests.opc.iteration.test_simple_ilt import (
     _StubConfig,
 )
 
-_DEFAULTS = {"iterations": 1, "step_size": 0.5, "weight_process_l2": 1.0,
-             "weight_pvband": 0.5, "curvature_weight": 0.0, "batch_size": 2}
+_DEFAULTS = {
+    "iterations": 1,
+    "step_size": 0.5,
+    "weight_process_l2": 1.0,
+    "weight_pvband": 0.5,
+    "curvature_weight": 0.0,
+    "batch_size": 2,
+}
 
 
 def _ls_config(**overrides):
@@ -53,19 +59,28 @@ def _ownership_crop(problem, field):
     hm, wm = problem.ownership_shape
     r0 = (box.bottom - query.bottom) // pixel
     c0 = (box.left - query.left) // pixel
-    return field[r0:r0 + hm, c0:c0 + wm]
+    return field[r0 : r0 + hm, c0 : c0 + wm]
 
 
 class TestLevelSetConfigValidation:
     """LevelSetILTConfig 的数值契约（规格 §8.1：bool 拒当 int、权重非负）。"""
 
-    @pytest.mark.parametrize("field,value", [
-        ("iterations", 0), ("iterations", True), ("iterations", 1.5),
-        ("batch_size", 0), ("batch_size", True),
-        ("step_size", 0.0), ("step_size", float("inf")),
-        ("step_size", float("nan")),
-        ("weight_process_l2", -1.0), ("weight_pvband", -0.1),
-        ("curvature_weight", -2.0)])
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("iterations", 0),
+            ("iterations", True),
+            ("iterations", 1.5),
+            ("batch_size", 0),
+            ("batch_size", True),
+            ("step_size", 0.0),
+            ("step_size", float("inf")),
+            ("step_size", float("nan")),
+            ("weight_process_l2", -1.0),
+            ("weight_pvband", -0.1),
+            ("curvature_weight", -2.0),
+        ],
+    )
     def test_invalid_rejected(self, field, value):
         """非法字段在构造期失败（分配优化张量前）。"""
         with pytest.raises(ValueError):
@@ -74,8 +89,8 @@ class TestLevelSetConfigValidation:
     def test_minimal_valid_config(self):
         """最小合法配置可构造（权重全 0 合法）。"""
         config = LevelSetILTConfig(
-            iterations=1, step_size=0.2, weight_process_l2=0.0,
-            weight_pvband=0.0, curvature_weight=0.0, batch_size=1)
+            iterations=1, step_size=0.2, weight_process_l2=0.0, weight_pvband=0.0, curvature_weight=0.0, batch_size=1
+        )
         assert config.iterations == 1
 
 
@@ -100,11 +115,14 @@ class TestSignedDistanceInitialization:
                 phi[row, col] = -best if binary[row, col] else best
         return phi
 
-    @pytest.mark.parametrize("target_u8", [
-        np.zeros((5, 7), np.uint8),  # 全背景（单类退化由常量场用例覆盖）
-        (np.arange(35).reshape(5, 7) % 3 == 0).astype(np.uint8) * 255,  # 散点
-        np.pad(np.full((3, 3), 255, np.uint8), 2),  # 居中矩形
-    ])
+    @pytest.mark.parametrize(
+        "target_u8",
+        [
+            np.zeros((5, 7), np.uint8),  # 全背景（单类退化由常量场用例覆盖）
+            (np.arange(35).reshape(5, 7) % 3 == 0).astype(np.uint8) * 255,  # 散点
+            np.pad(np.full((3, 3), 255, np.uint8), 2),  # 居中矩形
+        ],
+    )
     def test_matches_brute_force_reference(self, target_u8):
         """混合类 target：SDF 与暴力 oracle 逐值一致（float32 舍入容差）。"""
         binary = target_u8.astype(np.float64) / 255.0 >= 0.5
@@ -113,8 +131,7 @@ class TestSignedDistanceInitialization:
         actual = signed_distance_initialization(target_u8)
         expected = self._brute_force_sdf(target_u8)
         assert actual.dtype == np.float32
-        np.testing.assert_allclose(
-            actual, expected, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
 
     def test_hole_pattern_matches_reference(self):
         """带洞环形 target（内外双向距离都非平凡）。"""
@@ -122,14 +139,11 @@ class TestSignedDistanceInitialization:
         target[1:5, 1:5] = 255
         target[2:4, 2:4] = 0  # 中心洞
         actual = signed_distance_initialization(target)
-        np.testing.assert_allclose(
-            actual, self._brute_force_sdf(target), rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(actual, self._brute_force_sdf(target), rtol=1e-6, atol=1e-6)
 
     def test_threshold_semantics_127_128(self):
         """阈值事实源 target/255>=0.5：127 背景、128 前景（phi 符号逐格一致）。"""
-        target = np.array([[127, 128, 255, 0],
-                           [128, 127, 64, 200],
-                           [255, 128, 127, 128]], np.uint8)
+        target = np.array([[127, 128, 255, 0], [128, 127, 64, 200], [255, 128, 127, 128]], np.uint8)
         phi = signed_distance_initialization(target)
         binary = target.astype(np.float32) / 255.0 >= 0.5
         assert np.array_equal(phi < 0, binary)  # INV-004：前景 phi<0
@@ -155,8 +169,7 @@ class TestSignedDistanceInitialization:
             calls["n"] += 1
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(
-            levelset_module, "distance_transform_edt", spy)
+        monkeypatch.setattr(levelset_module, "distance_transform_edt", spy)
         target = np.zeros((5, 5), np.uint8)
         target[2, 2] = 255
         signed_distance_initialization(target)
@@ -173,10 +186,8 @@ class TestSignedDistanceInitialization:
             calls["n"] += 1
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(
-            levelset_module, "signed_distance_initialization", spy)
-        optimize_levelset_macro(
-            problem, _DoseModel(), _ls_config(iterations=2))
+        monkeypatch.setattr(levelset_module, "signed_distance_initialization", spy)
+        optimize_levelset_macro(problem, _DoseModel(), _ls_config(iterations=2))
         assert calls["n"] == 1
 
 
@@ -193,7 +204,7 @@ class TestMacroGradientMagnitude:
         box = problem.macro.ownership_box
         mrow0 = (box.bottom - query.bottom) // pixel
         mcol0 = (box.left - query.left) // pixel
-        crop = initial_phi[mrow0:mrow0 + hm, mcol0:mcol0 + wm].copy()
+        crop = initial_phi[mrow0 : mrow0 + hm, mcol0 : mcol0 + wm].copy()
         crop[::2, ::3] += np.float32(0.75)  # 打破 SDF 局部线性，差分值非平凡
         actual = macro_gradient_magnitude(problem, initial_phi, crop)
         # 参考实现：标量循环 + float64 halo（中心为快照，外围为 initial ring）
@@ -218,8 +229,7 @@ class TestMacroGradientMagnitude:
         initial_phi = signed_distance_initialization(problem.target_u8)
         hm, wm = problem.ownership_shape
         constant = np.full((hm, wm), 3.0, np.float32)
-        magnitude = macro_gradient_magnitude(
-            problem, initial_phi, constant)
+        magnitude = macro_gradient_magnitude(problem, initial_phi, constant)
         # 内部参数四周同为常数 → 系数恰 0；边缘行与 initial ring 不同 → 非零
         np.testing.assert_array_equal(magnitude[1:-1, 1:-1], 0.0)
         assert float(magnitude[0, :].max()) > 0.0
@@ -231,8 +241,7 @@ class TestMacroGradientMagnitude:
         initial_phi = signed_distance_initialization(problem.target_u8)
         hm, wm = problem.ownership_shape
         with pytest.raises(ValueError, match="形状"):
-            macro_gradient_magnitude(
-                problem, initial_phi, np.zeros((hm + 1, wm), np.float32))
+            macro_gradient_magnitude(problem, initial_phi, np.zeros((hm + 1, wm), np.float32))
 
     def test_called_once_per_backward_state(self, monkeypatch):
         """调用数恰等于 iterations：末纯评价 state 不计算系数。"""
@@ -245,10 +254,8 @@ class TestMacroGradientMagnitude:
             calls["n"] += 1
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(
-            levelset_module, "macro_gradient_magnitude", spy)
-        optimize_levelset_macro(
-            problem, _DoseModel(), _ls_config(iterations=2))
+        monkeypatch.setattr(levelset_module, "macro_gradient_magnitude", spy)
+        optimize_levelset_macro(problem, _DoseModel(), _ls_config(iterations=2))
         assert calls["n"] == 2
 
 
@@ -257,12 +264,10 @@ class TestLevelSetBinarize:
 
     def test_forward_backward_exact(self):
         """forward == (phi<0)（phi==0 不透光）；backward == -mag·grad_output。"""
-        phi = torch.tensor(
-            [-2.0, -0.5, 0.0, 1.5, 3.0], requires_grad=True)
+        phi = torch.tensor([-2.0, -0.5, 0.0, 1.5, 3.0], requires_grad=True)
         magnitude = torch.tensor([1.0, 0.25, 0.5, 2.0, 0.0])
         out = _LevelSetBinarize.apply(phi, magnitude)
-        torch.testing.assert_close(
-            out, torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0]))
+        torch.testing.assert_close(out, torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0]))
         upstream = torch.tensor([0.3, -1.0, 2.0, 0.5, -4.0])
         out.backward(upstream)
         torch.testing.assert_close(phi.grad, -magnitude * upstream)
@@ -283,7 +288,7 @@ class _AdamRecorder:
     def __init__(self):
         self.real_cls = torch.optim.Adam  # patch 前捕获的真类（参考优化器用）
         self.grads = []  # 每次 step 前的 param.grad（float32 扁平副本）
-        self.phis = []   # 每次 step 后的参数（float32 扁平副本）
+        self.phis = []  # 每次 step 后的参数（float32 扁平副本）
         self.events = []  # 全局事件序（"f"=forward、"s"=step）
 
     def patch(self, monkeypatch):
@@ -295,13 +300,11 @@ class _AdamRecorder:
                 for group in self.param_groups:
                     for param in group["params"]:
                         if param.grad is not None:
-                            recorder.grads.append(
-                                param.grad.detach().clone().reshape(-1).numpy())
+                            recorder.grads.append(param.grad.detach().clone().reshape(-1).numpy())
                 result = super().step(closure)
                 for group in self.param_groups:
                     for param in group["params"]:
-                        recorder.phis.append(
-                            param.detach().clone().reshape(-1).numpy())
+                        recorder.phis.append(param.detach().clone().reshape(-1).numpy())
                 recorder.events.append("s")
                 return result
 
@@ -315,33 +318,25 @@ def _float64_mirror(problem, config, model):
     状态语义的独立 oracle（STE 复用生产 Function，其正确性另测；仅支持
     curvature_weight=0 的镜像，曲率正则由专测覆盖）。
     """
-    initial = signed_distance_initialization(
-        problem.target_u8).astype(np.float64)
+    initial = signed_distance_initialization(problem.target_u8).astype(np.float64)
     hm, wm = problem.ownership_shape
     pixel = problem.macro.pixel_dbu
     query = problem.macro.query_box
     box = problem.macro.ownership_box
     mrow0 = (box.bottom - query.bottom) // pixel
     mcol0 = (box.left - query.left) // pixel
-    ring = initial[mrow0 - 1:mrow0 + hm + 1, mcol0 - 1:mcol0 + wm + 1].copy()
+    ring = initial[mrow0 - 1 : mrow0 + hm + 1, mcol0 - 1 : mcol0 + wm + 1].copy()
     canvases = []
     for core_index in range(problem.macro.core_count):
         # 统一 [1,C,C]：假光刻的批维即 core 数，2-D 输入会被 avg_pool2d
         # 当作 [N,C,L] 逐行池化（静默错误语义）。
-        target = (torch.from_numpy(
-            problem.target_canvas(core_index)).to(torch.float64)
-            / 255.0).unsqueeze(0)
-        ownership = torch.from_numpy(
-            problem.ownership_canvas(core_index)).unsqueeze(0)
-        trainable = torch.from_numpy(
-            problem.trainable_index_canvas(core_index)).unsqueeze(0)
-        valid = torch.from_numpy(
-            problem.context_valid_canvas(core_index)).unsqueeze(0)
+        target = (torch.from_numpy(problem.target_canvas(core_index)).to(torch.float64) / 255.0).unsqueeze(0)
+        ownership = torch.from_numpy(problem.ownership_canvas(core_index)).unsqueeze(0)
+        trainable = torch.from_numpy(problem.trainable_index_canvas(core_index)).unsqueeze(0)
+        valid = torch.from_numpy(problem.context_valid_canvas(core_index)).unsqueeze(0)
         canvases.append((target, ownership, trainable, valid))
-    conditions = (model.condition("nominal"), model.condition("dose_max"),
-                  model.condition("defocus_min"))
-    phi = torch.from_numpy(
-        initial[mrow0:mrow0 + hm, mcol0:mcol0 + wm].copy())  # float64 参数
+    conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))
+    phi = torch.from_numpy(initial[mrow0 : mrow0 + hm, mcol0 : mcol0 + wm].copy())  # float64 参数
     optimizer = torch.optim.Adam([phi], lr=config.step_size)
     grads = []
     losses = []
@@ -354,8 +349,7 @@ def _float64_mirror(problem, config, model):
             halo[1:-1, 1:-1] = phi.detach().numpy()
             dx = (halo[1:-1, 2:] - halo[1:-1, :-2]) * 0.5
             dy = (halo[2:, 1:-1] - halo[:-2, 1:-1]) * 0.5
-            magnitude = torch.from_numpy(
-                np.sqrt(dx * dx + dy * dy).reshape(-1))
+            magnitude = torch.from_numpy(np.sqrt(dx * dx + dy * dy).reshape(-1))
         total = torch.zeros((), dtype=torch.float64)
         for target, ownership, trainable, valid in canvases:
             flat = phi.reshape(-1)
@@ -363,20 +357,17 @@ def _float64_mirror(problem, config, model):
             local = flat[safe]
             hard = _LevelSetBinarize.apply(local, magnitude[safe])
             context_hard = (target >= 0.5).to(torch.float64)
-            context = torch.where(
-                valid, context_hard, torch.zeros_like(context_hard))
-            mask = torch.where(trainable >= 0, hard.view(target.shape),
-                               context)
+            context = torch.where(valid, context_hard, torch.zeros_like(context_hard))
+            mask = torch.where(trainable >= 0, hard.view(target.shape), context)
             printed = model.forward_many(mask, conditions)
             nominal_l2, process_l2, pvband_loss = owned_continuous_losses(
-                printed["nominal"], printed["dose_max"],
-                printed["defocus_min"], target, ownership)
-            total = total + weighted_mirror(
-                nominal_l2, process_l2, pvband_loss, config)
+                printed["nominal"], printed["dose_max"], printed["defocus_min"], target, ownership
+            )
+            total = total + weighted_mirror(nominal_l2, process_l2, pvband_loss, config)
         losses.append(float(total.detach()))
         if not build:
             break
-        gradient, = torch.autograd.grad(total, phi)
+        (gradient,) = torch.autograd.grad(total, phi)
         grads.append(gradient.reshape(-1).numpy().copy())
         phi.grad = gradient.detach().clone()
         optimizer.step()
@@ -387,8 +378,7 @@ def _float64_mirror(problem, config, model):
 
 def weighted_mirror(nominal_l2, process_l2, pvband_loss, config):
     """镜像内的加权总损失（curvature=0 场景）。"""
-    return (nominal_l2 + config.weight_process_l2 * process_l2
-            + config.weight_pvband * pvband_loss)
+    return nominal_l2 + config.weight_process_l2 * process_l2 + config.weight_pvband * pvband_loss
 
 
 class TestCrossCoreIdentity:
@@ -402,9 +392,7 @@ class TestCrossCoreIdentity:
         """
         problem = _problem(kdb.Region(kdb.Box(8, 8, 41, 48)))
         model = _MaskCaptureModel()
-        optimize_levelset_macro(
-            problem, model,
-            _ls_config(iterations=1, batch_size=problem.macro.core_count))
+        optimize_levelset_macro(problem, model, _ls_config(iterations=1, batch_size=problem.macro.core_count))
         batch = model.captured[0].numpy()  # state0 单批全 core
         windows = []
         for core_index in range(problem.macro.core_count):
@@ -420,10 +408,8 @@ class TestCrossCoreIdentity:
                 cc0, cc1 = max(c0a, c0b), min(c1a, c1b)
                 if rr0 >= rr1 or cc0 >= cc1:
                     continue
-                va = batch[a][lya + rr0 - r0a:lya + rr1 - r0a,
-                              lxa + cc0 - c0a:lxa + cc1 - c0a]
-                vb = batch[b][lyb + rr0 - r0b:lyb + rr1 - r0b,
-                              lxb + cc0 - c0b:lxb + cc1 - c0b]
+                va = batch[a][lya + rr0 - r0a : lya + rr1 - r0a, lxa + cc0 - c0a : lxa + cc1 - c0a]
+                vb = batch[b][lyb + rr0 - r0b : lyb + rr1 - r0b, lxb + cc0 - c0b : lxb + cc1 - c0b]
                 assert np.array_equal(va, vb)
                 checked += va.size
         assert checked > 0  # 判别性：core 窗口确有重叠（context 覆盖邻核）
@@ -449,12 +435,9 @@ class TestGradientSumAndAdam:
         assert len(recorder.grads) == config.iterations == len(mirror["grads"])
         for solver_grad, mirror_grad in zip(recorder.grads, mirror["grads"]):
             # 平均化实现会把梯度整体缩小 → 此处失配
-            np.testing.assert_allclose(
-                solver_grad, mirror_grad.astype(np.float32),
-                rtol=1e-5, atol=1e-5)
+            np.testing.assert_allclose(solver_grad, mirror_grad.astype(np.float32), rtol=1e-5, atol=1e-5)
         for record, mirror_loss in zip(result.records, mirror["losses"]):
-            assert record.total_loss == pytest.approx(
-                mirror_loss, rel=1e-5)
+            assert record.total_loss == pytest.approx(mirror_loss, rel=1e-5)
         assert float(np.abs(mirror["grads"][0]).max()) > 0  # 判别性
 
     def test_batch_size_invariance(self, monkeypatch):
@@ -463,13 +446,10 @@ class TestGradientSumAndAdam:
         model = _LocalAverageModel()
         recorder = _AdamRecorder()
         recorder.patch(monkeypatch)  # 单记录器：二次 patch 会叠加记录链
-        optimize_levelset_macro(
-            problem, model, _ls_config(iterations=2, batch_size=1))
+        optimize_levelset_macro(problem, model, _ls_config(iterations=2, batch_size=1))
         solo = list(recorder.grads)  # 第 1 次运行的 2 个状态梯度快照
-        optimize_levelset_macro(
-            problem, model,
-            _ls_config(iterations=2, batch_size=problem.macro.core_count))
-        batched = recorder.grads[len(solo):]  # 第 2 次运行新增的梯度
+        optimize_levelset_macro(problem, model, _ls_config(iterations=2, batch_size=problem.macro.core_count))
+        batched = recorder.grads[len(solo) :]  # 第 2 次运行新增的梯度
         assert len(solo) == len(batched) == 2
         for grad_a, grad_b in zip(solo, batched):
             np.testing.assert_allclose(grad_a, grad_b, rtol=1e-6, atol=1e-7)
@@ -485,15 +465,13 @@ class TestGradientSumAndAdam:
         initial = signed_distance_initialization(problem.target_u8)
         reference = torch.from_numpy(_ownership_crop(problem, initial).copy())
         optimizer = recorder.real_cls(
-            [reference], lr=config.step_size, betas=(0.9, 0.999), eps=1e-8,
-            weight_decay=0.0, amsgrad=False)
+            [reference], lr=config.step_size, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0, amsgrad=False
+        )
         for gradient in gradients:
-            reference.grad = torch.from_numpy(
-                gradient.copy()).reshape(reference.shape)
+            reference.grad = torch.from_numpy(gradient.copy()).reshape(reference.shape)
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-        np.testing.assert_array_equal(
-            reference.detach().numpy().reshape(-1), recorder.phis[-1])
+        np.testing.assert_array_equal(reference.detach().numpy().reshape(-1), recorder.phis[-1])
 
     def test_step_only_after_all_cores_of_state(self, monkeypatch):
         """屏障：每 state 全部 forward 完成后才恰一次 step。"""
@@ -509,8 +487,7 @@ class TestGradientSumAndAdam:
             return real_forward(mask, conditions)
 
         model.forward_many = logged_forward
-        optimize_levelset_macro(
-            problem, model, _ls_config(iterations=2, batch_size=1))
+        optimize_levelset_macro(problem, model, _ls_config(iterations=2, batch_size=1))
         # 4 core：每 backward state 4 次 forward 后 1 次 step，末纯评价
         # state 再 4 次 forward 且不 step；batch 内提前 step 的实现会失配
         assert recorder.events == (["f"] * 4 + ["s"]) * 2 + ["f"] * 4
@@ -518,8 +495,7 @@ class TestGradientSumAndAdam:
     def test_two_updates_three_evaluated_states(self):
         """N 次 Adam 更新 + N+1 个完整已评价状态（REQ-009）。"""
         problem = _problem(kdb.Region(kdb.Box(8, 8, 41, 48)))
-        result = optimize_levelset_macro(
-            problem, _DoseModel(), _ls_config(iterations=2))
+        result = optimize_levelset_macro(problem, _DoseModel(), _ls_config(iterations=2))
         assert [record.state_index for record in result.records] == [0, 1, 2]
         assert result.best_state_index in (0, 1, 2)
 
@@ -529,31 +505,25 @@ class TestContextAndPadding:
 
     def test_context_below_pixel_rejected(self):
         """context < 1 像素无条件拒绝（与 curvature_weight 无关）。"""
-        problem = _problem(
-            kdb.Region(kdb.Box(8, 8, 40, 40)), macro=_macro(context_dbu=0))
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 40)), macro=_macro(context_dbu=0))
         with pytest.raises(ValueError, match="context"):
             optimize_levelset_macro(problem, _DoseModel(), _ls_config())
 
     def test_hard_context_and_zero_padding(self):
         """真实 context 取 hard target；数值 padding 严格 0。"""
         # context=4（1 像素）→ 12px window << 256，padding 占绝大多数
-        problem = _problem(
-            kdb.Region(kdb.Box(8, 8, 40, 40)), macro=_macro(context_dbu=4))
+        problem = _problem(kdb.Region(kdb.Box(8, 8, 40, 40)), macro=_macro(context_dbu=4))
         model = _MaskCaptureModel()
-        optimize_levelset_macro(
-            problem, model,
-            _ls_config(iterations=1, batch_size=problem.macro.core_count))
+        optimize_levelset_macro(problem, model, _ls_config(iterations=1, batch_size=problem.macro.core_count))
         for core_index in range(problem.macro.core_count):
             canvas = model.captured[0][core_index].numpy()
             valid = problem.context_valid_canvas(core_index)
             trainable = problem.trainable_index_canvas(core_index)
-            target = (problem.target_canvas(core_index).astype(
-                np.float64) / 255.0)
+            target = problem.target_canvas(core_index).astype(np.float64) / 255.0
             assert float(np.abs(canvas[~valid]).max()) == 0.0  # padding 恒 0
             outside = valid & (trainable < 0)  # macro 外真实 context
             assert outside.any()
-            assert np.array_equal(
-                canvas[outside], (target >= 0.5)[outside])
+            assert np.array_equal(canvas[outside], (target >= 0.5)[outside])
 
     def test_canvas_mismatch_rejected(self):
         """模型画布与 problem 不一致在入口失败。"""
@@ -577,12 +547,11 @@ class TestLossesCurvatureAndRealModel:
         """恒等模型：state0 hard ≡ target 二值 → 三损失可 numpy 复算。"""
         problem = _problem(kdb.Region(kdb.Box(8, 8, 41, 48)))  # 含分数覆盖格
         result = optimize_levelset_macro(
-            problem, _IdentityModel(),
-            _ls_config(weight_process_l2=1.0, weight_pvband=0.5))
+            problem, _IdentityModel(), _ls_config(weight_process_l2=1.0, weight_pvband=0.5)
+        )
         expected_nom = 0.0
         for core_index in range(problem.macro.core_count):
-            target = (problem.target_canvas(core_index).astype(
-                np.float64) / 255.0)
+            target = problem.target_canvas(core_index).astype(np.float64) / 255.0
             own = problem.ownership_canvas(core_index)
             valid = problem.context_valid_canvas(core_index)
             # INV-004：phi<0 ⟺ T>=0.5，state0 全画布 hard 即 target 二值
@@ -590,18 +559,16 @@ class TestLossesCurvatureAndRealModel:
             expected_nom += float(((hard - target) ** 2 * own).sum())
         record = result.records[0]
         assert record.nominal_l2 == pytest.approx(expected_nom, rel=1e-5)
-        assert record.process_l2 == pytest.approx(
-            2.0 * expected_nom, rel=1e-5)  # 恒等三条件同值
+        assert record.process_l2 == pytest.approx(2.0 * expected_nom, rel=1e-5)  # 恒等三条件同值
         assert record.pvband_loss == pytest.approx(0.0, abs=1e-6)
-        assert record.total_loss == pytest.approx(
-            3.0 * expected_nom, rel=1e-5)
+        assert record.total_loss == pytest.approx(3.0 * expected_nom, rel=1e-5)
 
-    def test_curvature_on_hard_mask_and_zero_weight_skips(self,
-                                                          monkeypatch):
+    def test_curvature_on_hard_mask_and_zero_weight_skips(self, monkeypatch):
         """weight=0 不构建卷积；weight>0 曲率作用于 hard mask 可复算。"""
         calls = {"n": 0}
         # 曲率调用已上提到公共骨架（P3），spy 宿主随之迁移
         import opc.iteration.ilt._skeleton as ilt_skeleton
+
         real = ilt_skeleton.curvature_loss
 
         def spy(*args, **kwargs):
@@ -618,12 +585,10 @@ class TestLossesCurvatureAndRealModel:
         # 曲率每状态每批恰一次：状态数 × 批数（含末纯评价状态）
         batches = -(-problem.macro.core_count // config.batch_size)
         assert calls["n"] == (config.iterations + 1) * batches
-        kernel = np.array([[-1, 5, -1], [5, -16, 5], [-1, 5, -1]],
-                          np.float64) / 16.0
+        kernel = np.array([[-1, 5, -1], [5, -16, 5], [-1, 5, -1]], np.float64) / 16.0
         expected = 0.0
         for core_index in range(problem.macro.core_count):
-            target = (problem.target_canvas(core_index).astype(
-                np.float64) / 255.0)
+            target = problem.target_canvas(core_index).astype(np.float64) / 255.0
             own = problem.ownership_canvas(core_index)
             valid = problem.context_valid_canvas(core_index)
             hard = np.where(valid, target >= 0.5, 0.0)
@@ -631,48 +596,38 @@ class TestLossesCurvatureAndRealModel:
             convo = np.zeros((254, 254))
             for dy in range(3):
                 for dx in range(3):
-                    convo += (kernel[dy, dx]
-                              * hard[dy:dy + 254, dx:dx + 254])
-            expected += float((convo ** 2 * own[1:-1, 1:-1]).sum())
-        assert result.records[0].curvature_loss == pytest.approx(
-            expected, rel=1e-4, abs=1e-6)
+                    convo += kernel[dy, dx] * hard[dy : dy + 254, dx : dx + 254]
+            expected += float((convo**2 * own[1:-1, 1:-1]).sum())
+        assert result.records[0].curvature_loss == pytest.approx(expected, rel=1e-4, abs=1e-6)
 
     def test_real_cpu_update_finite(self, cpu_model):
         """真实 ICCAD13 CPU 一轮更新：全有限、N+1 状态、INV-004 成立。"""
-        problem = _problem(
-            kdb.Region(kdb.Box(21, 20, 61, 60)),
-            macro=_macro(core_size_dbu=80))
-        result = optimize_levelset_macro(
-            problem, cpu_model, _ls_config(iterations=1, batch_size=1))
+        problem = _problem(kdb.Region(kdb.Box(21, 20, 61, 60)), macro=_macro(core_size_dbu=80))
+        result = optimize_levelset_macro(problem, cpu_model, _ls_config(iterations=1, batch_size=1))
         assert len(result.records) == 2
         for record in result.records:
             assert np.isfinite(record.total_loss)
         assert np.all(np.isfinite(result.best_parameters))
         assert result.binary_mask.dtype == np.bool_
         # INV-004：二值掩膜恰为 best phi<0
-        assert np.array_equal(
-            result.binary_mask, result.best_parameters < 0.0)
+        assert np.array_equal(result.binary_mask, result.best_parameters < 0.0)
         # state0 二值与 target 二值逐格一致（SDF 符号契约）
         initial = signed_distance_initialization(problem.target_u8)
         assert np.array_equal(
             _ownership_crop(problem, initial) < 0,
-            _ownership_crop(problem, problem.target_u8).astype(
-                np.float32) / 255.0 >= 0.5)
+            _ownership_crop(problem, problem.target_u8).astype(np.float32) / 255.0 >= 0.5,
+        )
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="无 CUDA")
     def test_real_cuda_matches_cpu(self, cpu_model):
         """CUDA 与 CPU 同输入 loss 一致（1e-4 容差）。"""
-        problem = _problem(
-            kdb.Region(kdb.Box(21, 20, 61, 60)),
-            macro=_macro(core_size_dbu=80))
+        problem = _problem(kdb.Region(kdb.Box(21, 20, 61, 60)), macro=_macro(core_size_dbu=80))
         cuda_model = ICCAD13Lithography(device="cuda")
         config = _ls_config(iterations=1, batch_size=1)
         cpu_result = optimize_levelset_macro(problem, cpu_model, config)
         cuda_result = optimize_levelset_macro(problem, cuda_model, config)
-        for cpu_record, cuda_record in zip(cpu_result.records,
-                                           cuda_result.records):
-            assert cuda_record.total_loss == pytest.approx(
-                cpu_record.total_loss, rel=1e-4, abs=1e-6)
+        for cpu_record, cuda_record in zip(cpu_result.records, cuda_result.records):
+            assert cuda_record.total_loss == pytest.approx(cpu_record.total_loss, rel=1e-4, abs=1e-6)
 
 
 class TestFinalContextHelper:
@@ -689,14 +644,11 @@ class TestFinalContextHelper:
             calls["n"] += 1
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(
-            levelset_module, "signed_distance_initialization", spy)
-        canvas = build_levelset_final_context_canvas(
-            problem, 0, _ls_config())
+        monkeypatch.setattr(levelset_module, "signed_distance_initialization", spy)
+        canvas = build_levelset_final_context_canvas(problem, 0, _ls_config())
         valid = problem.context_valid_canvas(0)
         target = problem.target_canvas(0).astype(np.float32) / 255.0
-        expected = np.where(valid, (target >= 0.5).astype(np.float32),
-                            np.float32(0.0)).astype(np.float32)
+        expected = np.where(valid, (target >= 0.5).astype(np.float32), np.float32(0.0)).astype(np.float32)
         assert canvas.dtype == np.float32
         np.testing.assert_array_equal(canvas, expected)
         assert calls["n"] == 0

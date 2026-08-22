@@ -27,9 +27,7 @@ _FORMAT_VERSION = 1
 def _require_pixel_aligned(box: DbuBox, pixel_dbu: int, what: str) -> None:
     """拒绝宽高非整像素的 box；partial 像素会破坏参数域与回写的一一对应。"""
     if box.width % pixel_dbu or box.height % pixel_dbu:
-        raise ValueError(
-            f"{what} 宽高必须是 pixel_dbu={pixel_dbu} 的整数倍："
-            f"{box.width}x{box.height}")
+        raise ValueError(f"{what} 宽高必须是 pixel_dbu={pixel_dbu} 的整数倍：{box.width}x{box.height}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +55,7 @@ class PixelMacroProblem:
     def __post_init__(self) -> None:
         """规范化极性并校验栅格与网格的整像素一致性（构造即校验）。"""
         try:
-            polarity = (self.polarity if isinstance(self.polarity, MaskPolarity)
-                        else MaskPolarity(self.polarity))
+            polarity = self.polarity if isinstance(self.polarity, MaskPolarity) else MaskPolarity(self.polarity)
         except ValueError as exc:
             raise ValueError(f"不支持的 mask 极性：{self.polarity!r}") from exc
         target = np.asarray(self.target_u8)
@@ -68,11 +65,8 @@ class PixelMacroProblem:
         # 契约被破坏（截断 NPZ 或手工构造），切片区间将无法对齐。
         _require_pixel_aligned(query, pixel_dbu, "macro query box")
         expected = (query.height // pixel_dbu, query.width // pixel_dbu)
-        if (target.ndim != 2 or target.dtype != np.dtype(np.uint8)
-                or target.shape != expected):
-            raise ValueError(
-                f"target_u8 必须是 {expected} 的 uint8 数组，"
-                f"实际为 {target.shape} / {target.dtype}")
+        if target.ndim != 2 or target.dtype != np.dtype(np.uint8) or target.shape != expected:
+            raise ValueError(f"target_u8 必须是 {expected} 的 uint8 数组，实际为 {target.shape} / {target.dtype}")
         object.__setattr__(self, "polarity", polarity)
         object.__setattr__(self, "target_u8", np.ascontiguousarray(target))
 
@@ -109,21 +103,17 @@ class PixelMacroProblem:
         window = self.target_u8[r0:r1, c0:c1]
         # 与 rasterize_mask_canvas 共用同一居中 padding：探针/ownership/mask
         # 画布永远同布局，这是复用模型与指标层的前提。
-        low_y, _, low_x, _ = _center_padding(
-            r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
-        canvas = np.zeros(
-            (int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)),
-            dtype=np.uint8)
-        canvas[low_y:low_y + window.shape[0],
-               low_x:low_x + window.shape[1]] = window
+        low_y, _, low_x, _ = _center_padding(r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
+        canvas = np.zeros((int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)), dtype=np.uint8)
+        canvas[low_y : low_y + window.shape[0], low_x : low_x + window.shape[1]] = window
         return canvas
 
     def ownership_canvas(self, core_index: int) -> NDArray[np.bool_]:
         """返回该 core 唯一计分像素画布（复用公共 ownership 对齐规则）。"""
         spec = self.macro.core(core_index)
         return ownership_canvas(
-            spec.ownership_box, spec.context_box,
-            int(self.macro.pixel_dbu), int(self.macro.canvas_pixels))
+            spec.ownership_box, spec.context_box, int(self.macro.pixel_dbu), int(self.macro.canvas_pixels)
+        )
 
     def trainable_index_canvas(self, core_index: int) -> NDArray[np.int64]:
         """返回 macro 参数扁平索引画布：macro 外（含 context/padding）恒 -1。
@@ -141,9 +131,7 @@ class PixelMacroProblem:
         mrow0 = (box.bottom - query.bottom) // pixel_dbu
         mcol0 = (box.left - query.left) // pixel_dbu
         hm, wm = self.ownership_shape
-        canvas = np.full(
-            (int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)),
-            -1, dtype=np.int64)
+        canvas = np.full((int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)), -1, dtype=np.int64)
         # context 只覆盖 macro 的一部分时取交集；索引块只按窗口大小直接
         # 构造：block[i,j] = 行基址 + i*wm + j。本函数是每 state × 每 core
         # 的热路径，禁止为单个 core 分配 O(宏像素) 的全宏 arange 索引表。
@@ -152,13 +140,9 @@ class PixelMacroProblem:
         if row0 < row1 and col0 < col1:
             row_base = (row0 - mrow0) * wm + (col0 - mcol0)
             rows, cols = row1 - row0, col1 - col0
-            block = (row_base
-                     + np.arange(rows, dtype=np.int64)[:, None] * wm
-                     + np.arange(cols, dtype=np.int64)[None, :])
-            low_y, _, low_x, _ = _center_padding(
-                r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
-            canvas[low_y + row0 - r0:low_y + row1 - r0,
-                   low_x + col0 - c0:low_x + col1 - c0] = block
+            block = row_base + np.arange(rows, dtype=np.int64)[:, None] * wm + np.arange(cols, dtype=np.int64)[None, :]
+            low_y, _, low_x, _ = _center_padding(r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
+            canvas[low_y + row0 - r0 : low_y + row1 - r0, low_x + col0 - c0 : low_x + col1 - c0] = block
         return canvas
 
     def context_valid_canvas(self, core_index: int) -> NDArray[np.bool_]:
@@ -169,13 +153,9 @@ class PixelMacroProblem:
         soft、padding 恒 0），本掩码是区分两者的唯一判据。
         """
         _, r0, r1, c0, c1 = self._context_window(core_index)
-        low_y, _, low_x, _ = _center_padding(
-            r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
-        canvas = np.zeros(
-            (int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)),
-            dtype=np.bool_)
-        canvas[low_y:low_y + (r1 - r0),
-               low_x:low_x + (c1 - c0)] = True
+        low_y, _, low_x, _ = _center_padding(r1 - r0, c1 - c0, int(self.macro.canvas_pixels))
+        canvas = np.zeros((int(self.macro.canvas_pixels), int(self.macro.canvas_pixels)), dtype=np.bool_)
+        canvas[low_y : low_y + (r1 - r0), low_x : low_x + (c1 - c0)] = True
         return canvas
 
     def _arrays(self) -> dict[str, np.ndarray]:
@@ -186,8 +166,14 @@ class PixelMacroProblem:
             "format_version": np.array([_FORMAT_VERSION], dtype=np.int32),
             "macro_id": np.array([macro.macro_id]),
             "macro_ownership_box": np.array(
-                [macro.ownership_box.left, macro.ownership_box.bottom,
-                 macro.ownership_box.right, macro.ownership_box.top], dtype=np.int64),
+                [
+                    macro.ownership_box.left,
+                    macro.ownership_box.bottom,
+                    macro.ownership_box.right,
+                    macro.ownership_box.top,
+                ],
+                dtype=np.int64,
+            ),
             "macro_x_cuts": macro.x_cuts.astype(np.int64, copy=False),
             "macro_y_cuts": macro.y_cuts.astype(np.int64, copy=False),
             "context_dbu": np.array([macro.context_dbu], dtype=np.int64),
@@ -218,20 +204,27 @@ class PixelMacroProblem:
             macro = MacroSpec(
                 str(data["macro_id"][0]),
                 DbuBox(*[int(v) for v in data["macro_ownership_box"]]),
-                data["macro_x_cuts"], data["macro_y_cuts"],
-                int(data["context_dbu"][0]), int(data["pixel_dbu"][0]),
-                int(data["canvas_pixels"][0]))
+                data["macro_x_cuts"],
+                data["macro_y_cuts"],
+                int(data["context_dbu"][0]),
+                int(data["pixel_dbu"][0]),
+                int(data["canvas_pixels"][0]),
+            )
             layer = LayerSpec(int(data["layer"][0]), int(data["datatype"][0]))
             # 构造即校验：__post_init__ 复查极性、整像素一致性与栅格形状；
             # 损坏或被篡改的 NPZ 在这里直接失败，不做补零修复。
-            return cls(macro, layer, MaskPolarity(str(data["polarity"][0])),
-                       data["target_u8"])
+            return cls(macro, layer, MaskPolarity(str(data["polarity"][0])), data["target_u8"])
 
 
 def prepare_pixel_macro_problem(
-        batch: RegionBatch, layer: LayerSpec, polarity: MaskPolarity | str,
-        macro: MacroSpec, *, planning_bounds: DbuBox,
-        data_bounds: DbuBox) -> PixelMacroProblem:
+    batch: RegionBatch,
+    layer: LayerSpec,
+    polarity: MaskPolarity | str,
+    macro: MacroSpec,
+    *,
+    planning_bounds: DbuBox,
+    data_bounds: DbuBox,
+) -> PixelMacroProblem:
     """从一次完整相交物化构造像素 macro 问题（一次栅格化，不提边）。
 
     planning_bounds 是 plan_macros 所用的规划边界（field，未配置处理框时
@@ -244,8 +237,7 @@ def prepare_pixel_macro_problem(
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")
     try:
-        normalized = (polarity if isinstance(polarity, MaskPolarity)
-                      else MaskPolarity(polarity))
+        normalized = polarity if isinstance(polarity, MaskPolarity) else MaskPolarity(polarity)
     except ValueError as exc:
         raise ValueError(f"不支持的 mask 极性：{polarity!r}") from exc
     pixel_dbu = int(macro.pixel_dbu)
@@ -253,19 +245,19 @@ def prepare_pixel_macro_problem(
     # 实际 box 整像素前置校验：最外侧缩短 core 是网格规划允许的合法形态，
     # 但非整像素缩短会产生 partial ownership pixel——它无法映射到唯一个
     # 参数/计分/回写像素，必须在栅格化之前失败而不是静默取整。
-    _require_pixel_aligned(
-        macro.ownership_box, pixel_dbu, f"macro {macro.macro_id} ownership")
+    _require_pixel_aligned(macro.ownership_box, pixel_dbu, f"macro {macro.macro_id} ownership")
     for core_index in range(macro.core_count):
         _require_pixel_aligned(
-            macro.core(core_index).ownership_box, pixel_dbu,
-            f"macro {macro.macro_id} core {core_index} ownership")
+            macro.core(core_index).ownership_box, pixel_dbu, f"macro {macro.macro_id} core {core_index} ownership"
+        )
     ownership = macro.ownership_box
-    if (planning_bounds.left > ownership.left or planning_bounds.bottom > ownership.bottom
-            or planning_bounds.right < ownership.right
-            or planning_bounds.top < ownership.top):
-        raise ValueError(
-            "planning_bounds 必须四向包含 macro ownership（应传 plan_macros "
-            "所用的规划边界/处理框）")
+    if (
+        planning_bounds.left > ownership.left
+        or planning_bounds.bottom > ownership.bottom
+        or planning_bounds.right < ownership.right
+        or planning_bounds.top < ownership.top
+    ):
+        raise ValueError("planning_bounds 必须四向包含 macro ownership（应传 plan_macros 所用的规划边界/处理框）")
     # 完整相交物化合并物理覆盖后栅格化一次：查询框不参与布尔相交，
     # 版图真实边界的覆盖率（斜边/半像素）原样进入 transmission。
     region = normalize_mask(batch, layer)
@@ -273,21 +265,15 @@ def prepare_pixel_macro_problem(
         # 负板补铬（取代透光率置零方案）：数据包络外到查询边界补画不透光
         # 图形，补区 coverage=1 → transmission=0；布尔并的输出表示可能保留
         # 共线内部边，须 merged() 融合（同 edge 路径的实测依据）。
-        region = (region + (kdb.Region(query.to_native())
-                            - kdb.Region(data_bounds.to_native()))).merged()
+        region = (region + (kdb.Region(query.to_native()) - kdb.Region(data_bounds.to_native()))).merged()
     coverage = rasterize_region_window(region, query, pixel_dbu)
     # 极性只在此边界出现一次：clear 时图形即透光，opaque 时背景透光。
-    transmission = (coverage if normalized is MaskPolarity.CLEAR
-                    else 1.0 - coverage)
-    target_u8 = np.rint(
-        np.clip(transmission, 0.0, 1.0) * 255.0).astype(np.uint8)
-    return PixelMacroProblem(
-        macro=macro, layer=layer, polarity=normalized, target_u8=target_u8)
+    transmission = coverage if normalized is MaskPolarity.CLEAR else 1.0 - coverage
+    target_u8 = np.rint(np.clip(transmission, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return PixelMacroProblem(macro=macro, layer=layer, polarity=normalized, target_u8=target_u8)
 
 
-def reconstruct_pixel_region(
-        problem: PixelMacroProblem,
-        binary_ownership: object) -> kdb.Region:
+def reconstruct_pixel_region(problem: PixelMacroProblem, binary_ownership: object) -> kdb.Region:
     """把 macro ownership 二值 transmission 按行游程合并为裁剪后的 Region。
 
     极性逆变换只在此边界出现：clear 输出透光像素，opaque 输出 ownership
@@ -295,11 +281,8 @@ def reconstruct_pixel_region(
     """
     expected = problem.ownership_shape
     values = np.asarray(binary_ownership)
-    if (values.ndim != 2 or values.dtype != np.dtype(np.bool_)
-            or values.shape != expected):
-        raise ValueError(
-            f"binary_ownership 必须是 {expected} 的布尔数组，"
-            f"实际为 {values.shape} / {values.dtype}")
+    if values.ndim != 2 or values.dtype != np.dtype(np.bool_) or values.shape != expected:
+        raise ValueError(f"binary_ownership 必须是 {expected} 的布尔数组，实际为 {values.shape} / {values.dtype}")
     lit = values if problem.polarity is MaskPolarity.CLEAR else ~values
     pixel_dbu = int(problem.macro.pixel_dbu)
     origin = problem.macro.ownership_box
@@ -310,13 +293,14 @@ def reconstruct_pixel_region(
         row = lit[row_index]
         if not row.any():
             continue
-        edges = np.flatnonzero(np.diff(
-            np.concatenate(([False], row, [False])).astype(np.int8)))
+        edges = np.flatnonzero(np.diff(np.concatenate(([False], row, [False])).astype(np.int8)))
         bottom = origin.bottom + row_index * pixel_dbu
         for start, end in zip(edges[0::2], edges[1::2]):
-            region.insert(kdb.Box(
-                origin.left + int(start) * pixel_dbu, bottom,
-                origin.left + int(end) * pixel_dbu, bottom + pixel_dbu))
+            region.insert(
+                kdb.Box(
+                    origin.left + int(start) * pixel_dbu, bottom, origin.left + int(end) * pixel_dbu, bottom + pixel_dbu
+                )
+            )
     # 每个 macro 恰一次合并：垂直相邻游程融合成最小矩形集合，
     # 消除表示层碎片；坐标天然限制在 ownership 像素格内即已裁剪。
     region.merge()

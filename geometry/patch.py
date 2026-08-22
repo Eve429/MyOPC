@@ -51,7 +51,8 @@ class PatchSet:
         layer_ownership = self._ownership.setdefault(patch.layer, kdb.Region())
         if (layer_ownership & ownership).area() > 0:
             raise PatchConflictError(
-                f"ownership overlap on {patch.layer.layer}/{patch.layer.datatype}: {patch.patch_id}")
+                f"ownership overlap on {patch.layer.layer}/{patch.layer.datatype}: {patch.patch_id}"
+            )
         # 关键正确性边界：输入 Region 可以包含跨越多个 core 的完整图形，但当前 Patch
         # 只能拥有 ownership_box 内的部分。此处先做精确相交，保证相邻 core 对同一图形
         # 的两部分既不丢失，也不会产生正面积重复；仅共享边界不构成 ownership 冲突。
@@ -80,20 +81,21 @@ class PatchSet:
 
     def __iter__(self) -> Iterator[GeometryPatch]:
         """按照稳定的 Layer、矩形和 ID 顺序迭代。"""
-        return iter(sorted(self._patches,
-                           key=lambda item: (item.layer, item.ownership_box, item.patch_id)))
+        return iter(sorted(self._patches, key=lambda item: (item.layer, item.ownership_box, item.patch_id)))
 
 
 class PatchWriter:
     """序列化位于全局坐标系、已经完成 core ownership 裁剪的 Patch。"""
 
     _FORMATS: ClassVar[dict[str, str]] = {
-        ".gds": "GDS2", ".gds2": "GDS2", ".oas": "OASIS", ".oasis": "OASIS",
+        ".gds": "GDS2",
+        ".gds2": "GDS2",
+        ".oas": "OASIS",
+        ".oasis": "OASIS",
     }
 
     @classmethod
-    def write(cls, patches: PatchSet, output_path: str | Path, dbu_um: float,
-              top_name: str = "OPC_PATCHES") -> Path:
+    def write(cls, patches: PatchSet, output_path: str | Path, dbu_um: float, top_name: str = "OPC_PATCHES") -> Path:
         """原子写出只包含 Patch 的流文件，并返回规范化路径。"""
         output = Path(output_path).expanduser().resolve()
         if output.suffix.lower() not in cls._FORMATS:
@@ -113,10 +115,15 @@ class PatchWriter:
         return cls._save_layout(layout, output)
 
     @classmethod
-    def write_macro_results(cls, patches: Iterable[GeometryPatch],
-                            output_path: str | Path, dbu_um: float, *,
-                            cell_mode: Literal["single_cell", "macro_cells"],
-                            top_name: str = "OPC_RESULT") -> Path:
+    def write_macro_results(
+        cls,
+        patches: Iterable[GeometryPatch],
+        output_path: str | Path,
+        dbu_um: float,
+        *,
+        cell_mode: Literal["single_cell", "macro_cells"],
+        top_name: str = "OPC_RESULT",
+    ) -> Path:
         """按单 Cell 全局 merge 或每 macro 子 Cell 两种方式原子写出权威 patch。"""
         collected = list(patches)  # 物化输入，保证重复 ID 检查与两次遍历一致
         if cell_mode not in ("single_cell", "macro_cells"):
@@ -169,8 +176,7 @@ class PatchWriter:
         options.format = cls._FORMATS[output.suffix.lower()]
         # 临时文件必须与目标位于同一目录和 Windows 卷。等待 KLayout 完整关闭输出后
         # 再原子替换，异常时旧结果仍然可用，也不会留下看似有效的半截 GDS/OASIS。
-        handle, temporary_name = tempfile.mkstemp(prefix=f".{output.stem}-", suffix=output.suffix,
-                                                  dir=output.parent)
+        handle, temporary_name = tempfile.mkstemp(prefix=f".{output.stem}-", suffix=output.suffix, dir=output.parent)
         os.close(handle)
         temporary = Path(temporary_name)
         try:

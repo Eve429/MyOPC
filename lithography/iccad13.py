@@ -20,8 +20,7 @@ if os.name == "nt":
     _cuda_dll_dir = Path(sys.prefix) / "bin"
     if _cuda_dll_dir.is_dir():
         _DLL_DIRECTORY = os.add_dll_directory(str(_cuda_dll_dir))
-        os.environ["PATH"] = (
-            f"{_cuda_dll_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        os.environ["PATH"] = f"{_cuda_dll_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
 # torch 导入必须保持在上述 DLL 目录注册之后：先注册后导入才能保证
 # 首次 CUDA 操作在任意启动方式下都找得到 NVRTC 运行时。
@@ -39,8 +38,15 @@ _FIXED_CANVAS_PIXELS = 256
 
 # 配置文件的九个必需字段；缺失、重复或未知字段都在解析期失败。
 _REQUIRED_FIELDS = (
-    "KernelNum", "TargetDensity", "PrintThresh", "PrintSteepness",
-    "DoseMax", "DoseMin", "DoseNom", "Canvas", "Resolution",
+    "KernelNum",
+    "TargetDensity",
+    "PrintThresh",
+    "PrintSteepness",
+    "DoseMax",
+    "DoseMin",
+    "DoseNom",
+    "Canvas",
+    "Resolution",
 )
 
 
@@ -48,15 +54,15 @@ _REQUIRED_FIELDS = (
 class ICCAD13Config:
     """保存 ICCAD13 Hopkins 模型的固定数值配置。"""
 
-    kernel_count: int       # 使用的 Hopkins 核数量，不得超过资产核数
-    target_density: float   # 连续胶 sigmoid 的强度阈值
+    kernel_count: int  # 使用的 Hopkins 核数量，不得超过资产核数
+    target_density: float  # 连续胶 sigmoid 的强度阈值
     print_threshold: float  # 后续二值化阈值，不直接参与 forward
     print_steepness: float  # 连续胶 sigmoid 陡峭度
-    dose_max: float         # 最大剂量
-    dose_min: float         # 最小剂量
-    dose_nominal: float     # 标称剂量
-    canvas: int             # 固定画布边长（像素）
-    resolution: int         # 固定仿真分辨率（像素）
+    dose_max: float  # 最大剂量
+    dose_min: float  # 最小剂量
+    dose_nominal: float  # 标称剂量
+    canvas: int  # 固定画布边长（像素）
+    resolution: int  # 固定仿真分辨率（像素）
 
     @classmethod
     def from_file(cls, path: str | Path) -> ICCAD13Config:
@@ -87,16 +93,14 @@ class ICCAD13Config:
             try:
                 return int(values[name])
             except ValueError as exc:
-                raise ValueError(
-                    f"光刻配置字段 {name} 必须是整数：{values[name]}") from exc
+                raise ValueError(f"光刻配置字段 {name} 必须是整数：{values[name]}") from exc
 
         def as_finite_float(name: str) -> float:
             """把配置值转换为有限浮点数，失败或非有限时报字段名。"""
             try:
                 number = float(values[name])
             except ValueError as exc:
-                raise ValueError(
-                    f"光刻配置字段 {name} 必须是数字：{values[name]}") from exc
+                raise ValueError(f"光刻配置字段 {name} 必须是数字：{values[name]}") from exc
             if not isfinite(number):
                 raise ValueError(f"光刻配置字段 {name} 必须是有限数：{values[name]}")
             return number
@@ -115,23 +119,20 @@ class ICCAD13Config:
         # 数值契约：核数量区间、画布冻结、阈值/陡峭度为正、
         # 剂量单调递增顺序；任何一条不满足都说明配置不可信。
         if not 1 <= config.kernel_count <= _MAX_ASSET_KERNELS:
-            raise ValueError(
-                f"KernelNum 必须在 1 到 {_MAX_ASSET_KERNELS} 之间：{config.kernel_count}")
-        if (config.canvas != _FIXED_CANVAS_PIXELS or
-                config.resolution != _FIXED_CANVAS_PIXELS):
-            raise ValueError(
-                f"Canvas 与 Resolution 当前固定为 {_FIXED_CANVAS_PIXELS}")
+            raise ValueError(f"KernelNum 必须在 1 到 {_MAX_ASSET_KERNELS} 之间：{config.kernel_count}")
+        if config.canvas != _FIXED_CANVAS_PIXELS or config.resolution != _FIXED_CANVAS_PIXELS:
+            raise ValueError(f"Canvas 与 Resolution 当前固定为 {_FIXED_CANVAS_PIXELS}")
         if not 0.0 < config.target_density:
             raise ValueError(f"TargetDensity 必须为正数：{config.target_density}")
         if not 0.0 < config.print_threshold < 1.0:
-            raise ValueError(
-                f"PrintThresh 必须在 0 到 1 开区间内：{config.print_threshold}")
+            raise ValueError(f"PrintThresh 必须在 0 到 1 开区间内：{config.print_threshold}")
         if not config.print_steepness > 0.0:
             raise ValueError(f"PrintSteepness 必须为正数：{config.print_steepness}")
         if not 0.0 < config.dose_min <= config.dose_nominal <= config.dose_max:
             raise ValueError(
                 "剂量必须满足 0 < DoseMin <= DoseNom <= DoseMax："
-                f"{config.dose_min} / {config.dose_nominal} / {config.dose_max}")
+                f"{config.dose_min} / {config.dose_nominal} / {config.dose_max}"
+            )
         return config
 
 
@@ -139,9 +140,9 @@ class ICCAD13Config:
 class ProcessCondition:
     """描述一次独立工艺条件的名称、kernel bank 和剂量。"""
 
-    name: str                                  # 同一次 forward_many 内唯一的结果名称
-    kernel: Literal["focus", "defocus"]        # 选择已经加载的 kernel bank
-    dose: float                                # 正有限振幅剂量，强度按 dose² 缩放
+    name: str  # 同一次 forward_many 内唯一的结果名称
+    kernel: Literal["focus", "defocus"]  # 选择已经加载的 kernel bank
+    dose: float  # 正有限振幅剂量，强度按 dose² 缩放
 
     def __post_init__(self) -> None:
         """拒绝空名称、未知 kernel bank 或非正有限剂量。"""
@@ -160,18 +161,19 @@ class ProcessCondition:
 class ICCAD13Lithography(nn.Module):
     """使用固定 ICCAD13 Hopkins 资产执行可微批量光刻仿真。"""
 
-    def __init__(self, config_path: str | Path | None = None,
-                 asset_dir: str | Path | None = None,
-                 device: str | torch.device | None = None) -> None:
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        asset_dir: str | Path | None = None,
+        device: str | torch.device | None = None,
+    ) -> None:
         """加载配置与 focus/defocus kernel bank，并移动到指定设备。"""
         super().__init__()
         # 配置与资产路径缺省相对本模块解析，保证从任意工作目录直接运行根脚本
         # 时也能加载，与 main/*.py 的仓库根 sys.path 引导互补。
         module_dir = Path(__file__).resolve().parent
-        config_file = (module_dir / "config" / "iccad13.txt"
-                       if config_path is None else Path(config_path))
-        assets = (module_dir / "assets" / "iccad13"
-                  if asset_dir is None else Path(asset_dir))
+        config_file = module_dir / "config" / "iccad13.txt" if config_path is None else Path(config_path)
+        assets = module_dir / "assets" / "iccad13" if asset_dir is None else Path(asset_dir)
         self.config = ICCAD13Config.from_file(config_file)
         # device=None 与 "auto" 同义：有 CUDA 用 CUDA，否则退回 CPU。
         if device is None or str(device) == "auto":
@@ -182,8 +184,12 @@ class ICCAD13Lithography(nn.Module):
         defocus_kernels, defocus_scales = self._load_kernel_bank(assets, "defocus", resolved)
         # 配置核数不得超过任一 bank 的实际核数，加载期即失败。
         count = self.config.kernel_count
-        if (focus_kernels.shape[0] < count or defocus_kernels.shape[0] < count or
-                focus_scales.shape[0] < count or defocus_scales.shape[0] < count):
+        if (
+            focus_kernels.shape[0] < count
+            or defocus_kernels.shape[0] < count
+            or focus_scales.shape[0] < count
+            or defocus_scales.shape[0] < count
+        ):
             raise ValueError("光刻资产包含的 Hopkins 核数量少于配置要求")
         # 四个张量注册为 buffer：跟随 Module.to() 移动并进入 state_dict，但不会
         # 被优化器当作可训练参数——kernel/scale 是物理资产，不是学习对象。
@@ -210,8 +216,8 @@ class ICCAD13Lithography(nn.Module):
 
     @staticmethod
     def _load_kernel_bank(
-            asset_dir: Path, name: Literal["focus", "defocus"],
-            device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        asset_dir: Path, name: Literal["focus", "defocus"], device: torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """加载并校验一组 [H,W,K] kernel 与 [K] scale，返回 [K,H,W] 计算布局。"""
         kernel_path = asset_dir / f"{name}.pt"
         scale_path = asset_dir / f"{name}_scale.pt"
@@ -230,14 +236,14 @@ class ICCAD13Lithography(nn.Module):
         if kernels.shape[2] != scales.shape[0]:
             raise ValueError(
                 f"光刻 kernel 与 scale 数量不符：{kernel_path} 有 "
-                f"{kernels.shape[2]} 个核，{scale_path} 有 {scales.shape[0]} 个权重")
-        return (kernels.permute(2, 0, 1).to(
-                    dtype=torch.complex64, device=device).contiguous(),
-                scales.to(dtype=torch.float32, device=device).contiguous())
+                f"{kernels.shape[2]} 个核，{scale_path} 有 {scales.shape[0]} 个权重"
+            )
+        return (
+            kernels.permute(2, 0, 1).to(dtype=torch.complex64, device=device).contiguous(),
+            scales.to(dtype=torch.float32, device=device).contiguous(),
+        )
 
-    def _prepare_mask(
-            self, mask: torch.Tensor
-    ) -> tuple[torch.Tensor, tuple[int, int, int, int], bool]:
+    def _prepare_mask(self, mask: torch.Tensor) -> tuple[torch.Tensor, tuple[int, int, int, int], bool]:
         """规范化单张/批量 mask，并居中补零到固定 canvas。"""
         # 输入只接受单张 [H,W] 或批量 [B,H,W]；其他维度在频域大数组分配
         # 之前拒绝，错误不会留下等待回收的大张量。
@@ -261,9 +267,7 @@ class ICCAD13Lithography(nn.Module):
         return padded, (top, bottom, left, right), was_single
 
     @staticmethod
-    def _kernel_multiply(
-            kernels: torch.Tensor, spectrum: torch.Tensor,
-            kernel_count: int) -> torch.Tensor:
+    def _kernel_multiply(kernels: torch.Tensor, spectrum: torch.Tensor, kernel_count: int) -> torch.Tensor:
         """把中心原点 kernel 的四个象限批量映射到 FFT 频谱四角。"""
         # kernel 自身尺寸决定象限块大小（35→18/17）：Hopkins 核只覆盖中心
         # ±17 个频率采样点，因此频谱只有四角低频块与 kernel 相乘，其余
@@ -271,48 +275,45 @@ class ICCAD13Lithography(nn.Module):
         height, width = kernels.shape[-2:]
         half_height, half_width = height // 2, width // 2
         output = torch.zeros(
-            (spectrum.shape[0], kernel_count,
-             spectrum.shape[-2], spectrum.shape[-1]),
-            dtype=spectrum.dtype, device=spectrum.device)
+            (spectrum.shape[0], kernel_count, spectrum.shape[-2], spectrum.shape[-1]),
+            dtype=spectrum.dtype,
+            device=spectrum.device,
+        )
         # 保持 OpenILT 的频域象限约定，不显式执行 fftshift；四次批量赋值
         # 避免对 kernel 或像素的 Python 循环，是 GPU 热路径的主要性能
         # 不变量。赋值顺序固定左上→右上→左下→右下：DC 与 Nyquist 的重叠
         # 行/列由后写的象限覆盖。
-        output[:, :, :half_height + 1, :half_width + 1] = (
-            spectrum[:, :, :half_height + 1, :half_width + 1] *
-            kernels[None, :kernel_count, -(half_height + 1):, -(half_width + 1):])
-        output[:, :, :half_height + 1, -half_width:] = (
-            spectrum[:, :, :half_height + 1, -half_width:] *
-            kernels[None, :kernel_count, -(half_height + 1):, :half_width])
-        output[:, :, -half_height:, :half_width + 1] = (
-            spectrum[:, :, -half_height:, :half_width + 1] *
-            kernels[None, :kernel_count, :half_height, -(half_width + 1):])
+        output[:, :, : half_height + 1, : half_width + 1] = (
+            spectrum[:, :, : half_height + 1, : half_width + 1]
+            * kernels[None, :kernel_count, -(half_height + 1) :, -(half_width + 1) :]
+        )
+        output[:, :, : half_height + 1, -half_width:] = (
+            spectrum[:, :, : half_height + 1, -half_width:]
+            * kernels[None, :kernel_count, -(half_height + 1) :, :half_width]
+        )
+        output[:, :, -half_height:, : half_width + 1] = (
+            spectrum[:, :, -half_height:, : half_width + 1]
+            * kernels[None, :kernel_count, :half_height, -(half_width + 1) :]
+        )
         output[:, :, -half_height:, -half_width:] = (
-            spectrum[:, :, -half_height:, -half_width:] *
-            kernels[None, :kernel_count, :half_height, :half_width])
+            spectrum[:, :, -half_height:, -half_width:] * kernels[None, :kernel_count, :half_height, :half_width]
+        )
         return output
 
-    def _propagate(
-            self, spectrum: torch.Tensor, kernels: torch.Tensor,
-            scales: torch.Tensor) -> torch.Tensor:
+    def _propagate(self, spectrum: torch.Tensor, kernels: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
         """从共享 mask 频谱计算一个 kernel bank 的单位剂量强度。"""
         # 每 kernel 一次 ifft2 回到空间域，取模平方后按 scale 加权求和，
         # 得到单位剂量下的 Hopkins 部分相干强度 [B,canvas,canvas]。
-        fields = torch.fft.ifft2(
-            self._kernel_multiply(kernels, spectrum, self.config.kernel_count),
-            norm="forward")
-        weights = scales[:self.config.kernel_count][None, :, None, None]
+        fields = torch.fft.ifft2(self._kernel_multiply(kernels, spectrum, self.config.kernel_count), norm="forward")
+        weights = scales[: self.config.kernel_count][None, :, None, None]
         return torch.sum(weights * torch.abs(fields).square(), dim=1)
 
-    def forward_many(
-            self, mask: torch.Tensor,
-            conditions: Sequence[ProcessCondition]) -> dict[str, torch.Tensor]:
+    def forward_many(self, mask: torch.Tensor, conditions: Sequence[ProcessCondition]) -> dict[str, torch.Tensor]:
         """一次计算多个独立工艺条件，并保留 mask 的 autograd 图。"""
         requested = tuple(conditions)
         if not requested:
             raise ValueError("至少需要一个光刻工艺条件")
-        if any(not isinstance(condition, ProcessCondition)
-               for condition in requested):
+        if any(not isinstance(condition, ProcessCondition) for condition in requested):
             raise TypeError("conditions 必须全部是 ProcessCondition")
         names = [condition.name for condition in requested]
         if len(set(names)) != len(names):
@@ -323,8 +324,7 @@ class ICCAD13Lithography(nn.Module):
         # 通过 dose² 因子复用同一 unit。缓存仅存在于本次调用的 autograd
         # 图中，不跨 mask 保存——MB-OPC 的 no_grad 推理与 ILT 的 backward
         # 走同一条路径。
-        spectrum = torch.fft.fft2(
-            prepared.to(torch.complex64).unsqueeze(1), norm="forward")
+        spectrum = torch.fft.fft2(prepared.to(torch.complex64).unsqueeze(1), norm="forward")
         steepness = self.config.print_steepness
         density = self.config.target_density
         intensities: dict[str, torch.Tensor] = {}  # bank 名 → 单位剂量强度
@@ -338,19 +338,15 @@ class ICCAD13Lithography(nn.Module):
                     kernels, scales = self.defocus_kernels, self.defocus_scales
                 unit = self._propagate(spectrum, kernels, scales)
                 intensities[condition.kernel] = unit
-            printed = torch.sigmoid(
-                steepness * (unit * (condition.dose ** 2) - density))
+            printed = torch.sigmoid(steepness * (unit * (condition.dose**2) - density))
             # 内联 crop：去掉居中补零的四边恢复输入 H×W（top+高度恰等于
             # canvas−bottom，因此统一切片公式对零 padding 同样正确）；
             # 单张输入再压回 [H,W]。
-            restored = printed[
-                :, top:printed.shape[-2] - bottom,
-                left:printed.shape[-1] - right]
+            restored = printed[:, top : printed.shape[-2] - bottom, left : printed.shape[-1] - right]
             results[condition.name] = restored[0] if was_single else restored
         return results
 
-    def forward(self, mask: torch.Tensor,
-                condition: ProcessCondition) -> torch.Tensor:
+    def forward(self, mask: torch.Tensor, condition: ProcessCondition) -> torch.Tensor:
         """执行单工艺条件的 mask 到连续 printed image 前向。"""
         if not isinstance(condition, ProcessCondition):
             raise TypeError("condition 必须是 ProcessCondition")

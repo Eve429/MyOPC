@@ -67,8 +67,7 @@ def test_png_save_and_optional_show(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     """返回值保持模型方向，PNG 与查看器只在显示边界翻为顶部原点。"""
     layer = LayerSpec(3, 1)
     # 只填充 ROI 下半部，确保返回数组和保存图片的上下方向可被真实区分。
-    batch = region_batch({layer: kdb.Region(kdb.Box(0, 0, 10, 10))},
-                         DbuBox(0, 0, 10, 20))
+    batch = region_batch({layer: kdb.Region(kdb.Box(0, 0, 10, 10))}, DbuBox(0, 0, 10, 20))
     shown: list[str | None] = []
     shown_pixels: list[np.ndarray] = []
 
@@ -79,8 +78,7 @@ def test_png_save_and_optional_show(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(Image.Image, "show", capture_show)
     output = tmp_path / "roi.png"
-    expected = render_region_batch(batch, layer, 0.001, pixel_size_nm=5,
-                                   output_path=output, show=True)
+    expected = render_region_batch(batch, layer, 0.001, pixel_size_nm=5, output_path=output, show=True)
     with Image.open(output) as image:
         assert image.mode == "L"
         assert np.array_equal(np.asarray(image), np.flipud(expected))
@@ -93,17 +91,21 @@ def test_layout_convenience_function_uses_existing_database(tmp_path: Path) -> N
     source = write_advanced_layout(tmp_path / "advanced.gds")
     layer = LayerSpec(1, 0)
     with LayoutDB.open(source) as database:
-        pixels = render_layout_region(
-            database, DbuBox(-100, -50, 100, 50), layer, pixel_size_nm=10)
+        pixels = render_layout_region(database, DbuBox(-100, -50, 100, 50), layer, pixel_size_nm=10)
     assert pixels.shape == (10, 20)
     assert np.all(pixels == 255)
 
 
-@pytest.mark.parametrize(("dbu_um", "pixel_nm", "max_pixels"), [
-    (0.0, 5.0, 100), (0.001, 0.0, 100), (0.001, 2.5, 100), (0.001, 5.0, 0),
-])
-def test_invalid_sampling_parameters_are_rejected(dbu_um: float, pixel_nm: float,
-                                                   max_pixels: int) -> None:
+@pytest.mark.parametrize(
+    ("dbu_um", "pixel_nm", "max_pixels"),
+    [
+        (0.0, 5.0, 100),
+        (0.001, 0.0, 100),
+        (0.001, 2.5, 100),
+        (0.001, 5.0, 0),
+    ],
+)
+def test_invalid_sampling_parameters_are_rejected(dbu_um: float, pixel_nm: float, max_pixels: int) -> None:
     """非法物理采样或内存上限必须在分配像素数组前失败。"""
     layer = LayerSpec(1, 0)
     batch = region_batch({layer: kdb.Region()}, DbuBox(0, 0, 10, 10))
@@ -122,5 +124,4 @@ def test_missing_layer_size_guard_and_output_rules(tmp_path: Path) -> None:
     with pytest.raises(RasterizationError, match="扩展名"):
         render_region_batch(batch, layer, 0.001, output_path=tmp_path / "roi.jpg")
     with pytest.raises(FileNotFoundError):
-        render_region_batch(batch, layer, 0.001,
-                            output_path=tmp_path / "missing" / "roi.png")
+        render_region_batch(batch, layer, 0.001, output_path=tmp_path / "missing" / "roi.png")

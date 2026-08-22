@@ -58,8 +58,9 @@ def run_demo(temp: Path) -> None:
     # 阶段①准备测试几何：donut（外框挖孔）加一个独立小矩形，构成
     # 「一个带孔 Polygon + 一个简单 Polygon」的多 Polygon Region，后续
     # 轮廓提取的两级 CSR 结构可以同时展示 hull、hole 与多 Polygon 分组。
-    region = (kdb.Region(kdb.Box(0, 0, 100, 100)) - kdb.Region(kdb.Box(20, 20, 80, 80))
-              + kdb.Region(kdb.Box(150, 0, 160, 10)))
+    region = (
+        kdb.Region(kdb.Box(0, 0, 100, 100)) - kdb.Region(kdb.Box(20, 20, 80, 80)) + kdb.Region(kdb.Box(150, 0, 160, 10))
+    )
 
     # RegionBatch(regions, box)：layout 层物化结果的轻量容器。regions 是
     # LayerSpec→原生 Region 映射，box 是查询框（DbuBox，整数 DBU 坐标）。
@@ -73,8 +74,7 @@ def run_demo(temp: Path) -> None:
     # ContourBatch 是两级 CSR 数组：vertices 是 (N,2) 整数顶点；
     # ring_offsets 记录每个环的顶点区间端点；polygon_ring_offsets 记录每个
     # Polygon 的环区间端点（首环为 hull，其余为 hole）。
-    print(f"轮廓：{contours.polygon_count} 个 Polygon，{contours.ring_count} 个环，"
-          f"{len(contours.vertices)} 个顶点")
+    print(f"轮廓：{contours.polygon_count} 个 Polygon，{contours.ring_count} 个环，{len(contours.vertices)} 个顶点")
     print(f"环区间端点：{contours.ring_offsets.tolist()}")
     print(f"多边形区间端点：{contours.polygon_ring_offsets.tolist()}")
     # extract_contour(region)：单 Region 快速入口。跳过 Layer 映射直接转换，
@@ -101,13 +101,14 @@ def run_demo(temp: Path) -> None:
     left = patches.add(GeometryPatch("core-left", layer, crossing, DbuBox(0, 0, 50, 100)))
     right = patches.add(GeometryPatch("core-right", layer, crossing, DbuBox(50, 0, 100, 100)))
     print(f"Patch：共 {len(patches)} 个，层 {patches.layers}")
-    print(f"左半面积：{left.region.area()}，右半面积：{right.region.area()}"
-          f"（和 = {left.region.area() + right.region.area()} = 原面积 {crossing.area()}）")
+    print(
+        f"左半面积：{left.region.area()}，右半面积：{right.region.area()}"
+        f"（和 = {left.region.area() + right.region.area()} = 原面积 {crossing.area()}）"
+    )
     # PatchSet.region(layer)：拼接该层全部已完成 ownership 裁剪的片段，输出
     # 独立副本的合并 Region，供最终全图输出回用。
     reclaimed = patches.region(layer)
-    print(f"全局回收面积：{reclaimed.area()}（异或面积 "
-          f"{(reclaimed ^ crossing).area()}）")
+    print(f"全局回收面积：{reclaimed.area()}（异或面积 {(reclaimed ^ crossing).area()}）")
 
     # 阶段④Patch 写出与回读。PatchWriter.write(patches, path, dbu_um)：把
     # PatchSet 原子写出为只含修正结果的 GDS/OASIS 流文件（同目录临时文件 +
@@ -119,10 +120,11 @@ def run_demo(temp: Path) -> None:
     # 的读入、ROI 物化流程，回读面积应与 ownership 范围内的原始几何相同。
     with LayoutDB.open(output) as db:
         box = db.bbox()
-        reloaded = (db.query([layer], box).materialize().region(layer)
-                    if box is not None else kdb.Region())
-        print(f"回读：{reloaded.count()} 个 Polygon，面积 {reloaded.area()}"
-              f"（原 {reclaimed.count()} 个，面积 {reclaimed.area()}）")
+        reloaded = db.query([layer], box).materialize().region(layer) if box is not None else kdb.Region()
+        print(
+            f"回读：{reloaded.count()} 个 Polygon，面积 {reloaded.area()}"
+            f"（原 {reclaimed.count()} 个，面积 {reclaimed.area()}）"
+        )
 
     # 阶段⑤覆盖率栅格化。iter_region_coverage_tiles(region, box, pixel_dbu,
     # shape)：geometry 栅格化的底层共享原语。把 Region 裁到 box 并在原生端
@@ -135,9 +137,13 @@ def run_demo(temp: Path) -> None:
     # render_region_batch(batch, layer, dbu_um, pixel_size_nm)：显示层入口。
     # 复用底层覆盖率并量化为 uint8 灰度（0-255），可选原子保存 PNG（保存时
     # 才翻为图片方向）；输出数组保持左下原点的模型方向。
-    pixels = render_region_batch(RegionBatch({layer: partial}, DbuBox(0, 0, 20, 20)),
-                                 layer, 0.001, pixel_size_nm=10,
-                                 output_path=temp / "roi.png")
+    pixels = render_region_batch(
+        RegionBatch({layer: partial}, DbuBox(0, 0, 20, 20)),
+        layer,
+        0.001,
+        pixel_size_nm=10,
+        output_path=temp / "roi.png",
+    )
     print(f"灰度像素（左下原点）：{pixels.tolist()}，PNG：{temp / 'roi.png'}")
 
     # 阶段⑥版图便利入口。render_layout_region(database, box, layer,
@@ -147,10 +153,8 @@ def run_demo(temp: Path) -> None:
     _write_sample_gds(gds)
     mask_layer = LayerSpec(1, 0)
     with LayoutDB.open(gds) as database:
-        layout_pixels = render_layout_region(database, DbuBox(0, 0, 100, 100),
-                                             mask_layer, pixel_size_nm=10)
-        print(f"版图栅格：形状 {layout_pixels.shape}，"
-              f"取值 {sorted(set(layout_pixels.ravel().tolist()))}")
+        layout_pixels = render_layout_region(database, DbuBox(0, 0, 100, 100), mask_layer, pixel_size_nm=10)
+        print(f"版图栅格：形状 {layout_pixels.shape}，取值 {sorted(set(layout_pixels.ravel().tolist()))}")
 
 
 def main() -> int:

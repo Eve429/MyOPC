@@ -22,14 +22,17 @@ from tests.fixtures.layout_factory import write_advanced_layout
 
 def _write_hierarchy_layout(path: Path) -> Path:
     """写出覆盖共享子 Cell、重复引用、AREF、多顶层和叶子节点的层级版图。"""
-    layout = kdb.Layout(); layout.dbu = 0.001
+    layout = kdb.Layout()
+    layout.dbu = 0.001
     layer = layout.layer(kdb.LayerInfo(1, 0))
-    leaf = layout.create_cell("LEAF"); leaf.shapes(layer).insert(kdb.Box(0, 0, 10, 10))
+    leaf = layout.create_cell("LEAF")
+    leaf.shapes(layer).insert(kdb.Box(0, 0, 10, 10))
     middle_a = layout.create_cell("MIDDLE_A")
     middle_a.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0)))
     middle_a.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(20, 0)))
-    middle_a.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 20),
-                                     kdb.Vector(20, 0), kdb.Vector(0, 20), 100, 100))
+    middle_a.insert(
+        kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 20), kdb.Vector(20, 0), kdb.Vector(0, 20), 100, 100)
+    )
     middle_b = layout.create_cell("MIDDLE_B")
     middle_b.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0)))
     top = layout.create_cell("TOP")
@@ -37,16 +40,19 @@ def _write_hierarchy_layout(path: Path) -> Path:
     top.insert(kdb.CellInstArray(middle_a.cell_index(), kdb.Trans(0, 0)))
     independent = layout.create_cell("INDEPENDENT")
     independent.shapes(layer).insert(kdb.Box(100, 100, 110, 110))
-    layout.write(str(path)); return path
+    layout.write(str(path))
+    return path
 
 
 def _write_two_tops(path: Path) -> Path:
     """写出互不引用的双顶层版图，替代用户回归数据驱动显式选择语义。"""
-    layout = kdb.Layout(); layout.dbu = 0.001
+    layout = kdb.Layout()
+    layout.dbu = 0.001
     layer = layout.layer(kdb.LayerInfo(1, 0))
     for name, offset in (("cell1", 0), ("test", 1000)):
         layout.create_cell(name).shapes(layer).insert(kdb.Box(offset, 0, offset + 100, 100))
-    layout.write(str(path)); return path
+    layout.write(str(path))
+    return path
 
 
 def test_open_generated_layout_and_inspect_hierarchy(tmp_path: Path) -> None:
@@ -69,8 +75,11 @@ def test_cell_hierarchy_returns_complete_dag_without_expanding_occurrences(tmp_p
     # 未被 TOP 引用的另一顶层仍保留；100×100 AREF 也不产生一万个条目。
     assert type(hierarchy) is dict
     assert hierarchy == {
-        "LEAF": (), "MIDDLE_A": ("LEAF",), "MIDDLE_B": ("LEAF",),
-        "TOP": ("MIDDLE_A", "MIDDLE_B"), "INDEPENDENT": (),
+        "LEAF": (),
+        "MIDDLE_A": ("LEAF",),
+        "MIDDLE_B": ("LEAF",),
+        "TOP": ("MIDDLE_A", "MIDDLE_B"),
+        "INDEPENDENT": (),
     }
     assert all(type(children) is tuple for children in hierarchy.values())
 
@@ -132,7 +141,8 @@ def test_recursive_polygon_scan_is_public_and_lifetime_bounded(tmp_path: Path) -
     """公共容量扫描迭代器应只依赖打开的数据库，并能遍历 Polygon 类图形。"""
     source = write_advanced_layout(tmp_path / "scan.gds")
     database = LayoutDB.open(source)
-    layer = LayerSpec(1, 0); box = database.bbox()
+    layer = LayerSpec(1, 0)
+    box = database.bbox()
     assert box is not None
     assert sum(1 for _ in database.recursive_polygon_shapes(layer, box)) > 0
     database.close()
@@ -142,15 +152,19 @@ def test_recursive_polygon_scan_is_public_and_lifetime_bounded(tmp_path: Path) -
 
 def _write_layered_layout(path: Path) -> Path:
     """写出多层版图：各层图形位置错开，层 3 只出现在选定子树外的另一顶层。"""
-    layout = kdb.Layout(); layout.dbu = 0.001
-    one = layout.layer(kdb.LayerInfo(1, 0)); two = layout.layer(kdb.LayerInfo(2, 5))
-    leaf = layout.create_cell("LEAF"); leaf.shapes(one).insert(kdb.Box(10, 10, 30, 40))
+    layout = kdb.Layout()
+    layout.dbu = 0.001
+    one = layout.layer(kdb.LayerInfo(1, 0))
+    two = layout.layer(kdb.LayerInfo(2, 5))
+    leaf = layout.create_cell("LEAF")
+    leaf.shapes(one).insert(kdb.Box(10, 10, 30, 40))
     top = layout.create_cell("TOP")
     top.insert(kdb.CellInstArray(leaf.cell_index(), kdb.Trans(0, 0)))
     top.shapes(two).insert(kdb.Box(-50, -20, 500, 80))
     other = layout.create_cell("OTHER")
     other.shapes(layout.layer(kdb.LayerInfo(3, 0))).insert(kdb.Box(0, 0, 5, 5))
-    layout.write(str(path)); return path
+    layout.write(str(path))
+    return path
 
 
 def test_layer_bbox_filters_target_layer_and_subtree(tmp_path: Path) -> None:
@@ -167,17 +181,17 @@ def test_layer_bbox_filters_target_layer_and_subtree(tmp_path: Path) -> None:
 
 def _write_transformed_layout(path: Path) -> Path:
     """写出含 AREF、R90 旋转与镜像实例的目标层版图，坐标相互错开。"""
-    layout = kdb.Layout(); layout.dbu = 0.001
+    layout = kdb.Layout()
+    layout.dbu = 0.001
     one = layout.layer(kdb.LayerInfo(1, 0))
-    unit = layout.create_cell("UNIT"); unit.shapes(one).insert(kdb.Box(0, 0, 10, 5))
+    unit = layout.create_cell("UNIT")
+    unit.shapes(one).insert(kdb.Box(0, 0, 10, 5))
     top = layout.create_cell("TOP")
-    top.insert(kdb.CellInstArray(unit.cell_index(), kdb.Trans(100, 0),
-                                 kdb.Vector(20, 0), kdb.Vector(0, 10), 3, 2))
-    top.insert(kdb.CellInstArray(unit.cell_index(),
-                                 kdb.Trans(kdb.Trans.R90, 0, 100)))
-    top.insert(kdb.CellInstArray(unit.cell_index(),
-                                 kdb.Trans(kdb.Trans.M0, 50, 50)))
-    layout.write(str(path)); return path
+    top.insert(kdb.CellInstArray(unit.cell_index(), kdb.Trans(100, 0), kdb.Vector(20, 0), kdb.Vector(0, 10), 3, 2))
+    top.insert(kdb.CellInstArray(unit.cell_index(), kdb.Trans(kdb.Trans.R90, 0, 100)))
+    top.insert(kdb.CellInstArray(unit.cell_index(), kdb.Trans(kdb.Trans.M0, 50, 50)))
+    layout.write(str(path))
+    return path
 
 
 def test_layer_bbox_covers_aref_rotation_and_mirror_instances(tmp_path: Path) -> None:
@@ -193,6 +207,5 @@ def test_layer_bbox_covers_aref_rotation_and_mirror_instances(tmp_path: Path) ->
 def test_importing_layout_does_not_load_geometry() -> None:
     """基础版图层不得因公共导入而反向加载几何输出层。"""
     command = "import sys, layout; assert not any(n == 'geometry' or n.startswith('geometry.') for n in sys.modules)"
-    completed = subprocess.run([sys.executable, "-c", command], check=False, capture_output=True,
-                               text=True)
+    completed = subprocess.run([sys.executable, "-c", command], check=False, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr

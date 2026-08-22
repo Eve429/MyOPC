@@ -49,8 +49,7 @@ class DbuBox:
         if not isinstance(margin, Integral) or margin < 0:
             raise ValueError("margin must be a non-negative integer DBU value")
         margin = int(margin)
-        return DbuBox(self.left - margin, self.bottom - margin,
-                      self.right + margin, self.top + margin)
+        return DbuBox(self.left - margin, self.bottom - margin, self.right + margin, self.top + margin)
 
     def intersection(self, other: DbuBox) -> DbuBox | None:
         """返回正面积交集；分离或仅接触时返回 None。"""
@@ -85,6 +84,7 @@ class LayerSpec:
         object.__setattr__(self, "datatype", int(self.datatype))
         if self.layer < 0 or self.datatype < 0:
             raise ValueError("layer and datatype must be non-negative")
+
 
 @dataclass(frozen=True, slots=True)
 class LayerShapeStats:

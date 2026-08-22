@@ -52,8 +52,7 @@ class TestBinaryL2:
         nominal = torch.ones((4, 4))  # 全图不一致
         ownership = torch.ones((4, 4), dtype=torch.bool)
         ownership[:, 2:] = False  # 右半不属于本 core
-        assert evaluate_binary_l2(target, nominal,
-                                  ownership_mask=ownership) == 8  # 左半
+        assert evaluate_binary_l2(target, nominal, ownership_mask=ownership) == 8  # 左半
 
     def test_2d_ownership_accepts_single_image_batch_only(self):
         """[H,W] ownership 只与单图 batch 对齐；B>1 时必须显式给 [B,H,W]。"""
@@ -61,12 +60,11 @@ class TestBinaryL2:
         nominal = torch.ones((1, 4, 4))
         ownership = torch.zeros((4, 4), dtype=torch.bool)
         ownership[0, 0] = True  # 只统计 1 个像素
-        assert evaluate_binary_l2(target, nominal,
-                                  ownership_mask=ownership) == 1
+        assert evaluate_binary_l2(target, nominal, ownership_mask=ownership) == 1
         with pytest.raises(ValueError, match="ownership_mask"):
             evaluate_binary_l2(  # 两张图不能共用一张 2D ownership
-                torch.zeros((2, 4, 4)), torch.zeros((2, 4, 4)),
-                ownership_mask=ownership)
+                torch.zeros((2, 4, 4)), torch.zeros((2, 4, 4)), ownership_mask=ownership
+            )
 
     def test_shape_mismatch_fails(self):
         """target 与 nominal 形状不一致时失败。"""
@@ -76,15 +74,14 @@ class TestBinaryL2:
     def test_wrong_ndim_fails(self):
         """四维输入不是 [H,W]/[B,H,W]，失败。"""
         with pytest.raises(ValueError, match="形状"):
-            evaluate_binary_l2(torch.zeros((2, 3, 4, 5)),
-                               torch.zeros((2, 3, 4, 5)))
+            evaluate_binary_l2(torch.zeros((2, 3, 4, 5)), torch.zeros((2, 3, 4, 5)))
 
     def test_ownership_shape_mismatch_fails(self):
         """ownership 形状与评价图不一致时失败。"""
         with pytest.raises(ValueError, match="ownership_mask"):
-            evaluate_binary_l2(torch.zeros((1, 4, 5)),
-                               torch.zeros((1, 4, 5)),
-                               ownership_mask=torch.ones((3, 4), dtype=torch.bool))
+            evaluate_binary_l2(
+                torch.zeros((1, 4, 5)), torch.zeros((1, 4, 5)), ownership_mask=torch.ones((3, 4), dtype=torch.bool)
+            )
 
 
 class TestPVBand:
@@ -108,8 +105,7 @@ class TestPVBand:
         minimum = torch.zeros((4, 4))
         ownership = torch.ones((4, 4), dtype=torch.bool)
         ownership[1:, :] = False  # 只统计首行
-        assert evaluate_pvband(maximum, minimum,
-                               ownership_mask=ownership) == 4
+        assert evaluate_pvband(maximum, minimum, ownership_mask=ownership) == 4
 
     def test_shape_mismatch_fails(self):
         """maximum 与 minimum 形状不一致时失败。"""
@@ -130,8 +126,7 @@ class TestEdgeProbes:
         """四种 nominal 情形分别产生 +1/-1/0(ambiguous)/0(无违规)。"""
         target, nominal = self._canvas_pair()
         # 四个位置对：inner 在透光侧、outer 在不透光侧（target 语义有效）
-        pairs = [((2, 2), (3, 2)), ((2, 5), (3, 5)),
-                 ((5, 2), (6, 2)), ((5, 5), (6, 5))]
+        pairs = [((2, 2), (3, 2)), ((2, 5), (3, 5)), ((5, 2), (6, 2)), ((5, 5), (6, 5))]
         for inner, outer in pairs:
             target[0, inner[1], inner[0]] = 1.0
         # 段 0：印刷不足（inner/outer 都未打印）→ +1 外移（全零默认即是）
@@ -143,12 +138,9 @@ class TestEdgeProbes:
         # 段 3：无违规（inner 打印、outer 未打印）→ 0
         nominal[0, 5, 5] = 1.0
         batches = torch.zeros(4, dtype=torch.long)
-        inner_xy = torch.tensor([[p[0][0], p[0][1]] for p in pairs],
-                                dtype=torch.float64)
-        outer_xy = torch.tensor([[p[1][0], p[1][1]] for p in pairs],
-                                dtype=torch.float64)
-        result = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        inner_xy = torch.tensor([[p[0][0], p[0][1]] for p in pairs], dtype=torch.float64)
+        outer_xy = torch.tensor([[p[1][0], p[1][1]] for p in pairs], dtype=torch.float64)
+        result = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert isinstance(result, EPEEvaluation)  # 返回评价结构
         assert torch.all(result.valid)  # 四段全部有效
         assert result.directions.tolist() == [1, -1, 0, 0]  # 方向表
@@ -162,8 +154,7 @@ class TestEdgeProbes:
         batches = torch.tensor([0, 0])
         inner_xy = torch.tensor([[-0.6, 2.0], [2.0, 2.0]])  # x round 到 -1
         outer_xy = torch.tensor([[3.0, 2.0], [8.4, 2.0]])  # 第二段 x=8 越界
-        result = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        result = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert result.valid.tolist() == [False, False]
         assert result.directions.tolist() == [0, 0]  # 无效不产生方向
 
@@ -174,8 +165,7 @@ class TestEdgeProbes:
         batches = torch.tensor([1])  # 只有 1 张图
         inner_xy = torch.tensor([[2.0, 2.0]])
         outer_xy = torch.tensor([[3.0, 2.0]])
-        result = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        result = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert not bool(result.valid[0])
 
     def test_coincident_probes_are_invalid(self):
@@ -185,8 +175,7 @@ class TestEdgeProbes:
         batches = torch.tensor([0])
         inner_xy = torch.tensor([[2.4, 2.4]])  # round 到 (2,2)
         outer_xy = torch.tensor([[2.4, 2.4]])  # 同一像素
-        result = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        result = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert not bool(result.valid[0])
 
     def test_target_semantics_must_hold(self):
@@ -198,8 +187,7 @@ class TestEdgeProbes:
         outer_xy = torch.tensor([[3.0, 2.0], [6.0, 5.0]])
         target[0, 5, 5] = 1.0  # 只给段 1 的 inner 透光
         target[0, 5, 6] = 1.0  # 段 1 的 outer 也透光 → 无效
-        result = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        result = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert result.valid.tolist() == [False, False]
         assert result.directions.tolist() == [0, 0]
 
@@ -211,8 +199,7 @@ class TestEdgeProbes:
         batches = torch.tensor([0])
         inner_xy = torch.tensor([[2.4, 3.6]])  # round → (2,4)
         outer_xy = torch.tensor([[5.4, 3.6]])  # round → (5,4)
-        result = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        result = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert bool(result.valid[0])  # 取到了正确的像素
         assert result.violation_count == 0  # 无违规
 
@@ -224,11 +211,9 @@ class TestEdgeProbes:
         batches = torch.tensor([0])
         inner_xy = torch.tensor([[2.0, 2.0]])
         outer_xy = torch.tensor([[3.0, 2.0]])
-        default = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        default = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert default.directions.tolist() == [1]  # 0.5 下未打印 → 外移
-        legacy = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy, threshold=0.499)
+        legacy = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy, threshold=0.499)
         assert legacy.directions.tolist() == [0]  # 0.499 下已打印 → 无违规
 
     def test_batch_indices_select_images(self):
@@ -241,8 +226,7 @@ class TestEdgeProbes:
         batches = torch.tensor([0, 1])
         inner_xy = torch.tensor([[2.0, 2.0], [2.0, 2.0]])
         outer_xy = torch.tensor([[3.0, 2.0], [3.0, 2.0]])
-        result = evaluate_edge_probes(
-            target, nominal, batches, inner_xy, outer_xy)
+        result = evaluate_edge_probes(target, nominal, batches, inner_xy, outer_xy)
         assert result.directions.tolist() == [0, 1]
 
     def test_misaligned_probe_shapes_fail(self):
@@ -250,12 +234,12 @@ class TestEdgeProbes:
         target, nominal = self._canvas_pair()
         with pytest.raises(ValueError, match="对齐"):
             evaluate_edge_probes(
-                target, nominal, torch.tensor([0, 0]),
-                torch.zeros((1, 2)), torch.zeros((1, 2)))  # 数量 2 对 1
+                target, nominal, torch.tensor([0, 0]), torch.zeros((1, 2)), torch.zeros((1, 2))
+            )  # 数量 2 对 1
         with pytest.raises(ValueError, match="对齐"):
             evaluate_edge_probes(
-                target, nominal, torch.tensor([0]),
-                torch.zeros((1, 3)), torch.zeros((1, 3)))  # 3 列坐标
+                target, nominal, torch.tensor([0]), torch.zeros((1, 3)), torch.zeros((1, 3))
+            )  # 3 列坐标
 
     def test_device_mismatch_fails(self):
         """target 与 nominal 设备不一致时失败（需要 CUDA）。"""
@@ -263,8 +247,12 @@ class TestEdgeProbes:
             pytest.skip("当前环境没有 CUDA")
         with pytest.raises(ValueError, match="设备必须一致"):
             evaluate_edge_probes(
-                torch.zeros((1, 4, 4)), torch.zeros((1, 4, 4)).cuda(),
-                torch.tensor([0]), torch.zeros((1, 2)), torch.zeros((1, 2)))
+                torch.zeros((1, 4, 4)),
+                torch.zeros((1, 4, 4)).cuda(),
+                torch.tensor([0]),
+                torch.zeros((1, 2)),
+                torch.zeros((1, 2)),
+            )
 
 
 class TestLithographyContract:

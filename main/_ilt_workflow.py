@@ -1,27 +1,27 @@
 """像素 ILT 公共工作流：方法无关的 macro 生命周期（准备/求解/终评/合并）。"""
 
-import sys  # 把仓库根加入模块路径，保证免安装直接运行
-import time  # perf_counter 阶段计时
-import warnings  # 负板补铬提示
-from collections.abc import Callable  # 方法钩子类型
-from dataclasses import asdict, dataclass  # 方法描述与记录序列化
-from decimal import Decimal  # nm→DBU 精确换算
-from pathlib import Path  # 全部路径统一使用 Path 对象
+import sys
+import time
+import warnings
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from decimal import Decimal
+from pathlib import Path
 
-import numpy as np  # 二值终评画布组装
-import psutil  # summary 的 RSS 峰值采样
-import torch  # CUDA 峰值统计（显式设备）
+import numpy as np
+import psutil
+import torch
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/lithography 可导入
 
-from common.io import atomic_write_json, atomic_write_npz  # 原子写出
-from common.runtime import resolve_device  # 设备解析
-from evaluation import evaluate_binary_l2, evaluate_pvband  # 二值终评指标
-from layout import LayerSpec, LayoutDB  # 版图打开与层规格
-from lithography import ICCAD13Lithography  # 固定 ICCAD13 光刻模型
+from common.io import atomic_write_json, atomic_write_npz
+from common.runtime import resolve_device
+from evaluation import evaluate_binary_l2, evaluate_pvband
+from layout import LayerSpec, LayoutDB
+from lithography import ICCAD13Lithography
 
 # 共用 macro 生命周期（merge/最终光刻留档/GDS 写出）
 from main._macro_pipeline import (
@@ -108,11 +108,12 @@ def prepare_pixel_problems(
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
         # 负板补铬告知（每运行恰一次；与 _macro_pipeline.prepare_problems
         # 同款语义，仅 field 严格大于数据包络时提示）
-        if (layout.polarity == MaskPolarity.OPAQUE
-                and (bounds.left < layer_bounds.left
-                     or bounds.bottom < layer_bounds.bottom
-                     or bounds.right > layer_bounds.right
-                     or bounds.top > layer_bounds.top)):
+        if layout.polarity == MaskPolarity.OPAQUE and (
+            bounds.left < layer_bounds.left
+            or bounds.bottom < layer_bounds.bottom
+            or bounds.right > layer_bounds.right
+            or bounds.top > layer_bounds.top
+        ):
             scale = Decimal(dbu_nm)
             warnings.warn(
                 "负板（opaque）：处理框大于数据包络，prepare 阶段已补画包络外"
@@ -125,7 +126,9 @@ def prepare_pixel_problems(
                 f"({Decimal(layer_bounds.left) * scale},"
                 f"{Decimal(layer_bounds.bottom) * scale})-"
                 f"({Decimal(layer_bounds.right) * scale},"
-                f"{Decimal(layer_bounds.top) * scale}) nm", stacklevel=2)
+                f"{Decimal(layer_bounds.top) * scale}) nm",
+                stacklevel=2,
+            )
         problems_dir = output.work_dir / "pixel_problems"  # problem 存放目录
         problems_dir.mkdir(parents=True, exist_ok=True)  # 创建目录结构
         entries = []  # 逐 macro 计划条目
@@ -134,8 +137,8 @@ def prepare_pixel_problems(
             # 完整相交物化一次；实际 box 整像素校验在 problem 构造内前置
             batch = database.query([layer], macro.query_box).materialize_intersecting()
             problem = prepare_pixel_macro_problem(
-                batch, layer, layout.polarity, macro,
-                planning_bounds=bounds, data_bounds=layer_bounds)
+                batch, layer, layout.polarity, macro, planning_bounds=bounds, data_bounds=layer_bounds
+            )
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")
             pixel_count_sum += int(problem.ownership_shape[0] * problem.ownership_shape[1])
             entries.append(
@@ -259,7 +262,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     macro_summaries = []  # 逐 macro 摘要
     outer_bar = None  # 多 macro 外层进度条
     if macro_count > 1 and output.show_progress:
-        from tqdm import tqdm  # 进度显示库
+        from tqdm import tqdm
 
         outer_bar = tqdm(total=macro_count, desc="macros", unit="macro", position=0)
     try:  # 异常路径也要收尾外层进度条
@@ -269,7 +272,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
             started = time.perf_counter()  # 单 macro 计时
             bar = None  # 内层 tile 进度条
             if output.show_progress:
-                from tqdm import tqdm  # 进度显示库
+                from tqdm import tqdm
 
                 # 求解进度 = 评价状态数 × core 数（终评批次不计入求解 total）
                 bar = tqdm(
@@ -352,7 +355,9 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     if output.save_final_lithography:  # 开启时优化后与源版图各留档一套
         manifest = save_final_lithography(plan, final_path, model, algo.batch_size, work_dir / "final_lithography")
         # 源版图对照：同一模型同一网格参数（收尾前向次数翻倍的既定代价）
-        source_manifest = save_source_lithography(plan, Path(plan["layout"]), model, algo.batch_size, work_dir / "final_lithography_source")
+        source_manifest = save_source_lithography(
+            plan, Path(plan["layout"]), model, algo.batch_size, work_dir / "final_lithography_source"
+        )
     peak_rss = max(peak_rss, process.memory_info().rss)  # 收尾前采峰
     cuda_peak = int(torch.cuda.max_memory_allocated(cuda_stats_device)) if cuda_stats_device is not None else None
     summary = {

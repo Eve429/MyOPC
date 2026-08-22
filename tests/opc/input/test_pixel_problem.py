@@ -4,8 +4,8 @@ import klayout.db as kdb
 import numpy as np
 import pytest
 
-import opc.input.edge  # edge 零调用守卫的补丁宿主
-import opc.input.pixel.problem as pixel_problem  # spy 补丁宿主
+import opc.input.edge
+import opc.input.pixel.problem as pixel_problem
 from layout import DbuBox, LayerSpec, RegionBatch
 from opc.input import plan_macros, rasterize_mask_canvas
 from opc.input.pixel import (
@@ -23,14 +23,12 @@ CANVAS = 256
 
 def _macro(**overrides):
     """返回单 macro 规划（默认 80² 版图 2×2 core）。"""
-    values = {"macro_grid": (1, 1), "core_size_dbu": 40, "context_dbu": 20,
-              "pixel_dbu": 4, "canvas_pixels": 256}
+    values = {"macro_grid": (1, 1), "core_size_dbu": 40, "context_dbu": 20, "pixel_dbu": 4, "canvas_pixels": 256}
     values.update(overrides)
     return plan_macros(BOUNDS, **values)[0]
 
 
-def _prepare(region, macro=None, polarity="clear",
-             planning_bounds=BOUNDS, data_bounds=BOUNDS):
+def _prepare(region, macro=None, polarity="clear", planning_bounds=BOUNDS, data_bounds=BOUNDS):
     """把原生 Region 包装为 RegionBatch 并生成像素 macro 问题。
 
     默认规划与数据包络同为 BOUNDS（未配处理框时二者天然一致的形态）；
@@ -39,8 +37,8 @@ def _prepare(region, macro=None, polarity="clear",
     macro = macro if macro is not None else _macro()
     batch = RegionBatch({LAYER: region}, macro.query_box)
     return prepare_pixel_macro_problem(
-        batch, LAYER, polarity, macro, planning_bounds=planning_bounds,
-        data_bounds=data_bounds)
+        batch, LAYER, polarity, macro, planning_bounds=planning_bounds, data_bounds=data_bounds
+    )
 
 
 def _binary_over_ownership(problem):
@@ -51,7 +49,7 @@ def _binary_over_ownership(problem):
     hm, wm = problem.ownership_shape
     r0 = (box.bottom - query.bottom) // pixel
     c0 = (box.left - query.left) // pixel
-    return problem.target_u8[r0:r0 + hm, c0:c0 + wm] >= 128
+    return problem.target_u8[r0 : r0 + hm, c0 : c0 + wm] >= 128
 
 
 def _canvas_cells(problem, core_index):
@@ -161,8 +159,7 @@ class TestCoreMapping:
             assert np.array_equal(canvas[rows, cols], expected)
             # trainable 像素的 target 画布值与 query 栅格逐位一致（两画布同布局）
             target_canvas = problem.target_canvas(core_index)
-            assert np.array_equal(
-                target_canvas[rows, cols], problem.target_u8[gy, gx])
+            assert np.array_equal(target_canvas[rows, cols], problem.target_u8[gy, gx])
             collected.update(int(v) for v in expected)
         assert collected == set(range(hm * wm))  # 每个 macro 像素至少可见一次
 
@@ -174,10 +171,8 @@ class TestCoreMapping:
             spec = problem.macro.core(core_index)
             # 独立路径：该 core 自己的 ownership 框栅格化（对齐框 → 二值覆盖）
             region = kdb.Region(spec.ownership_box.to_native())
-            mask = rasterize_mask_canvas(
-                region, spec.context_box, pixel, CANVAS, polarity="clear")
-            assert np.array_equal(
-                problem.ownership_canvas(core_index), mask >= 0.5)
+            mask = rasterize_mask_canvas(region, spec.context_box, pixel, CANVAS, polarity="clear")
+            assert np.array_equal(problem.ownership_canvas(core_index), mask >= 0.5)
 
 
 class TestLayoutBounds:
@@ -200,23 +195,19 @@ class TestLayoutBounds:
         region = kdb.Region(kdb.Box(8, 8, 40, 48))
         bounded = _prepare(region)
         # 暗边界完全盖住 query 时不置零任何像素，作为无干预参照
-        reference = _prepare(region, planning_bounds=_macro().query_box,
-                             data_bounds=_macro().query_box)
+        reference = _prepare(region, planning_bounds=_macro().query_box, data_bounds=_macro().query_box)
         assert np.array_equal(bounded.target_u8, reference.target_u8)
 
     def test_interior_macro_not_zeroed(self):
         """内部 macro（query 全在 bbox 内）：不做任何置零。"""
         bounds = DbuBox(0, 0, 240, 240)
-        macro = plan_macros(bounds, macro_grid=(3, 3), core_size_dbu=40,
-                            context_dbu=20, pixel_dbu=4,
-                            canvas_pixels=CANVAS)[4]  # 行优先中心 mr1c1
+        macro = plan_macros(
+            bounds, macro_grid=(3, 3), core_size_dbu=40, context_dbu=20, pixel_dbu=4, canvas_pixels=CANVAS
+        )[4]  # 行优先中心 mr1c1
         assert macro.query_box == DbuBox(60, 60, 180, 180)  # 全在 bounds 内
         region = kdb.Region(kdb.Box(90, 90, 150, 150))
-        problem = _prepare(region, macro=macro, planning_bounds=bounds,
-                           data_bounds=bounds)
-        reference = _prepare(region, macro=macro,
-                             planning_bounds=macro.query_box,
-                             data_bounds=macro.query_box)
+        problem = _prepare(region, macro=macro, planning_bounds=bounds, data_bounds=bounds)
+        reference = _prepare(region, macro=macro, planning_bounds=macro.query_box, data_bounds=macro.query_box)
         assert np.array_equal(problem.target_u8, reference.target_u8)
 
     def test_ownership_pixels_never_modified(self):
@@ -225,21 +216,20 @@ class TestLayoutBounds:
         for polarity in ("clear", "opaque"):
             problem = _prepare(region, polarity=polarity)
             reference = _prepare(
-                region, polarity=polarity, planning_bounds=_macro().query_box,
-                data_bounds=_macro().query_box)
+                region, polarity=polarity, planning_bounds=_macro().query_box, data_bounds=_macro().query_box
+            )
             query = problem.macro.query_box
             box = problem.macro.ownership_box
             r0 = (box.bottom - query.bottom) // 4
             c0 = (box.left - query.left) // 4
-            block = problem.target_u8[r0:r0 + 20, c0:c0 + 20]
-            other = reference.target_u8[r0:r0 + 20, c0:c0 + 20]
+            block = problem.target_u8[r0 : r0 + 20, c0 : c0 + 20]
+            other = reference.target_u8[r0 : r0 + 20, c0 : c0 + 20]
             assert np.array_equal(block, other)
 
     def test_ownership_not_within_bounds_rejected(self):
         """bounds 未四向包含 ownership：显式失败，不猜测场边界。"""
         with pytest.raises(ValueError, match="包含"):
-            _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)),
-                     planning_bounds=DbuBox(0, 0, 40, 80))
+            _prepare(kdb.Region(kdb.Box(8, 8, 40, 48)), planning_bounds=DbuBox(0, 0, 40, 80))
 
     # 2026-08-22 移除 dark_bounds 整像素拒绝：几何方案下包络边由补铬的
     # 真实覆盖表达（非对齐包络产生模拟边界像素），不再要求交叠边落格点。
@@ -250,19 +240,27 @@ class TestPixelAlignment:
 
     def test_shortened_final_core_allowed(self):
         """末端 core 缩短但整像素：合法（core 1 宽 20 = 5 像素）。"""
-        macro = plan_macros(DbuBox(0, 0, 100, 80), macro_grid=(1, 1),
-                            core_size_dbu=40, context_dbu=20, pixel_dbu=4,
-                            canvas_pixels=CANVAS)[0]
-        problem = _prepare(kdb.Region(kdb.Box(10, 10, 90, 70)), macro=macro,
-                           planning_bounds=DbuBox(0, 0, 100, 80),
-                           data_bounds=DbuBox(0, 0, 100, 80))
+        macro = plan_macros(
+            DbuBox(0, 0, 100, 80),
+            macro_grid=(1, 1),
+            core_size_dbu=40,
+            context_dbu=20,
+            pixel_dbu=4,
+            canvas_pixels=CANVAS,
+        )[0]
+        problem = _prepare(
+            kdb.Region(kdb.Box(10, 10, 90, 70)),
+            macro=macro,
+            planning_bounds=DbuBox(0, 0, 100, 80),
+            data_bounds=DbuBox(0, 0, 100, 80),
+        )
         assert problem.ownership_shape == (20, 25)  # 100/4 × 80/4
 
     def test_nonaligned_bbox_rejected_before_raster(self, monkeypatch):
         """bbox 宽度非整像素：栅格化前 ValueError，不产 partial 像素。"""
-        macro = plan_macros(DbuBox(0, 0, 83, 80), macro_grid=(1, 1),
-                            core_size_dbu=40, context_dbu=20, pixel_dbu=4,
-                            canvas_pixels=CANVAS)[0]
+        macro = plan_macros(
+            DbuBox(0, 0, 83, 80), macro_grid=(1, 1), core_size_dbu=40, context_dbu=20, pixel_dbu=4, canvas_pixels=CANVAS
+        )[0]
 
         def _forbidden(*args, **kwargs):
             """非整像素必须在栅格化前失败。"""
@@ -281,8 +279,7 @@ class TestReconstruct:
         problem = _prepare(region, polarity=polarity)
         binary = _binary_over_ownership(problem)
         rebuilt = reconstruct_pixel_region(problem, binary)
-        coverage = rasterize_region_window(
-            rebuilt, problem.macro.ownership_box, problem.macro.pixel_dbu)
+        coverage = rasterize_region_window(rebuilt, problem.macro.ownership_box, problem.macro.pixel_dbu)
         return binary, coverage >= 0.5, problem, rebuilt
 
     def _assert_roundtrip(self, region, polarity="clear"):
@@ -290,12 +287,11 @@ class TestReconstruct:
         binary, coverage, problem, rebuilt = self._roundtrip(region, polarity)
         material = binary if polarity == "clear" else ~binary
         assert np.array_equal(coverage, material)
-        pixel2 = problem.macro.pixel_dbu ** 2
+        pixel2 = problem.macro.pixel_dbu**2
         assert int(rebuilt.area()) == int(material.sum()) * pixel2
         box = problem.macro.ownership_box
         bbox = rebuilt.bbox()
-        assert (bbox.left >= box.left and bbox.bottom >= box.bottom
-                and bbox.right <= box.right and bbox.top <= box.top)
+        assert bbox.left >= box.left and bbox.bottom >= box.bottom and bbox.right <= box.right and bbox.top <= box.top
 
     def test_rectangle(self):
         """实心矩形：clear/opaque 双向一致。"""
@@ -304,19 +300,26 @@ class TestReconstruct:
 
     def test_hole(self):
         """带孔图形：孔内不透光（clear）/孔外材料（opaque）。"""
-        region = kdb.Region(kdb.Box(4, 4, 76, 76)) - kdb.Region(
-            kdb.Box(32, 32, 48, 48))
+        region = kdb.Region(kdb.Box(4, 4, 76, 76)) - kdb.Region(kdb.Box(32, 32, 48, 48))
         self._assert_roundtrip(region)
         self._assert_roundtrip(region, "opaque")
 
     def test_concave_and_diagonal(self):
         """L 形与 45° 斜边（阶梯化后回写一致）。"""
-        concave = kdb.Region(kdb.Polygon([
-            kdb.Point(8, 8), kdb.Point(48, 8), kdb.Point(48, 24),
-            kdb.Point(24, 24), kdb.Point(24, 48), kdb.Point(8, 48)]))
+        concave = kdb.Region(
+            kdb.Polygon(
+                [
+                    kdb.Point(8, 8),
+                    kdb.Point(48, 8),
+                    kdb.Point(48, 24),
+                    kdb.Point(24, 24),
+                    kdb.Point(24, 48),
+                    kdb.Point(8, 48),
+                ]
+            )
+        )
         self._assert_roundtrip(concave)
-        diagonal = kdb.Region(kdb.Polygon([
-            kdb.Point(8, 8), kdb.Point(48, 8), kdb.Point(8, 48)]))
+        diagonal = kdb.Region(kdb.Polygon([kdb.Point(8, 8), kdb.Point(48, 8), kdb.Point(8, 48)]))
         self._assert_roundtrip(diagonal)
 
     def test_multi_island(self):
@@ -339,8 +342,7 @@ class TestReconstruct:
         with pytest.raises(ValueError, match="布尔数组"):
             reconstruct_pixel_region(problem, np.zeros((5, 5), dtype=np.bool_))
         with pytest.raises(ValueError, match="布尔数组"):
-            reconstruct_pixel_region(
-                problem, np.zeros(problem.ownership_shape, dtype=np.uint8))
+            reconstruct_pixel_region(problem, np.zeros(problem.ownership_shape, dtype=np.uint8))
 
 
 class TestCorruption:
@@ -348,8 +350,7 @@ class TestCorruption:
 
     def _saved(self, tmp_path):
         """保存一个合法 problem 并返回路径。"""
-        return _prepare(kdb.Region(kdb.Box(8, 8, 40, 48))).save(
-            tmp_path / "p.npz")
+        return _prepare(kdb.Region(kdb.Box(8, 8, 40, 48))).save(tmp_path / "p.npz")
 
     @staticmethod
     def _retamper(path, tmp_path, name, **replacements):
@@ -362,40 +363,32 @@ class TestCorruption:
 
     def test_wrong_format_name_rejected(self, tmp_path):
         """格式名不符明确失败。"""
-        bad = self._retamper(
-            self._saved(tmp_path), tmp_path, "bad.npz",
-            format=np.array(["something.else"]))
+        bad = self._retamper(self._saved(tmp_path), tmp_path, "bad.npz", format=np.array(["something.else"]))
         with pytest.raises(ValueError, match="format name"):
             PixelMacroProblem.load(bad)
 
     def test_wrong_version_rejected(self, tmp_path):
         """版本号不符明确失败。"""
-        bad = self._retamper(
-            self._saved(tmp_path), tmp_path, "bad.npz",
-            format_version=np.array([99], dtype=np.int32))
+        bad = self._retamper(self._saved(tmp_path), tmp_path, "bad.npz", format_version=np.array([99], dtype=np.int32))
         with pytest.raises(ValueError, match="format version"):
             PixelMacroProblem.load(bad)
 
     def test_tampered_dtype_rejected(self, tmp_path):
         """target_u8 被换成 float：构造即校验失败。"""
         bad = self._retamper(
-            self._saved(tmp_path), tmp_path, "bad.npz",
-            target_u8=np.full((30, 30), 255, dtype=np.float32))
+            self._saved(tmp_path), tmp_path, "bad.npz", target_u8=np.full((30, 30), 255, dtype=np.float32)
+        )
         with pytest.raises(ValueError, match="uint8"):
             PixelMacroProblem.load(bad)
 
     def test_tampered_shape_rejected(self, tmp_path):
         """target_u8 被截断：形状与网格整像素一致性失败。"""
-        bad = self._retamper(
-            self._saved(tmp_path), tmp_path, "bad.npz",
-            target_u8=np.zeros((10, 10), dtype=np.uint8))
+        bad = self._retamper(self._saved(tmp_path), tmp_path, "bad.npz", target_u8=np.zeros((10, 10), dtype=np.uint8))
         with pytest.raises(ValueError, match="uint8"):
             PixelMacroProblem.load(bad)
 
     def test_corrupted_cuts_rejected(self, tmp_path):
         """macro 切线损坏：MacroSpec 契约在加载期传播失败。"""
-        bad = self._retamper(
-            self._saved(tmp_path), tmp_path, "bad.npz",
-            macro_x_cuts=np.array([0], dtype=np.int64))
+        bad = self._retamper(self._saved(tmp_path), tmp_path, "bad.npz", macro_x_cuts=np.array([0], dtype=np.int64))
         with pytest.raises(ValueError):
             PixelMacroProblem.load(bad)

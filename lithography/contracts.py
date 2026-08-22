@@ -31,6 +31,7 @@ class LithographyModel(Protocol):
     def condition(self, name: str) -> ProcessCondition: ...
 
     def forward_many(
-        self, mask: torch.Tensor,
+        self,
+        mask: torch.Tensor,
         conditions: Sequence[ProcessCondition],
     ) -> dict[str, torch.Tensor]: ...

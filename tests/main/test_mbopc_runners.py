@@ -25,28 +25,41 @@ def _write_gds(tmp_path):
     top = layout.create_cell("TOP")  # 唯一顶层
     shapes = top.shapes(layout.layer(1, 0))  # 目标层
     shapes.insert(kdb.Box(10, 10, 90, 80))  # 左侧实心矩形
-    hole_region = (kdb.Region(kdb.Box(100, 10, 150, 80)) -  # 右侧外框
-                   kdb.Region(kdb.Box(115, 25, 135, 65)))  # 中心 hole
-    hole_region.insert_into(layout, top.cell_index(),
-                            layout.layer(1, 0))  # 插入带孔图形
+    hole_region = (
+        kdb.Region(kdb.Box(100, 10, 150, 80))  # 右侧外框
+        - kdb.Region(kdb.Box(115, 25, 135, 65))
+    )  # 中心 hole
+    hole_region.insert_into(layout, top.cell_index(), layout.layer(1, 0))  # 插入带孔图形
     top.shapes(layout.layer(1, 0)).insert(  # 底部斜边三角形
-        kdb.Polygon([(20, 82), (60, 82), (20, 88)]))
+        kdb.Polygon([(20, 82), (60, 82), (20, 88)])
+    )
     path = tmp_path / "reticle.gds"  # 输出路径
     layout.write(str(path))  # 写盘
     return path  # 返回路径
 
 
-def _write_config(tmp_path, layout_path, macro_grid="[1, 1]",
-                   layout_extra="", **overrides):
+def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", layout_extra="", **overrides):
     """按默认契约生成 MB-OPC TOML，允许键值覆盖后返回路径。"""
     values = {  # 默认值满足全部网格与迭代契约
-        "macro_grid": macro_grid, "core_size_nm": 40, "context_nm": 20,
-        "pixel_nm": 4, "corner_nm": 8, "segment_nm": 16,
-        "max_displacement_nm": 10, "miter_limit": 4.0,
-        "iterations": 2, "initial_step_nm": 2, "decay_every": 2,
-        "epe_distance_nm": 4, "batch_size": 4, "target_cache_mb": 16,
-        "device": "cpu", "save_final_lithography": "true",
-        "show_progress": "false", "final_cell_mode": "single_cell"}
+        "macro_grid": macro_grid,
+        "core_size_nm": 40,
+        "context_nm": 20,
+        "pixel_nm": 4,
+        "corner_nm": 8,
+        "segment_nm": 16,
+        "max_displacement_nm": 10,
+        "miter_limit": 4.0,
+        "iterations": 2,
+        "initial_step_nm": 2,
+        "decay_every": 2,
+        "epe_distance_nm": 4,
+        "batch_size": 4,
+        "target_cache_mb": 16,
+        "device": "cpu",
+        "save_final_lithography": "true",
+        "show_progress": "false",
+        "final_cell_mode": "single_cell",
+    }
     values.update(overrides)  # 应用覆盖
     text = f"""  # 组装 TOML 文本
 [layout]
@@ -95,9 +108,13 @@ final_cell_mode = "{values["final_cell_mode"]}"
 def _coverage(path, layer=_TARGET_LAYER):
     """回读 GDS 目标层全框覆盖 Region。"""
     with LayoutDB.open(path) as database:  # 打开
-        return database.query(  # 全框物化
-            [layer], DbuBox(-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30)
-        ).materialize().region(layer)  # 覆盖
+        return (
+            database.query(  # 全框物化
+                [layer], DbuBox(-(2**30), -(2**30), 2**30, 2**30)
+            )
+            .materialize()
+            .region(layer)
+        )  # 覆盖
 
 
 class TestSingleMacroRunner:
@@ -118,8 +135,12 @@ class TestSingleMacroRunner:
         work = tmp / "work"  # 工作目录
         assert summary["macro_count"] == 1  # 恰一个 macro
         assert summary["method"] == "simple_mbopc"  # 方法标识（公共层写入）
-        for key in ("rss_start_bytes", "rss_after_prepare_bytes",  # 资源字段
-                    "peak_rss_bytes", "cuda_peak_bytes"):
+        for key in (
+            "rss_start_bytes",
+            "rss_after_prepare_bytes",  # 资源字段
+            "peak_rss_bytes",
+            "cuda_peak_bytes",
+        ):
             assert key in summary, key  # 资源统计上提公共层后的新增键
         assert summary["device"].startswith("cpu")  # 测试固定 CPU
         assert (work / "plan.json").is_file()  # 计划
@@ -130,15 +151,18 @@ class TestSingleMacroRunner:
         assert (tmp / "final.gds").is_file()  # 最终合并版图
         with np.load(macro_dir / "result.npz", allow_pickle=False) as data:
             assert set(data.files) == {  # §12.3 契约键集（v2：state 词汇）
-                "format_version", "macro_id", "best_state_index",
-                "best_displacements", "stop_reason"}
+                "format_version",
+                "macro_id",
+                "best_state_index",
+                "best_displacements",
+                "stop_reason",
+            }
             assert str(data["macro_id"][0]) == summary["macros"][0]["macro_id"]
 
     def test_records_are_baseline_then_moved(self, single):
         """metrics.json 的 records[0] 是 baseline，records[1] 是移动后评价。"""
         tmp, summary = single  # 解包
-        metrics_path = (tmp / "work" / "macros" /
-                        summary["macros"][0]["macro_id"] / "metrics.json")
+        metrics_path = tmp / "work" / "macros" / summary["macros"][0]["macro_id"] / "metrics.json"
         records = json.loads(metrics_path.read_text(encoding="utf-8"))["records"]
         assert [r["state_index"] for r in records] == [0, 1, 2]  # baseline+2 状态
         assert records[0]["step_dbu"] == 0.0  # baseline 无步长
@@ -150,7 +174,8 @@ class TestSingleMacroRunner:
         tmp, summary = single  # 解包
         out_dir = tmp / "work" / "final_lithography"  # 留档目录
         manifest = json.loads(  # 读清单
-            (out_dir / "manifest.json").read_text(encoding="utf-8"))
+            (out_dir / "manifest.json").read_text(encoding="utf-8")
+        )
         assert manifest["tile_count"] > 0  # 至少一个 tile
         assert manifest["threshold"] == pytest.approx(0.5)  # 模型阈值
         for tile in manifest["tiles"]:  # 逐 tile 检查
@@ -164,7 +189,8 @@ class TestSingleMacroRunner:
         tmp, summary = single  # 解包
         out_dir = tmp / "work" / "final_lithography_source"  # 源对照目录
         manifest = json.loads(  # 读清单
-            (out_dir / "manifest.json").read_text(encoding="utf-8"))
+            (out_dir / "manifest.json").read_text(encoding="utf-8")
+        )
         assert manifest["tile_count"] > 0  # 至少一个 tile
         for tile in manifest["tiles"]:  # 逐 tile 检查
             assert (out_dir / tile["nominal_png"]).is_file()  # 连续 PNG
@@ -175,7 +201,8 @@ class TestSingleMacroRunner:
         """save=false 时两留档目录都不产生，summary 两键恒在、值为 None。"""
         gds = _write_gds(tmp_path)  # 生成版图
         summary = workflow.run_mbopc(  # 关闭留档的完整流程
-            _write_config(tmp_path, gds, save_final_lithography="false"))
+            _write_config(tmp_path, gds, save_final_lithography="false")
+        )
         assert summary["final_lithography_tiles"] is None  # 最终键 None
         assert summary["source_lithography_tiles"] is None  # 源键同款语义
         work = tmp_path / "work"  # 工作目录
@@ -196,8 +223,8 @@ class TestSingleMacroRunner:
         # plan 顶层名打开，全流程才能走到收尾
         summary = workflow.run_mbopc(_write_config(tmp_path, gds))
         assert summary["source_lithography_tiles"] > 0  # 源留档完成
-        assert (tmp_path / "work" / "final_lithography_source"
-                / "manifest.json").is_file()  # 清单在案
+        assert (tmp_path / "work" / "final_lithography_source" / "manifest.json").is_file()  # 清单在案
+
 
 class TestMultiMacroRunner:
     """多 macro 入口的独立迭代、一次合并与差异量化。"""
@@ -209,7 +236,8 @@ class TestMultiMacroRunner:
         tmp = tmp_path_factory.mktemp("multi")  # 独立目录
         gds = _write_gds(tmp)  # 生成版图（与单 macro 同一份几何）
         summary = workflow.run_mbopc(  # 2×2 macro
-            _write_config(tmp, gds, macro_grid="[2, 2]"))
+            _write_config(tmp, gds, macro_grid="[2, 2]")
+        )
         return tmp, summary  # 两件套
 
     def test_every_macro_solved_independently(self, multi):
@@ -228,7 +256,8 @@ class TestMultiMacroRunner:
         """multi 全流程调用 merge_macro_results 恰一次。"""
         gds = _write_gds(tmp_path)  # 生成版图
         config = _write_config(tmp_path, gds, macro_grid="[2, 2]")  # 配置
-        import main._mbopc_workflow as workflow_host  # merge 调用宿主（公共循环）
+        import main._mbopc_workflow as workflow_host
+
         calls = []  # 调用计数
         real = workflow_host.merge_macro_results  # 原函数
 
@@ -236,19 +265,22 @@ class TestMultiMacroRunner:
             """计数合并调用并透传。"""
             calls.append(1)
             return real(*args, **kwargs)
+
         monkeypatch.setattr(workflow_host, "merge_macro_results", _counting)
         workflow.run_mbopc(config)  # 完整流程
         assert calls == [1]  # 恰一次
 
     def test_macro_order_does_not_change_coverage(self, tmp_path, monkeypatch):
         """macro 正逆序求解的最终物理覆盖 XOR 为零（独立 macro 性质）。"""
-        import main._macro_pipeline as macro_pipeline  # plan_macros 宿主
+        import main._macro_pipeline as macro_pipeline
+
         gds = _write_gds(tmp_path)  # 生成版图
         real_plan = macro_pipeline.plan_macros  # 原函数
 
         def _reversed(*args, **kwargs):
             """反转 macro 规划顺序。"""
             return tuple(reversed(real_plan(*args, **kwargs)))
+
         finals = {}  # 顺序 → 最终版图
         for tag, reverse in (("forward", False), ("reverse", True)):  # 两种顺序
             base = tmp_path / tag  # 独立目录
@@ -258,8 +290,15 @@ class TestMultiMacroRunner:
                 monkeypatch.setattr(macro_pipeline, "plan_macros", _reversed)
             finals[tag] = workflow.run_mbopc(config)["final_layout"]
             monkeypatch.undo()  # 立即恢复
-        assert int((_coverage(finals["forward"]) ^  # 覆盖一致
-                    _coverage(finals["reverse"])).area()) == 0
+        assert (
+            int(
+                (
+                    _coverage(finals["forward"])  # 覆盖一致
+                    ^ _coverage(finals["reverse"])
+                ).area()
+            )
+            == 0
+        )
 
     def test_batch_size_does_not_change_best(self, tmp_path):
         """batch_size=2 与 4 的 best 位移逐位一致。"""
@@ -269,31 +308,32 @@ class TestMultiMacroRunner:
             base = tmp_path / f"b{batch_size}"  # 独立目录
             base.mkdir()  # 创建
             config = _write_config(  # 仅批大小不同
-                base, gds, macro_grid="[2, 2]", batch_size=batch_size)
+                base, gds, macro_grid="[2, 2]", batch_size=batch_size
+            )
             summary = workflow.run_mbopc(config)  # 完整流程
-            path = (base / "work" / "macros" /
-                    summary["macros"][0]["macro_id"] / "result.npz")
+            path = base / "work" / "macros" / summary["macros"][0]["macro_id"] / "result.npz"
             with np.load(path, allow_pickle=False) as data:  # 读 best
                 best[batch_size] = data["best_displacements"]
         np.testing.assert_array_equal(best[2], best[4])  # 批不变性
 
-    def test_invalid_geometry_macro_keeps_best_and_continues(
-            self, tmp_path, monkeypatch):
+    def test_invalid_geometry_macro_keeps_best_and_continues(self, tmp_path, monkeypatch):
         """一个 macro 候选非法时保留其较早 best，其余 macro 继续完成。"""
-        from opc.iteration.mbopc import simple  # 重建宿主
+        from opc.iteration.mbopc import simple
+
         gds = _write_gds(tmp_path)  # 生成版图
         real_reconstruct = simple.reconstruct_region  # 原函数
         poisoned = {"active": False, "hits": 0}  # 注入状态
 
         def _failing_for_second_macro(problem, displacements):
             """第二个 macro 的首个非零位移候选抛非法几何。"""
-            if (problem.macro.macro_id == "mr0c1" and
-                    np.any(displacements != 0.0)):  # 该 macro 的候选
+            if problem.macro.macro_id == "mr0c1" and np.any(displacements != 0.0):  # 该 macro 的候选
                 poisoned["hits"] += 1
                 if poisoned["hits"] == 1:
-                    from opc.errors import ReconstructionError  # 局部导入
+                    from opc.errors import ReconstructionError
+
                     raise ReconstructionError("hole escaped its hull")
             return real_reconstruct(problem, displacements)
+
         monkeypatch.setattr(simple, "reconstruct_region", _failing_for_second_macro)
         config = _write_config(tmp_path, gds, macro_grid="[2, 2]")  # 配置
         summary = workflow.run_mbopc(config)  # 完整流程
@@ -316,12 +356,14 @@ class TestSingleVersusMulti:
         single_base.mkdir()  # 创建
         multi_base.mkdir()  # 创建
         single = workflow.run_mbopc(  # 全 ROI 一个 macro
-            _write_config(single_base, gds, macro_grid="[1, 1]"))
+            _write_config(single_base, gds, macro_grid="[1, 1]")
+        )
         multi = workflow.run_mbopc(  # 2×2 macro
-            _write_config(multi_base, gds, macro_grid="[2, 2]"))
+            _write_config(multi_base, gds, macro_grid="[2, 2]")
+        )
         difference = int(  # 差异面积（独立 context 取舍的量化结果）
-            (_coverage(single["final_layout"]) ^
-             _coverage(multi["final_layout"])).area())
+            (_coverage(single["final_layout"]) ^ _coverage(multi["final_layout"])).area()
+        )
         # 上界断言：差异面积不可能超过源图形总面积（防边界差异爆炸性回归），
         # 精确数值仍打印量化（固定参考 context 代价的观测值）。
         source_area = int(_coverage(gds).area())  # 源图形总面积
@@ -336,8 +378,14 @@ class TestDirectExecution:
         """以子进程直跑入口脚本。"""
         env = {**__import__("os").environ, **(extra_env or {})}  # 环境变量
         return subprocess.run(  # 直跑（免安装）
-            [sys.executable, str(script), str(config_path)], cwd=cwd,
-            capture_output=True, text=True, timeout=600, check=False, env=env)
+            [sys.executable, str(script), str(config_path)],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+            env=env,
+        )
 
     @pytest.fixture(scope="class")
     @classmethod
@@ -353,8 +401,7 @@ class TestDirectExecution:
         script = project_root / "main" / "run_mbopc.py"  # 入口
         completed = self._run(script, config, tmp)  # cwd=仓库外
         assert completed.returncode == 0, completed.stderr  # 正常退出
-        for marker in ("simple MB-OPC 执行完成", "device：",
-                       "合并", "最终版图"):  # 摘要标记
+        for marker in ("simple MB-OPC 执行完成", "device：", "合并", "最终版图"):  # 摘要标记
             assert marker in completed.stdout, marker
 
     def test_single_runs_outside_repository(self, tmp_path, project_root):
@@ -374,15 +421,17 @@ class TestDirectExecution:
         verbose_dir = tmp_path / "verbose"  # 进度目录
         verbose_dir.mkdir()  # 创建
         quiet = self._run(  # show_progress=false
-            script, _write_config(quiet_dir, _write_gds(quiet_dir),
-                                  macro_grid="[2, 2]",
-                                  show_progress="false"), quiet_dir)
+            script,
+            _write_config(quiet_dir, _write_gds(quiet_dir), macro_grid="[2, 2]", show_progress="false"),
+            quiet_dir,
+        )
         assert quiet.returncode == 0, quiet.stderr  # 正常退出
         assert "tile" not in quiet.stderr and "macro" not in quiet.stderr  # 静默
         verbose = self._run(  # show_progress=true
-            script, _write_config(verbose_dir, _write_gds(verbose_dir),
-                                  macro_grid="[2, 2]",
-                                  show_progress="true"), verbose_dir)
+            script,
+            _write_config(verbose_dir, _write_gds(verbose_dir), macro_grid="[2, 2]", show_progress="true"),
+            verbose_dir,
+        )
         assert verbose.returncode == 0, verbose.stderr  # 正常退出
         assert ("tile" in verbose.stderr) or ("macro" in verbose.stderr)  # 有进度
 
@@ -390,8 +439,8 @@ class TestDirectExecution:
         """无参数运行打印用法并以退出码 2 结束。"""
         script = project_root / "main" / "run_mbopc.py"  # 入口
         completed = subprocess.run(  # 无参数直跑
-            [sys.executable, str(script)], cwd=project_root,
-            capture_output=True, text=True, timeout=60, check=False)
+            [sys.executable, str(script)], cwd=project_root, capture_output=True, text=True, timeout=60, check=False
+        )
         assert completed.returncode == 2  # 参数错误退出码
         assert "用法" in completed.stderr  # 用法提示
 
@@ -408,18 +457,22 @@ class TestConfigValidation:
         """[mbopc] 段未知键失败。"""
         path = self._config_path(tmp_path)  # 基准配置
         text = path.read_text(encoding="utf-8").replace(  # 注入未知键
-            "[mbopc]", "[mbopc]\nbogus = 1")
+            "[mbopc]", "[mbopc]\nbogus = 1"
+        )
         path.write_text(text, encoding="utf-8")  # 写回
         with pytest.raises(ValueError, match="未知键"):
             workflow.run_mbopc(path)  # 装配前置检查在准备前毫秒级抛出
 
     @pytest.mark.parametrize(
         "overrides, pattern",
-        [({"iterations": 0}, "必须为正"),
-         ({"initial_step_nm": 11}, "不得超过 max_displacement_nm"),
-         ({"epe_distance_nm": 21}, "不得超过 context_nm"),
-         ({"device": "gpu"}, "device")],
-        ids=["iter=0", "step>max", "epe>context", "device=gpu"])
+        [
+            ({"iterations": 0}, "必须为正"),
+            ({"initial_step_nm": 11}, "不得超过 max_displacement_nm"),
+            ({"epe_distance_nm": 21}, "不得超过 context_nm"),
+            ({"device": "gpu"}, "device"),
+        ],
+        ids=["iter=0", "step>max", "epe>context", "device=gpu"],
+    )
     def test_invalid_values_fail(self, tmp_path, overrides, pattern):
         """越界迭代参数、步长/探针越限与未知设备都失败。"""
         with pytest.raises(ValueError, match=pattern):
@@ -427,15 +480,19 @@ class TestConfigValidation:
 
     @pytest.mark.parametrize(
         ("overrides", "field"),
-        [({"iterations": 1.5}, "iterations"),
-         ({"iterations": "true"}, "iterations"),
-         ({"batch_size": 2.0}, "batch_size"),
-         ({"target_cache_mb": "true"}, "target_cache_mb")],
-        ids=["iter=1.5", "iter=true", "batch=2.0", "cache=true"])
+        [
+            ({"iterations": 1.5}, "iterations"),
+            ({"iterations": "true"}, "iterations"),
+            ({"batch_size": 2.0}, "batch_size"),
+            ({"target_cache_mb": "true"}, "target_cache_mb"),
+        ],
+        ids=["iter=1.5", "iter=true", "batch=2.0", "cache=true"],
+    )
     def test_non_integer_values_fail(self, tmp_path, overrides, field):
         """浮点或布尔的整数配置被严格拒绝，不静默截断（审查 P1.3 回归）。"""
         with pytest.raises(ValueError, match=field):
             workflow.run_mbopc(self._config_path(tmp_path, **overrides))
+
 
 class TestFieldBounds:
     """MB-OPC 处理框：网格按 field 规划、环带不产生边段。"""
@@ -443,16 +500,14 @@ class TestFieldBounds:
     def test_field_expands_grid_without_new_segments(self, tmp_path):
         """field 2×：macro 数翻倍、段数和与不扩 field 完全一致（环带无几何无边）。"""
         layout_path = _write_gds(tmp_path)
-        baseline_config = _write_config(tmp_path, layout_path,
-                                        macro_grid="[2, 2]")
+        baseline_config = _write_config(tmp_path, layout_path, macro_grid="[2, 2]")
         field_config = _write_config(
-            tmp_path, layout_path, macro_grid="[2, 2]",
-            layout_extra="field_size_nm = [320.0, 160.0]")
+            tmp_path, layout_path, macro_grid="[2, 2]", layout_extra="field_size_nm = [320.0, 160.0]"
+        )
         baseline = workflow.run_mbopc(baseline_config)
         with pytest.warns(UserWarning, match="环带"):
             expanded = workflow.run_mbopc(field_config)
         # 网格数量模式不变（2×2），macro 尺寸随 field 扩为 160×80nm
         assert expanded["macro_count"] == baseline["macro_count"] == 4
         # 环带无几何 → 零新边段：段数和与不扩 field 完全一致
-        assert (expanded["segment_count_sum"]
-                == baseline["segment_count_sum"] > 0)
+        assert expanded["segment_count_sum"] == baseline["segment_count_sum"] > 0

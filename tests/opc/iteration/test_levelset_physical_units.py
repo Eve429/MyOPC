@@ -23,20 +23,15 @@ class TestPhysicalSDFUnits:
         assert np.array_equal(physical < 0.0, unit < 0.0)
 
     def test_constant_fields_use_physical_nm(self):
-        foreground = signed_distance_initialization(
-            np.full((4, 9), 255, np.uint8), pixel_nm=2.5)
-        background = signed_distance_initialization(
-            np.zeros((4, 9), np.uint8), pixel_nm=2.5)
-        np.testing.assert_array_equal(
-            foreground, np.full((4, 9), -22.5, np.float32))
-        np.testing.assert_array_equal(
-            background, np.full((4, 9), 22.5, np.float32))
+        foreground = signed_distance_initialization(np.full((4, 9), 255, np.uint8), pixel_nm=2.5)
+        background = signed_distance_initialization(np.zeros((4, 9), np.uint8), pixel_nm=2.5)
+        np.testing.assert_array_equal(foreground, np.full((4, 9), -22.5, np.float32))
+        np.testing.assert_array_equal(background, np.full((4, 9), 22.5, np.float32))
 
     @pytest.mark.parametrize("pixel_nm", [0.0, -1.0, float("inf"), float("nan")])
     def test_invalid_pixel_nm_rejected(self, pixel_nm):
         with pytest.raises(ValueError, match="pixel_nm"):
-            signed_distance_initialization(
-                np.zeros((3, 3), np.uint8), pixel_nm=pixel_nm)
+            signed_distance_initialization(np.zeros((3, 3), np.uint8), pixel_nm=pixel_nm)
 
 
 class TestPhysicalGradientUnits:
@@ -52,12 +47,10 @@ class TestPhysicalGradientUnits:
         hm, wm = problem.ownership_shape
         r0 = (box.bottom - query.bottom) // pixel
         c0 = (box.left - query.left) // pixel
-        crop1 = phi1[r0:r0 + hm, c0:c0 + wm].copy()
-        crop4 = phi4[r0:r0 + hm, c0:c0 + wm].copy()
-        mag1 = macro_gradient_magnitude(
-            problem, phi1, crop1, pixel_nm=1.0)
-        mag4 = macro_gradient_magnitude(
-            problem, phi4, crop4, pixel_nm=4.0)
+        crop1 = phi1[r0 : r0 + hm, c0 : c0 + wm].copy()
+        crop4 = phi4[r0 : r0 + hm, c0 : c0 + wm].copy()
+        mag1 = macro_gradient_magnitude(problem, phi1, crop1, pixel_nm=1.0)
+        mag4 = macro_gradient_magnitude(problem, phi4, crop4, pixel_nm=4.0)
         np.testing.assert_allclose(mag4, mag1, rtol=1e-6, atol=1e-6)
 
     def test_non_sdf_snapshot_scales_consistently(self):
@@ -70,11 +63,9 @@ class TestPhysicalGradientUnits:
         hm, wm = problem.ownership_shape
         r0 = (box.bottom - query.bottom) // pixel
         c0 = (box.left - query.left) // pixel
-        crop1 = phi1[r0:r0 + hm, c0:c0 + wm].copy()
+        crop1 = phi1[r0 : r0 + hm, c0 : c0 + wm].copy()
         crop1[::2, ::3] += np.float32(0.25)
         crop2 = crop1 * np.float32(2.0)
-        mag1 = macro_gradient_magnitude(
-            problem, phi1, crop1, pixel_nm=1.0)
-        mag2 = macro_gradient_magnitude(
-            problem, phi2, crop2, pixel_nm=2.0)
+        mag1 = macro_gradient_magnitude(problem, phi1, crop1, pixel_nm=1.0)
+        mag2 = macro_gradient_magnitude(problem, phi2, crop2, pixel_nm=2.0)
         np.testing.assert_allclose(mag2, mag1, rtol=1e-6, atol=1e-6)

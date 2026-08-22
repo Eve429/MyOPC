@@ -35,9 +35,9 @@ class TestMacroPlanningBySize:
 
     def test_size_mode_shortened_core_only_in_outermost_macro(self):
         """轴长 215、macro 110、core 10 时只有最外侧 macro 出现 5 宽缩短 core。"""
-        macros = plan_macros(DbuBox(0, 0, 215, 110), macro_size_dbu=110,
-                             core_size_dbu=10, context_dbu=0,
-                             pixel_dbu=1, canvas_pixels=256)
+        macros = plan_macros(
+            DbuBox(0, 0, 215, 110), macro_size_dbu=110, core_size_dbu=10, context_dbu=0, pixel_dbu=1, canvas_pixels=256
+        )
         by_id = {m.macro_id: m for m in macros}
         inner = _widths(by_id["mr0c0"].x_cuts)
         outer = _widths(by_id["mr0c1"].x_cuts)
@@ -47,14 +47,13 @@ class TestMacroPlanningBySize:
     def test_size_mode_rejects_macro_not_multiple_of_core(self):
         """名义 macro 不是 core 整数倍时直接失败。"""
         with pytest.raises(ValueError, match="whole multiple"):
-            plan_macros(DbuBox(0, 0, 21, 17), macro_size_dbu=11,
-                        core_size_dbu=10, context_dbu=0,
-                        pixel_dbu=1, canvas_pixels=256)
+            plan_macros(
+                DbuBox(0, 0, 21, 17), macro_size_dbu=11, core_size_dbu=10, context_dbu=0, pixel_dbu=1, canvas_pixels=256
+            )
 
     def test_size_mode_rejects_macro_not_exceeding_core(self):
         """macro 等于或小于 core 时失败：两级网格不得退化为单级 core 网格。"""
-        common = {"core_size_dbu": 40, "context_dbu": 0,
-                  "pixel_dbu": 1, "canvas_pixels": 256}
+        common = {"core_size_dbu": 40, "context_dbu": 0, "pixel_dbu": 1, "canvas_pixels": 256}
         with pytest.raises(ValueError, match="exceed core size"):
             plan_macros(DbuBox(0, 0, 80, 40), macro_size_dbu=40, **common)
         with pytest.raises(ValueError, match="exceed core size"):
@@ -62,9 +61,9 @@ class TestMacroPlanningBySize:
 
     def test_size_mode_accepts_macro_above_core_multiple(self):
         """macro 严格大于 core 且整除时成功（80/40 → 单 macro 双 core）。"""
-        macros = plan_macros(DbuBox(0, 0, 80, 40), macro_size_dbu=80,
-                             core_size_dbu=40, context_dbu=0,
-                             pixel_dbu=1, canvas_pixels=256)
+        macros = plan_macros(
+            DbuBox(0, 0, 80, 40), macro_size_dbu=80, core_size_dbu=40, context_dbu=0, pixel_dbu=1, canvas_pixels=256
+        )
         assert len(macros) == 1
         assert macros[0].core_count == 2
 
@@ -93,9 +92,9 @@ class TestMacroPlanningByCount:
     def test_count_mode_rejects_more_macros_than_core_units(self):
         """macro 数超过该轴 core 单元数时失败，不允许空 macro。"""
         with pytest.raises(ValueError, match="exceeds core unit count"):
-            plan_macros(DbuBox(0, 0, 21, 10), macro_grid=(4, 1),
-                        core_size_dbu=10, context_dbu=0,
-                        pixel_dbu=1, canvas_pixels=256)
+            plan_macros(
+                DbuBox(0, 0, 21, 10), macro_grid=(4, 1), core_size_dbu=10, context_dbu=0, pixel_dbu=1, canvas_pixels=256
+            )
 
 
 class TestMacroOwnershipContract:
@@ -108,15 +107,21 @@ class TestMacroOwnershipContract:
         area = 0
         for macro in macros:
             assert int(macro.ownership_box.width) * int(macro.ownership_box.height) == sum(
-                int(macro.core(i).ownership_box.area) for i in range(macro.core_count))
+                int(macro.core(i).ownership_box.area) for i in range(macro.core_count)
+            )
             area += int(macro.ownership_box.area)
         assert area == int(bounds.area)
 
     def test_negative_coordinate_bounds_supported(self):
         """负坐标 bbox 的切线与行优先编号保持全局 DBU 语义。"""
-        macros = plan_macros(DbuBox(-100, -50, 100, 50), macro_grid=(2, 2),
-                             core_size_dbu=10, context_dbu=0,
-                             pixel_dbu=1, canvas_pixels=256)
+        macros = plan_macros(
+            DbuBox(-100, -50, 100, 50),
+            macro_grid=(2, 2),
+            core_size_dbu=10,
+            context_dbu=0,
+            pixel_dbu=1,
+            canvas_pixels=256,
+        )
         assert macros[0].ownership_box == DbuBox(-100, -50, 0, 0)
         assert macros[1].ownership_box == DbuBox(0, -50, 100, 0)
         assert macros[2].ownership_box == DbuBox(-100, 0, 0, 50)
@@ -126,21 +131,18 @@ class TestMacroOwnershipContract:
     def test_context_expands_query_without_touching_ownership(self):
         """context 扩张 query/context 框，但绝不改变 ownership 切线。"""
         bounds = DbuBox(0, 0, 40, 40)
-        plain = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=10,
-                            context_dbu=0, pixel_dbu=1, canvas_pixels=256)
-        wide = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=10,
-                           context_dbu=5, pixel_dbu=1, canvas_pixels=256)
+        plain = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=10, context_dbu=0, pixel_dbu=1, canvas_pixels=256)
+        wide = plan_macros(bounds, macro_grid=(1, 1), core_size_dbu=10, context_dbu=5, pixel_dbu=1, canvas_pixels=256)
         assert plain[0].x_cuts.tolist() == wide[0].x_cuts.tolist()
         assert wide[0].query_box == DbuBox(-5, -5, 45, 45)
         assert wide[0].core(0).context_box == DbuBox(-5, -5, 15, 15)
 
     def test_locate_owned_points_returns_minus_one_outside_macro(self):
         """ownership 外的点返回 -1，共享边界归右/上，外沿归末行/列。"""
-        macro = plan_macros(DbuBox(0, 0, 20, 20), macro_grid=(1, 1),
-                            core_size_dbu=10, context_dbu=0,
-                            pixel_dbu=1, canvas_pixels=256)[0]
-        owners = macro.locate_owned_points(
-            [[5, 5], [15, 5], [5, 15], [10, 10], [20, 20], [-1, 5], [25, 25]])
+        macro = plan_macros(
+            DbuBox(0, 0, 20, 20), macro_grid=(1, 1), core_size_dbu=10, context_dbu=0, pixel_dbu=1, canvas_pixels=256
+        )[0]
+        owners = macro.locate_owned_points([[5, 5], [15, 5], [5, 15], [10, 10], [20, 20], [-1, 5], [25, 25]])
         assert owners.tolist() == [0, 1, 2, 3, 3, -1, -1]
 
 
@@ -150,28 +152,24 @@ class TestGridValidation:
     def test_core_or_context_not_pixel_multiple_fails(self):
         """core 或 context 不是 pixel 整数倍时失败。"""
         with pytest.raises(ValueError, match="whole multiples of a pixel"):
-            plan_macros(DbuBox(0, 0, 30, 30), macro_grid=(1, 1),
-                        core_size_dbu=10, context_dbu=5,
-                        pixel_dbu=4, canvas_pixels=256)
+            plan_macros(
+                DbuBox(0, 0, 30, 30), macro_grid=(1, 1), core_size_dbu=10, context_dbu=5, pixel_dbu=4, canvas_pixels=256
+            )
 
     def test_canvas_capacity_boundary_is_inclusive(self):
         """core+2context 恰满 256×pixel 合法，超出 1 pixel 即失败。"""
         common = {"macro_grid": (1, 1), "context_dbu": 400, "pixel_dbu": 8}
-        exact = plan_macros(DbuBox(0, 0, 1248, 1248),
-                            core_size_dbu=1248, canvas_pixels=256, **common)
+        exact = plan_macros(DbuBox(0, 0, 1248, 1248), core_size_dbu=1248, canvas_pixels=256, **common)
         assert len(exact) == 1
         with pytest.raises(ValueError, match="exceeds the fixed canvas"):
-            plan_macros(DbuBox(0, 0, 1256, 1256),
-                        core_size_dbu=1256, canvas_pixels=256, **common)
+            plan_macros(DbuBox(0, 0, 1256, 1256), core_size_dbu=1256, canvas_pixels=256, **common)
 
     def test_canvas_must_be_256(self):
         """canvas_pixels 不是 256 时在规划层即失败。"""
         with pytest.raises(ValueError, match="frozen"):
-            plan_macros(DbuBox(0, 0, 10, 10), macro_grid=(1, 1), **{
-                **BASE, "canvas_pixels": 255})
+            plan_macros(DbuBox(0, 0, 10, 10), macro_grid=(1, 1), **{**BASE, "canvas_pixels": 255})
         with pytest.raises(ValueError, match="frozen"):
-            MacroSpec("mr0c0", DbuBox(0, 0, 1, 1),
-                      np.array([0, 1]), np.array([0, 1]), 0, 1, 255)
+            MacroSpec("mr0c0", DbuBox(0, 0, 1, 1), np.array([0, 1]), np.array([0, 1]), 0, 1, 255)
 
 
 class TestCenteredCanvas:
@@ -206,7 +204,6 @@ class TestCenteredCanvas:
         assert canvas[128, 128] == 0.0
         assert canvas[14, 14] == 1.0
         assert np.all(canvas[:14] == 0) and np.all(canvas[:, :14] == 0)
-
 
     # 2026-08-22 起 rasterize_mask_canvas 不再有 dark_box 参数：环带暗场
     # 由 prepare 阶段的负板补铬几何保证（锚点移至 test_macro_problem 的
@@ -265,8 +262,7 @@ class TestCenteredCanvas:
 
     def test_region_window_keeps_left_bottom_origin_without_padding(self):
         """最小窗口栅格不添加 canvas padding，行 0 对应最低 Y。"""
-        window = rasterize_region_window(
-            kdb.Region(kdb.Box(0, 0, 16, 8)), DbuBox(0, 0, 16, 16), 8)
+        window = rasterize_region_window(kdb.Region(kdb.Box(0, 0, 16, 8)), DbuBox(0, 0, 16, 16), 8)
         assert window.shape == (2, 2)
         assert window.tolist() == [[1.0, 1.0], [0.0, 0.0]]
 
@@ -309,9 +305,7 @@ class TestPointsToCanvas:
         owned = ownership_canvas(ownership, context, 8, 256)
         rows, columns = np.nonzero(owned)
         # 正向公式来自 ownership_canvas：中心 = 原点 + (索引 - low + 0.5)×pixel。
-        centers = np.stack(
-            (context.left + (columns - 14 + 0.5) * 8,
-             context.bottom + (rows - 14 + 0.5) * 8), axis=1)
+        centers = np.stack((context.left + (columns - 14 + 0.5) * 8, context.bottom + (rows - 14 + 0.5) * 8), axis=1)
         out = points_to_canvas(centers, context, 8, 256)
         np.testing.assert_array_equal(out[:, 0], columns.astype(np.float64))
         np.testing.assert_array_equal(out[:, 1], rows.astype(np.float64))

@@ -1,6 +1,6 @@
 """运行环境解析（common 内唯一依赖 torch 的模块）。"""
 
-import torch  # CUDA 可用性判定
+import torch
 
 
 def resolve_device(device: str) -> str:

@@ -1,14 +1,14 @@
 """Simple ILT 直接运行入口：方法适配器 + CLI 摘要一体。"""
 
-import sys  # 命令行参数与退出码
-from pathlib import Path  # 仓库根定位
+import sys
+from pathlib import Path
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
 _REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
 if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
     sys.path.insert(0, str(_REPO_ROOT))  # 使 main/_ilt_workflow 与 opc 可导入
 
-from main._ilt_workflow import ILTMethod, run_ilt_workflow  # 公共生命周期
+from main._ilt_workflow import ILTMethod, run_ilt_workflow
 
 # Simple ILT 求解器与终评 fixed-context helper
 from opc.iteration.ilt import (

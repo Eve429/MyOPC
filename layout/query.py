@@ -65,22 +65,23 @@ class ShapeQuery:
             if clip:
                 # 普通 `&` 会丢 Polygon 属性；属性模式以 NoPropertyConstraint 求交，
                 # 几何仍精确裁到 ROI，结果继承左侧原图属性。
-                regions[layer] = (region.and_(clip_region, kdb.Region.NoPropertyConstraint)
-                                  if self.preserve_properties else region & clip_region)
+                regions[layer] = (
+                    region.and_(clip_region, kdb.Region.NoPropertyConstraint)
+                    if self.preserve_properties
+                    else region & clip_region
+                )
             else:
                 # 未裁剪 deep Region 借用 LayoutDB，必须在关闭前原生展平。KLayout
                 # flatten 会静默丢属性，因此属性模式用 merged 并保持不同属性的
                 # shape class；无属性 OPC 热路径继续使用开销更直接的 flatten。
-                regions[layer] = (region.merged(False, 0, False)
-                                  if self.preserve_properties else region.flatten())
+                regions[layer] = region.merged(False, 0, False) if self.preserve_properties else region.flatten()
             if diagnostics:
                 diagnostic_map[layer] = self._collect_shape_stats(layout, native_cell, index, native_box)
         stats = MaterializationStats(perf_counter() - started, diagnostic_map) if diagnostics else None
         return RegionBatch(regions, self.box, stats)
 
     @staticmethod
-    def _collect_shape_stats(layout: kdb.Layout, cell: kdb.Cell, layer_index: int,
-                             box: kdb.Box) -> LayerShapeStats:
+    def _collect_shape_stats(layout: kdb.Layout, cell: kdb.Cell, layer_index: int, box: kdb.Box) -> LayerShapeStats:
         """统计与 ROI 接触的图形，使零面积 Text 点也能出现在诊断结果中。"""
         polygon_like = text = edge = other = 0
         iterator = kdb.RecursiveShapeIterator(layout, cell, layer_index, box, False)

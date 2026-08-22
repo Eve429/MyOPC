@@ -759,7 +759,7 @@ class TestEpeLoss:
             radius = 1  # 默认 epe_distance_dbu=4 / pixel 4 → Q=2
             offsets = (np.arange(2 * radius) - radius + 0.5) * pixel
             for core_index in range(target_problem.macro.core_count):
-                owner = ctx.core_owner_members[core_index]
+                owner = ctx.pack.owner_members[core_index]
                 profile = ctx.epe_profiles[core_index]
                 if not len(owner):
                     assert profile is None
@@ -813,7 +813,7 @@ class TestEpeLoss:
         problem = _problem(kdb.Region(kdb.Box(4, 4, 76, 76)))  # 跨 2×2 core
         ctx = _prepare_macro_context(problem, _LinearModel(),
                                      _config(weight_epe=1.0))
-        owner_total = sum(len(ctx.core_owner_members[c])
+        owner_total = sum(len(ctx.pack.owner_members[c])
                           for c in range(problem.macro.core_count))
         profile_total = sum(ctx.epe_profiles[c].shape[0]
                             if ctx.epe_profiles[c] is not None else 0
@@ -1114,9 +1114,9 @@ class TestStructuralSplit:
             assert np.array_equal(
                 ctx.core_sampling_members[core_index], expected)
             assert np.array_equal(
-                ctx.core_owner_members[core_index],
+                ctx.pack.owner_members[core_index],
                 problem.owner_segments_for_core(core_index))
-        assert ctx.total_pixels > 0
+        assert ctx.pack.total_pixels > 0
         assert [c.name for c in ctx.conditions] == [
             "nominal", "dose_max", "defocus_min"]
 
@@ -1130,7 +1130,7 @@ class TestStructuralSplit:
                                  requires_grad=True)
         evaluation = _evaluate_state(
             ctx, model, problem, config, TargetCanvasCache(_CACHE_BUDGET),
-            parameters, ctx.reference_region,
+            parameters, ctx.pack.reference_region,
             ctx.reference_segment_midpoints, build_gradient=False)
         assert parameters.grad is None
         assert evaluation.total_loss > 0.0
@@ -1146,7 +1146,7 @@ class TestStructuralSplit:
         before = parameters.detach().clone()
         _evaluate_state(
             ctx, model, problem, config, TargetCanvasCache(_CACHE_BUDGET),
-            parameters, ctx.reference_region,
+            parameters, ctx.pack.reference_region,
             ctx.reference_segment_midpoints, build_gradient=True)
         assert parameters.grad is not None
         assert bool(torch.isfinite(parameters.grad).all())
@@ -1165,12 +1165,12 @@ class TestStructuralSplit:
         parameters.grad = torch.zeros_like(parameters)
         assert _take_optimizer_step(
             problem, parameters, optimizer, owner_ids, candidate_full,
-            10.0, macro_id="mr0c0", state_index=0) is None
+            macro_id="mr0c0", state_index=0) is None
         # 非零梯度：参数移动并重构出同源 Region+midpoints 二元组
         parameters.grad = torch.full_like(parameters, 0.5)
         candidate = _take_optimizer_step(
             problem, parameters, optimizer, owner_ids, candidate_full,
-            10.0, macro_id="mr0c0", state_index=0)
+            macro_id="mr0c0", state_index=0)
         assert isinstance(candidate[0], kdb.Region)
         assert candidate[1].shape == (problem.segments.segment_count, 2)
         # 重构失败必须原样上抛，不得吞成返回值
@@ -1185,7 +1185,7 @@ class TestStructuralSplit:
         with pytest.raises(ReconstructionError):
             _take_optimizer_step(
                 problem, parameters, optimizer, owner_ids, candidate_full,
-                10.0, macro_id="mr0c0", state_index=0)
+                macro_id="mr0c0", state_index=0)
 
 
 class TestRealModel:

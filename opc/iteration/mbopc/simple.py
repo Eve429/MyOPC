@@ -25,9 +25,10 @@ from opc.input.edge.fragmentation import SegmentGeometry
 from ._batching import (
     MacroStaticPack,
     assemble_probe_batch,
-    cached_target_canvas,
     discrete_batch_diagnostics,
+    iter_core_batches,
     pack_macro_statics,
+    upload_eval_batch,
 )
 from ._cache import TargetCanvasCache
 
@@ -147,55 +148,30 @@ def evaluate_and_propose(
             reference_region=reconstruct_region(
                 problem, np.zeros(segment_count, dtype=np.float64)),
             to_canvas=points_to_canvas)
-    pixel_dbu = pack.pixel_dbu  # 栅格像素
     max_displacement = float(problem.fragmentation.max_displacement_dbu)  # 位移上限
     next_values = current.copy()  # 提案缓冲（can_update=False 时不写方向）
     written = np.zeros(segment_count, dtype=np.bool_)  # 方向唯一写标记
     # 批间标量累计
     totals = {"epe": 0, "l2": 0, "pvband": 0,
               "valid": 0, "ambiguous": 0}
-    core_count = pack.core_count  # tile 总数
     threshold = float(model.config.print_threshold)  # 像素指标二值阈值
     device = model.device  # 目标设备
-    for batch_start in range(0, core_count, config.batch_size):  # 分批评价
-        # 本批 core（行优先）
-        core_indices = list(range(
-            batch_start, min(batch_start + config.batch_size, core_count)))
-        batch_count = len(core_indices)  # 本批 tile 数
-        # target 批（uint8 缓存格式）
-        targets = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                           dtype=np.uint8)
-        # 当前 mask 批
-        masks = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                         dtype=np.float32)
-        # 计分像素批
-        ownership = np.empty((batch_count, canvas_pixels, canvas_pixels),
-                             dtype=np.bool_)
-        for slot, core_index in enumerate(core_indices):  # 逐 core 组批
-            spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
-            # target：缓存命中直接用，miss 栅格化参考几何并回填
-            targets[slot] = cached_target_canvas(
-                problem, pack, target_cache, core_index,
-                rasterize=rasterize_mask_canvas)
-            # 当前候选直接栅格
-            masks[slot] = rasterize_mask_canvas(
-                current_region, spec.context_box, pixel_dbu,
-                canvas_pixels, polarity=problem.polarity)
-            # 唯一计分像素（静态打包，逐态不重算）
-            ownership[slot] = pack.ownership[core_index]
+    # 三工艺角条件：标称 / 大剂量 / 离焦小剂量（每 macro 一次，与
+    # gradient 的 ctx.conditions 同语义）
+    conditions = (model.condition("nominal"), model.condition("dose_max"),
+                  model.condition("defocus_min"))
+    # 公共组批（target 缓存/当前候选栅格/静态计分画布）单源共用；
+    # rasterize 钩子传本模块全局，monkeypatch 锚点保持在求解器模块。
+    for core_indices, targets, masks, ownership in iter_core_batches(
+            problem, pack, current_region, target_cache,
+            batch_size=config.batch_size, rasterize=rasterize_mask_canvas):
         # 本批 owner 探针（静态坐标）槽位与 canvas 坐标一次拼接
         probe_slots, inner_xy, outer_xy = assemble_probe_batch(
             pack, core_indices)
-        # 光刻：target 送设备转 float32/255，一次 forward_many 出三工艺角。
+        # 光刻：一次 forward_many 出三工艺角。
         with torch.no_grad():  # 离散方法不需要梯度图
-            target_tensor = torch.from_numpy(targets).to(
-                device=device, dtype=torch.float32).div_(255.0)
-            mask_tensor = torch.from_numpy(masks).to(device=device)
-            ownership_tensor = torch.from_numpy(ownership).to(device=device)
-            # 三工艺角条件：标称 / 大剂量 / 离焦小剂量
-            conditions = (model.condition("nominal"),
-                          model.condition("dose_max"),
-                          model.condition("defocus_min"))
+            target_tensor, mask_tensor, ownership_tensor = upload_eval_batch(
+                targets, masks, ownership, device)
             printed = model.forward_many(mask_tensor, conditions)  # 共享一次 FFT
             # 像素指标与 EPE：公共离散诊断（evaluate_* 补丁锚在本模块）
             l2, pvband, epe_result = discrete_batch_diagnostics(
@@ -230,7 +206,7 @@ def evaluate_and_propose(
             # 释放：批结束只保留标量与方向，GPU 张量立即失去引用。
             del printed, mask_tensor, target_tensor, ownership_tensor
         if on_tiles_completed is not None:  # 释放后才报告进度
-            on_tiles_completed(batch_count)
+            on_tiles_completed(len(core_indices))
     # 出口：核对方向写集与 context 归零，提案裁到位移上限。
     if can_update:  # 评价专用调用不产生提案，无需核对写集
         if not np.array_equal(written, problem.owner_indices >= 0):

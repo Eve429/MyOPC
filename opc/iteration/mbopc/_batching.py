@@ -3,7 +3,8 @@
 两个求解器的批量评价段此前各自实现且已漂移（gradient 预计算静态量、
 simple 逐状态重算探针与计分画布）。本模块只承载与"更新策略"无关的
 公共计算：每 macro 打包一次的静态画布（ownership/参考探针坐标）、
-target 缓存 miss 回填与批后离散诊断。凡被测试按求解器模块名
+target 缓存 miss 回填、公共组批（iter_core_batches/upload_eval_batch）
+与批后离散诊断。凡被测试按求解器模块名
 monkeypatch 的函数（rasterize_mask_canvas / points_to_canvas /
 evaluate_*）一律由调用方以自身模块全局显式传入——补丁锚点不随代码
 搬迁失效（与 ilt/_skeleton 的钩子纪律同源）。
@@ -11,6 +12,7 @@ evaluate_*）一律由调用方以自身模块全局显式传入——补丁锚�
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import klayout.db as kdb
@@ -112,6 +114,60 @@ def cached_target_canvas(
                 np.uint8)
         target_cache.put(pack.macro_id, core_index, cached)
     return cached
+
+
+def iter_core_batches(
+        problem: MacroProblem, pack: MacroStaticPack,
+        current_region: kdb.Region, target_cache, *,
+        batch_size: int, rasterize,
+) -> Iterator[tuple[list[int], NDArray[np.uint8],
+                    NDArray[np.float32], NDArray[np.bool_]]]:
+    """按批产出 (core_indices, targets, masks, ownership) 的 numpy 组批结果。
+
+    与更新策略无关的公共组批段（simple/gradient 评价函数共用，防漂移）：
+    target 走缓存 miss 回填、当前候选直接栅格、计分画布取静态打包。
+    rasterize 注入调用方模块的 rasterize_mask_canvas（补丁锚保持在
+    求解器模块）。
+    """
+    for batch_start in range(0, pack.core_count, batch_size):
+        # 本批 core（行优先稳定序）
+        core_indices = list(range(
+            batch_start, min(batch_start + batch_size, pack.core_count)))
+        batch_count = len(core_indices)  # 本批 tile 数
+        targets = np.empty(
+            (batch_count, pack.canvas_pixels, pack.canvas_pixels),
+            dtype=np.uint8)
+        masks = np.empty(
+            (batch_count, pack.canvas_pixels, pack.canvas_pixels),
+            dtype=np.float32)
+        ownership = np.empty(
+            (batch_count, pack.canvas_pixels, pack.canvas_pixels),
+            dtype=np.bool_)
+        for slot, core_index in enumerate(core_indices):  # 逐 core 组批
+            spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
+            targets[slot] = cached_target_canvas(
+                problem, pack, target_cache, core_index, rasterize=rasterize)
+            masks[slot] = rasterize(
+                current_region, spec.context_box, pack.pixel_dbu,
+                pack.canvas_pixels, polarity=problem.polarity)
+            ownership[slot] = pack.ownership[core_index]
+        yield core_indices, targets, masks, ownership
+
+
+def upload_eval_batch(
+        targets: NDArray[np.uint8], masks: NDArray[np.float32],
+        ownership: NDArray[np.bool_], device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """批 numpy 上设备：target 转 float32/255，mask/ownership 直传。
+
+    uint8 LRU 缓存值到连续 target 的 /255 换算在此单源；from_numpy().to()
+    不构造计算图，调用方 no_grad 边界不影响数值。
+    """
+    target_tensor = torch.from_numpy(targets).to(
+        device=device, dtype=torch.float32).div_(255.0)
+    mask_tensor = torch.from_numpy(masks).to(device=device)
+    ownership_tensor = torch.from_numpy(ownership).to(device=device)
+    return target_tensor, mask_tensor, ownership_tensor
 
 
 def assemble_probe_batch(

@@ -116,14 +116,9 @@ def evaluate_state(
     pack: MacroStaticPack | None = None,
     on_tiles_completed: OnTilesCompleted | None = None,
 ) -> SimpleMBOPCStep:
-    """评价一个 macro 当前状态，并产生同步 owner 位移提案。
-
-    pack（计分画布/参考探针/零位移参考候选）由 optimize_simple_macro
-    预打包逐状态复用，缺省时现算，reference 同理（两条 None 路径等价）；
-    pack 优先时 reference 不参与本调用。
-    """
-    # 入口契约：位移形状/有限性/context 归零与 canvas 一致性。MacroProblem 构造
-    # 已保证 owner/CSR 不变量，这里不重复校验。
+    """评价一个 macro 当前状态，并产生同步 owner 位移提案。"""
+    # 入口契约：位移形状/有限性/context 归零与 canvas 一致性。
+    # MacroProblem 构造已保证 owner/CSR 不变量，这里不重复校验。
     segment_count = problem.segments.segment_count  # 段数 S
     current = np.ascontiguousarray(current_displacements, dtype=np.float64)
     if current.shape != (segment_count,) or not np.all(np.isfinite(current)):
@@ -148,14 +143,14 @@ def evaluate_state(
             to_canvas=points_to_canvas,
         )
     max_displacement = float(problem.fragmentation.max_displacement_dbu)
-    next_values = current.copy()  # 提案缓冲（can_update=False 时不写方向）
+    next_values = current.copy()
     written = np.zeros(segment_count, dtype=np.bool_)  # 方向唯一写标记
     # 批间标量累计
     totals = {"epe": 0, "l2": 0, "pvband": 0, "valid": 0, "ambiguous": 0}
     threshold = float(model.config.print_threshold)  # 像素指标二值阈值
     device = model.device
-    # 三工艺角条件：标称 / 大剂量 / 离焦小剂量（每 macro 一次，与
-    # gradient 的 ctx.conditions 同语义）
+    # 三工艺角条件：标称 / 大剂量 / 离焦小剂量
+    # （每 macro 一次，与 gradient 的 ctx.conditions 同语义）
     conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))
     # 公共组批（target 缓存/当前候选栅格/静态计分画布）单源共用；
     # rasterize 钩子传本模块全局，monkeypatch 锚点保持在求解器模块。
@@ -249,12 +244,12 @@ def optimize_simple_macro(
 
     segment_count = problem.segments.segment_count  # 段数 S
     owner_count = int(np.count_nonzero(problem.owner_indices >= 0))
-    zeros = np.zeros(segment_count, dtype=np.float64)  # 零位移状态
-    # 参考几何整个迭代只物化一次：baseline 与每个移动后状态的评价复用同一
-    # 份端点/法向（探针始终围绕参考边定义，与位移状态无关）。
+    zeros = np.zeros(segment_count, dtype=np.float64)
+    # 参考几何整个迭代只物化一次：（探针始终围绕参考边定义，与位移状态无关）
+    # baseline 与每个移动后状态的评价复用同一份端点/法向。
     reference = problem.segments.materialize()
-    # 静态打包每 macro 一次：计分画布/参考探针坐标/零位移参考候选；target
-    # 缓存 miss 源与 baseline mask 共用同一次零位移重构（纯函数，确定性）。
+    # 静态打包每 macro 一次：计分画布/参考探针坐标/零位移参考候选；
+    # target缓存 miss 源与 baseline mask 共用同一次零位移重构（纯函数，确定性）。
     started = time.perf_counter()
     baseline_region = reconstruct_region(problem, zeros)
     pack = pack_macro_statics(
@@ -264,7 +259,7 @@ def optimize_simple_macro(
         reference_region=baseline_region,
         to_canvas=points_to_canvas,
     )
-    pending_step = step_for(1)  # baseline 提案使用的步长
+    pending_step = step_for(1)
     # 评价 + State 1 提案
     proposal = evaluate_state(
         problem,

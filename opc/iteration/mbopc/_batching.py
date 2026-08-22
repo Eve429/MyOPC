@@ -26,12 +26,7 @@ from opc.input.edge.sampling import edge_probe_points
 
 @dataclass(frozen=True, slots=True)
 class MacroStaticPack:
-    """一个 macro 全部状态迭代期间不变的评价静态输入（CPU 常驻）。
-
-    探针围绕参考边（零位移几何）定义、坐标与位移状态无关；ownership
-    画布由网格唯一决定——两者此前 simple 逐状态重算，现统一为每 macro
-    打包一次（P4 随 A1 消除）。
-    """
+    """一个 macro 全部状态迭代期间不变的评价静态输入（CPU 常驻）。"""
 
     macro_id: str
     pixel_dbu: int
@@ -53,11 +48,7 @@ def pack_macro_statics(
     reference_region: kdb.Region,
     to_canvas,
 ) -> MacroStaticPack:
-    """一次构造全部状态迭代复用的计分画布与参考探针坐标。
-
-    to_canvas 注入调用方模块的 points_to_canvas（补丁锚保持在求解器
-    模块）；edge_probe_points/ownership_canvas 无模块级锚点，直接调用。
-    """
+    """一次构造全部状态迭代复用的计分画布与参考探针坐标。"""
     pixel_dbu = int(problem.macro.pixel_dbu)
     canvas_pixels = int(problem.macro.canvas_pixels)
     ownership: list[NDArray[np.bool_]] = []

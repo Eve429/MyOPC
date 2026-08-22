@@ -54,13 +54,7 @@ _PLAN_FORMAT_VERSION = 2
 
 
 def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox, dbu_nm: Decimal) -> DbuBox:
-    """解析处理框：双 None 用 layer bbox；box 直用；size 以 layer bbox 居中推导。
-
-    field 只声明规划口径（macro 网格与输出覆盖范围），本身不携带光学
-    语义（2026-08-22 修订）：环带的光学处理在 prepare 阶段按极性完成——
-    opaque 补画数据包络外的不透光图形（prepare_problems 内另行提示），
-    clear 包络外无图形、coverage=0 天然恒暗。
-    """
+    """解析处理框：双 None 用 layer bbox；box 直用；size 以 layer bbox 居中推导。"""
     if layout.field_box_nm is not None:
         left, bottom, right, top = (
             exact_dbu(value, dbu_nm, f"field_box_nm[{index}]") for index, value in enumerate(layout.field_box_nm)
@@ -69,9 +63,8 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox, dbu_nm: Dec
     elif layout.field_size_nm is not None:
         width = exact_dbu(layout.field_size_nm[0], dbu_nm, "field_size_nm[0]")
         height = exact_dbu(layout.field_size_nm[1], dbu_nm, "field_size_nm[1]")
-        # 逐轴居中：slack//2 归低侧、余量归高侧（与 _center_padding 的奇数
-        # 余量约定一致）；宽高小于 layer 尺寸时 slack 为负，交由下方包含性
-        # 校验统一报错，不在此重复分支。
+        # 逐轴居中：slack//2 归低侧、余量归高侧（与 _center_padding 的奇数余量约定一致）；
+        # 宽高小于 layer 尺寸时 slack 为负，交由下方包含性校验统一报错，不在此重复分支。
         slack_x = width - layer_bounds.width
         slack_y = height - layer_bounds.height
         low_x, low_y = slack_x // 2, slack_y // 2
@@ -97,15 +90,10 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox, dbu_nm: Dec
             "——配置比版图小或偏移出界"
         )
     if (
-        (
-            field.left < layer_bounds.left
-            or field.bottom < layer_bounds.bottom
-            or field.right > layer_bounds.right
-            or field.top > layer_bounds.top
-        )
-        # opaque 的补铬提示由 prepare_problems 统一发出（避免同因双
-        # 警告），这里只对 clear 给一次性说明。
-        and layout.polarity == MaskPolarity.CLEAR
+        field.left < layer_bounds.left
+        or field.bottom < layer_bounds.bottom
+        or field.right > layer_bounds.right
+        or field.top > layer_bounds.top
     ):
         scale = Decimal(dbu_nm)
         warnings.warn(
@@ -117,8 +105,7 @@ def resolve_field_bounds(layout: LayoutConfig, layer_bounds: DbuBox, dbu_nm: Dec
             f"({Decimal(layer_bounds.left) * scale},"
             f"{Decimal(layer_bounds.bottom) * scale})-"
             f"({Decimal(layer_bounds.right) * scale},"
-            f"{Decimal(layer_bounds.top) * scale}) nm；"
-            "正板（clear）环带无图形、天然不透光",
+            f"{Decimal(layer_bounds.top) * scale}) nm；",
             stacklevel=2,
         )
     return field
@@ -128,20 +115,19 @@ def prepare_problems(
     layout: LayoutConfig, partition: PartitionConfig, litho: LithographyConfig, edge: EdgeConfig, output: OutputConfig
 ) -> dict:
     """执行阶段 0/1，逐 macro 生成 problem，并写出 plan.json。"""
-    if output.work_dir is None:  # 本流程要求工作目录（单遍等流程可不填）
+    if output.work_dir is None:
         raise ValueError("此流程要求 [output].work_dir")
     layer = LayerSpec(layout.layer, layout.datatype)
     started = time.perf_counter()
     process = psutil.Process()
     peak_rss = process.memory_info().rss
     with LayoutDB.open(layout.layout, layout.top_cell) as database:
-        top_cell_name = database.top_cell_name  # 在库存活期内捕获顶层名
-        dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
-        layer_bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生逐层，不物化）
+        top_cell_name = database.top_cell_name
+        dbu_nm = Decimal(str(database.dbu_um)) * 1000
+        layer_bounds = database.layer_bbox(layer)
         if layer_bounds is None:
-            # 空层无法规划网格
             raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
-        # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化
+        # 处理框（field_box/field_size）,未配置时即 layer bbox
         bounds = resolve_field_bounds(layout, layer_bounds, dbu_nm)
         # nm→DBU 换算、context 契约与边段配置构造集中在 resolve_prepare_config。
         runtime = resolve_prepare_config(partition, litho, edge, dbu_nm)
@@ -158,30 +144,6 @@ def prepare_problems(
         # ownership 复核——面积和恰等于父框即无正面积重叠。
         if sum(macro.ownership_box.area for macro in macros) != bounds.area:
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
-        # 负板补铬告知（每运行恰一次，补铬本身在各 prepare 内部按极性进行）：
-        # 仅当 field 严格大于数据包络（存在环带）时提示；无 field 的常规运行
-        # 仅补 context 扩张带（与原暗界方案光学逐位同值），不另行打扰。
-        if layout.polarity == MaskPolarity.OPAQUE and (
-            bounds.left < layer_bounds.left
-            or bounds.bottom < layer_bounds.bottom
-            or bounds.right > layer_bounds.right
-            or bounds.top > layer_bounds.top
-        ):
-            scale = Decimal(dbu_nm)
-            warnings.warn(
-                "负板（opaque）：处理框大于数据包络，prepare 阶段已补画包络外"
-                "不透光图形（至各 macro 查询边界）——环带将以真实几何进入"
-                "提边/栅格化与最终输出；field "
-                f"({Decimal(bounds.left) * scale},"
-                f"{Decimal(bounds.bottom) * scale})-"
-                f"({Decimal(bounds.right) * scale},"
-                f"{Decimal(bounds.top) * scale}) nm ⊃ layer "
-                f"({Decimal(layer_bounds.left) * scale},"
-                f"{Decimal(layer_bounds.bottom) * scale})-"
-                f"({Decimal(layer_bounds.right) * scale},"
-                f"{Decimal(layer_bounds.top) * scale}) nm",
-                stacklevel=2,
-            )
         problems_dir = output.work_dir / "problems"
         problems_dir.mkdir(parents=True, exist_ok=True)
         entries = []
@@ -189,14 +151,14 @@ def prepare_problems(
         membership_count_sum = 0
         maximum_problem_bytes = 0
         maximum_problem_macro_id = ""
-        for macro in macros:  # 按行优先顺序逐 macro 准备
+        for macro in macros:
             # 完整相交物化（不裁剪 occurrence）
             batch = database.query([layer], macro.query_box).materialize_intersecting()
             # 一次完成提边/分段/切线分裂/ownership
             problem = prepare_macro_problem(
                 batch, layer, layout.polarity, runtime.fragmentation, macro, data_bounds=layer_bounds
             )
-            problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
+            problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")
             problem_bytes = problem_path.stat().st_size
             segment_count_sum += problem.segments.segment_count
             membership_count_sum += len(problem.member_segment_indices)
@@ -220,7 +182,7 @@ def prepare_problems(
                 }
             )
             peak_rss = max(peak_rss, process.memory_info().rss)
-            del batch, problem  # 立即释放当前 macro 大对象再进入下一个
+            del batch, problem
     # 全部 problem 成功且 LayoutDB 已关闭，才允许写出表示「准备完成」的 plan。
     prepare_seconds = time.perf_counter() - started
     # 完整计划（后续阶段唯一允许消费的产物）
@@ -254,8 +216,8 @@ def prepare_problems(
         "prepare_seconds": prepare_seconds,
         "prepare_peak_rss_bytes": peak_rss,
     }
-    atomic_write_json(output.work_dir / "plan.json", plan)  # 原子写出计划
-    return plan  # 返回内存计划供调用方直接消费
+    atomic_write_json(output.work_dir / "plan.json", plan)
+    return plan
 
 
 def write_macro_gds(layer: LayerSpec, region: kdb.Region, path: Path, dbu_um: float) -> Path:

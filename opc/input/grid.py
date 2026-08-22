@@ -193,9 +193,8 @@ def plan_macros(
     # macro 入口互斥：两种模式同时出现或同时缺失都说明配置意图不明确。
     if (macro_size_dbu is None) == (macro_grid is None):
         raise ValueError("exactly one of macro_size_dbu or macro_grid must be provided")
-    # 共有数值契约：core/context 必须落在像素格点上，且 core+2context 的栅格
-    # 尺寸不得超过固定 canvas；canvas 已由 MacroSpec 冻结为 256，这里提前检查
-    # 可以在构造任何 MacroSpec 前给出更精确的错误位置。
+    # 共有数值契约：core/context 必须落在像素格点上，且 core+2context 的栅格尺寸不得超过固定 canvas；
+    # canvas 已由 MacroSpec 冻结为 256，这里提前检查可以在构造任何 MacroSpec 前给出更精确的错误位置。
     if (
         not isinstance(core_size_dbu, Integral)
         or core_size_dbu <= 0
@@ -212,12 +211,11 @@ def plan_macros(
     canvas_pixels_needed = -(-(core_size_dbu + 2 * context_dbu) // pixel_dbu)
     if canvas_pixels_needed > canvas_pixels:
         raise ValueError("core plus twice context exceeds the fixed canvas")
-    # 按 x/y 两轴独立规划 macro 切线；两轴使用同一组私有切分函数，保证
-    # size 模式与 count 模式在两个方向上的行为完全对称。
+    # 按 x/y 两轴独立规划 macro 切线
     if macro_size_dbu is not None:
         if not isinstance(macro_size_dbu, Integral) or macro_size_dbu <= 0:
             raise ValueError("macro_size_dbu must be a positive integer")
-        # 名义 macro 必须严格大于 core 且为 core 的整数倍（设计文档 §5.3）：
+        # 名义 macro 必须严格大于 core 且为 core 的整数倍：
         # 等于 core 会让两级网格退化为纯 core 网格，宏观边界失去意义。
         if macro_size_dbu <= core_size_dbu:
             raise ValueError("macro size must exceed core size")
@@ -238,8 +236,8 @@ def plan_macros(
             raise ValueError("macro_grid entries must be positive integers")
         x_macro = _macro_cuts_by_count(bounds.left, bounds.right, core_size_dbu, columns)
         y_macro = _macro_cuts_by_count(bounds.bottom, bounds.top, core_size_dbu, rows)
-    # 行优先展开全部 macro；每个 macro 立即规划自己的 core 切线。所有
-    # ownership 由互不相同且首尾相接的切线区间构成，天然无正面积重叠。
+    # 行优先展开全部 macro；每个 macro 立即规划自己的 core 切线。
+    # 所有ownership 由互不相同且首尾相接的切线区间构成，天然无正面积重叠。
     macros: list[MacroSpec] = []
     for row in range(len(y_macro) - 1):
         for column in range(len(x_macro) - 1):

@@ -128,8 +128,8 @@ def ownership_canvas(
         or context_box.top < ownership_box.top
     ):
         raise ValueError("context_box 必须从四个方向完整包含 ownership_box")
-    # 居中偏移必须与 rasterize_mask_canvas 完全一致，否则计分像素与 mask
-    # 像素错位；两者共用 _center_padding 是对齐的数值保证。
+    # 居中偏移必须与 rasterize_mask_canvas 完全一致，否则计分像素与 mask像素错位；
+    # 两者共用 _center_padding 是对齐的数值保证。
     local_width = (context_box.width + pixel_dbu - 1) // pixel_dbu
     local_height = (context_box.height + pixel_dbu - 1) // pixel_dbu
     low_y, _, low_x, _ = _center_padding(int(local_height), int(local_width), canvas_pixels)

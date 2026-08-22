@@ -8,7 +8,7 @@ MyOPC：面向 OPC（光学邻近效应校正，半导体光刻）的层级版�
 
 ## 当前工作状态：用户自迁移（每个会话必读）
 
-**旧代码库整体归档于 `00_PAST/`（只读参照）；仓库根从零重建，分支 `migration`，全量 686 用例绿（+1 跳过）。**
+**旧代码库整体归档于 `00_PAST/`（只读参照）；仓库根从零重建，分支 `migration`，全量 695 用例绿（+1 跳过）。**
 
 - **迁移进度**（细节见根目录 `task_plan.md`）：layout ✅、geometry ✅、opc.input(+edge) 重构为 Macro–Core 管线 ✅、lithography（ICCAD13，数值与 OpenILT 逐位一致）✅、evaluation（最小子集）✅、opc.iteration.mbopc（simple/gradient）✅、opc.iteration.ilt（Simple/LevelSet/CurvMulti 三方法 + 公共骨架）✅、main 编排层（验证管线/单遍/MB-OPC 双入口/三 ILT 入口）✅、配置统一 + field 处理框（field_box/field_size）+ 环带几何方案（负板 prepare 前补铬、正板天然暗，2026-08-22）✅。**待迁移**：diffopc（需独立设计评审，不建空目录）、收尾审计。
 - **`00_PAST/` 只读纪律（用户明令）**：不修改归档内任何内容；允许复制出来到新结构改写；确需修改归档必须先请示并获明确批准。
@@ -31,7 +31,7 @@ MyOPC：面向 OPC（光学邻近效应校正，半导体光刻）的层级版�
 
 - 解释器固定为 myopc conda env：`D:/app/miniforge/envs/myopc/python.exe`（Python ≥ 3.12；依赖 klayout / numpy / pillow / psutil / torch / matplotlib / tqdm，版本见 `requirements.txt`）。
 - Bash on Windows：路径用正斜杠。
-- 门禁（范围必须显式，绝不 `ruff check .`；当前全量 686 用例 + 1 跳过）：
+- 门禁（范围必须显式，绝不 `ruff check .`；当前全量 695 用例 + 1 跳过）：
 
 ```bash
 python -m compileall -q common layout geometry opc lithography evaluation main tests
@@ -49,7 +49,7 @@ python main/run_mbopc_gradient.py config/gradient_mbopc.toml  # gradient MB-OPC
 python main/run_ilt_simple.py config/simple_ilt.toml           # Simple ILT（像素型）
 python main/run_ilt_levelset.py config/levelset_ilt.toml       # LevelSet ILT
 python main/run_ilt_curvmulti.py config/curvmulti_ilt.toml     # CurvMulti ILT
-python main/main_test_lithography.py                                # 光刻模型演示
+python main/main_test_lithography.py TestReticle/gcd_30um.gds --layer 11/0  # GDS→光刻留档（逐 tile PNG+manifest，--help 看全参数）
 ```
 
 - 参照运行旧管线（完整旧仓库，可独立执行）：
@@ -81,7 +81,7 @@ cd 00_PAST && python main/run_layout_geometry.py TestReticle/simple.gds --layer 
 - `TestReticle/`：`build_reticles.py` 参数化生成测试版图集（10 场景 × 正负板，2026-08-17 起；50nm 定尺寸组 `p50_1024/`、`p50_2048/` 各 3 间距档 × 正负板，2026-08-21 起），规格与再生成依据见同目录 `reticle_build_plan.md`；simple / JustPoly / test1 / gcd_30um 为用户可编辑回归数据。测试不得硬编码其坐标/计数，新测试用生成式 GDS；gcd_30um 供 smoke（layer 11/0、TOP）。
 - 旧测试套件（`00_PAST/tests/`）是迁移的规格书：实现迁移时对照移植测试，测试先行或同行。
 - 新几何逻辑必须成组断言：零位移 XOR == 0、segment key 唯一、法向单位向量、owner 唯一；阶段边界行为用 monkeypatch 调用计数证明，不用注释或口头约定。
-- 套件职责表与 smoke 验收标准见 `doc/test_manual.md`（当前全量 686 +1 跳过）。
+- 套件职责表与 smoke 验收标准见 `doc/test_manual.md`（当前全量 695 +1 跳过）。
 
 ## Where to look
 

@@ -556,3 +556,21 @@
   静态分层小节、dataflow 双文件、development_manual、data_model（含
   环带批漏网的 v2/dark_box 陈旧行）、test_manual、contracts/edge。
   ADR-004 为点时决策记录保持原文。全量 686 passed + 1 skipped。
+
+## 2026-08-22（会话：光刻 PNG 留档三改）
+
+用户审查 gradient MB-OPC p50 产物时提出三件事：保存的光刻 PNG 上下
+颠倒；希望输出时同时保存原始（未 OPC）光刻对照；main_test_lithography
+改为 GDS→光刻结果工具。四批落地：
+1. d7aa0a6 fix——save_final_lithography 补 I/O 边界 flipud（非对称 GDS
+   stub 回归，修复前必红）；
+2. 47b12ae refactor——抽参数显式内核 save_lithography_pngs（行为不变，
+   687+1 等价证明）；
+3. 8b9777b feat——两工作流 save=true 时对源版图再留档一套
+   （final_lithography_source，显式 top_cell；summary 记
+   source_lithography_tiles；双顶层 GDS 回归守卫）；
+4. 本批 feat——main_test_lithography 重写为 argparse CLI（<gds>+9 flag，
+   校验便宜前置/模型最后，main(argv) 进程内可测；TestMainEntry 原地
+   重写 + TestEntryValidation 4 例）。全量 695 passed + 1 skipped。
+   文档：CLAUDE.md 入口行与计数、test_manual §4/§5/套件表、
+   contracts/mbopc、development_manual、data_model、dataflow×5。

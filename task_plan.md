@@ -14,6 +14,15 @@ CHG-20260818-levelset-ilt：SciPy SDF/halo STE/宏 Adam）；CurvMulti ILT
 曲率，660 passed）；Multilevel 规格待批。
 随后 Phase 7（旧 main 入口评审 + 收尾审计）。
 
+## 2026-08-22 补充：光刻留档工具化（非阶段项）
+
+- [completed] 修复最终光刻 PNG 上下颠倒（I/O 边界翻转缺失）+ 回归测试。
+- [completed] 迭代工作流 save=true 时同批留档源版图对照
+  （final_lithography_source/，summary 记 source_lithography_tiles）。
+- [completed] main_test_lithography.py 由合成演示改写为 GDS→光刻结果
+  CLI（逐 tile PNG+manifest，与管线同一内核；argparse 首例）。
+  全量 695 passed + 1 skipped。
+
 ## 当前会话：项目现状复核（2026-08-19）
 
 - [completed] 复核仓库结构、入口、配置、依赖与测试组织。

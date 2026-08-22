@@ -1225,3 +1225,14 @@
   继续生效（threshold 透传/计数类测试全绿证明）。
 - **顺手清扫**：data_model.md 两处 MacroProblem"format v2 含 dark_box"
   为环带方案批次的漏网陈旧信息，已改 v3 无 dark_box。
+- **光刻 PNG 方向 bug**（2026-08-22，用户审查 p50 产物发现）：save_final_
+  lithography 两处 Image.fromarray 未翻转，违反"PNG 仅在 I/O 边界翻转"
+  不变量——修复为每 tile 先 flipud 再派生 nominal/binary；回归测试必须
+  用非对称 GDS（共享 _write_gds 三层图形关于 y=40 镜像对称，翻转不可
+  检测），并带反退化断言 expected != flipud(expected)。
+- **top_cell 契约洞**：留档内核对源版图打开必须显式传 plan["top_cell"]
+  ——源 GDS 可多顶层（AmbiguousTopCellError），final 合并 GDS 恒单顶层
+  反而不能传（plan 顶层名在 final 里不存在）。
+- **argparse 首例**：main_test_lithography CLI 化引入（9 flag 超 hand-rolled
+  argv 阈值、自带 --help、stdlib 零依赖）；仓库其余入口维持 config TOML
+  驱动不变。

@@ -164,11 +164,15 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
   `final.gds` + 可选 `final_lithography/`（逐 tile nominal/binary PNG +
   manifest，PNG 在 I/O 边界上下翻转）与 `final_lithography_source/`（源
   版图对照留档，同网格参数；开启后收尾阶段前向次数翻倍）；
-  `[output]` 段 `save_metric_trends` 默认开启，运行成功后额外保存
-  `metrics_trends/macro_<id>.png` 和 `overview_mean.png`；每张图包含
-  EPE/L2/PVBand/moved_segments 四个状态趋势面板。Python 调用
-  `run_mbopc(..., overview_mode="lines")` 可改为逐 macro 叠加总览；关闭
-  `save_metric_trends` 则不生成趋势图。`[mbopc]` 段 `show_progress` 控制
+  `[output]` 段 `save_metric_trends` 默认开启，运行成功后由
+  `common.metric_trends` 保存 `metrics_trends/series_<id>.png` 和
+  `overview_mean.png`；指标由 `[mbopc].metric_trend_fields` 配置。
+  Gradient MB-OPC 使用同一公共组件，默认绘制 total loss、三项 loss、EPE
+  和 displaced segments，字段由 `[gradient].metric_trend_fields` 配置。
+  Python 调用 `run_mbopc(..., overview_mode="lines")` 或
+  `run_gradient_mbopc(..., overview_mode="lines")` 可改为逐序列叠加总览；关闭
+  `save_metric_trends` 则不生成趋势图。该组件输入只依赖 metrics 文件，ILT
+  后续可直接调用，但当前 ILT runner 尚未接入。`[mbopc]` 段 `show_progress` 控制
   tqdm（自动测试一律 false）。
 
 ## 8. 梯度 MB-OPC（opc/iteration/mbopc/gradient.py，2026-08-17 迁移）

@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 import main.run_mbopc_simple as workflow
+from common.metric_trends import save_metric_trends
 from layout import DbuBox, LayerSpec, LayoutDB
 
 _TARGET_LAYER = LayerSpec(1, 0)  # 生成式版图唯一目标层
@@ -57,6 +58,7 @@ def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", layout_extra="", *
         "epe_distance_nm": 4,
         "batch_size": 4,
         "target_cache_mb": 16,
+        "metric_trend_fields": '["epe", "l2", "pvband", "moved_segments"]',
         "device": "cpu",
         "save_final_lithography": "true",
         "save_metric_trends": "false",
@@ -95,6 +97,7 @@ decay_every = {values["decay_every"]}
 epe_distance_nm = {values["epe_distance_nm"]}
 batch_size = {values["batch_size"]}
 target_cache_mb = {values["target_cache_mb"]}
+metric_trend_fields = {values["metric_trend_fields"]}
 
 [output]
 work_dir = "{(tmp_path / "work").as_posix()}"
@@ -180,8 +183,9 @@ class TestSingleMacroRunner:
         trend = summary["metric_trends"]
         assert trend["overview_mode"] == "mean"
         assert Path(trend["overview_png"]).is_file()
-        assert len(trend["macro_pngs"]) == 1
-        for path in [trend["overview_png"], *trend["macro_pngs"].values()]:
+        assert trend["fields"] == ["epe", "l2", "pvband", "moved_segments"]
+        assert len(trend["series_pngs"]) == 1
+        for path in [trend["overview_png"], *trend["series_pngs"].values()]:
             with Image.open(path) as image:
                 assert image.width > 0 and image.height > 0
         saved = json.loads((tmp_path / "work" / "summary.json").read_text(encoding="utf-8"))
@@ -189,7 +193,8 @@ class TestSingleMacroRunner:
 
     def test_metric_trend_overview_lines_mode_keeps_macro_curves(self, tmp_path):
         """lines 模式按 macro 叠加曲线，不要求各 macro 状态数相同。"""
-        macros = []
+        metrics_files = {}
+        best_states = {}
         for macro_id, records in {
             "mr0c0": [
                 {"state_index": 0, "epe": 4, "l2": 8, "pvband": 2, "moved_segments": 0},
@@ -202,8 +207,15 @@ class TestSingleMacroRunner:
             metrics_path = tmp_path / "macros" / macro_id / "metrics.json"
             metrics_path.parent.mkdir(parents=True)
             metrics_path.write_text(json.dumps({"records": records}), encoding="utf-8")
-            macros.append({"macro_id": macro_id, "metrics_json": str(metrics_path), "best_state_index": 0})
-        trend = workflow.save_metric_trends({"work_dir": str(tmp_path), "macros": macros}, overview_mode="lines")
+            metrics_files[macro_id] = metrics_path
+            best_states[macro_id] = 0
+        trend = save_metric_trends(
+            metrics_files,
+            tmp_path / "metrics_trends",
+            ("epe", "l2", "pvband", "moved_segments"),
+            best_state_indices=best_states,
+            overview_mode="lines",
+        )
         assert trend["overview_mode"] == "lines"
         assert trend["overview_png"].endswith("overview_lines.png")
         assert Path(trend["overview_png"]).is_file()

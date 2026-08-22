@@ -121,6 +121,12 @@ class MBOPCConfig:
     epe_distance_nm: Decimal  # EPE 探针距离（nm）
     batch_size: int  # 一次 forward 的 core 数
     target_cache_mb: int  # target uint8 LRU 上限（MiB）
+    metric_trend_fields: tuple[str, ...] = (  # 趋势图指标字段
+        "epe",
+        "l2",
+        "pvband",
+        "moved_segments",
+    )
 
     def __post_init__(self) -> None:
         """迭代与批处理正数契约。"""
@@ -144,6 +150,14 @@ class GradientConfig:
     target_cache_mb: int  # target uint8 LRU 上限（MiB）
     weight_epe: float = 0.0  # 可微 EPE loss 权重（0=关闭）
     epe_steepness: float = 4.0  # EPE penalty sigmoid 陡度
+    metric_trend_fields: tuple[str, ...] = (  # 趋势图指标字段
+        "total_loss",
+        "nominal_l2_loss",
+        "process_l2_loss",
+        "pvband_loss",
+        "epe",
+        "displaced_segments",
+    )
 
     def __post_init__(self) -> None:
         """迭代/学习率正数与四权重非负且至少一正。"""
@@ -191,7 +205,7 @@ class OutputConfig:
     final_cell_mode: Literal["single_cell", "macro_cells"]  # 写出 Cell 模式
     work_dir: Path | None = None  # 工作产物根目录；流程消费方查 None
     save_final_lithography: bool = False  # 是否保存最终光刻 PNG
-    save_metric_trends: bool = True  # 是否保存 Simple MB-OPC 指标趋势图
+    save_metric_trends: bool = True  # 是否保存迭代指标趋势图
     show_progress: bool = False  # 是否显示 tqdm 进度
 
 

@@ -186,6 +186,8 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
         "save_metric_trends": output.save_metric_trends,
         "device": str(model.device),
         "iterations": solver_config.iterations,
+        # 趋势字段属于用户输出配置，不复制进 solver config，避免算法状态与留档配置耦合。
+        "metric_trend_fields": list(algo.metric_trend_fields),
         **method.summary_extras(solver_config),
         "macros": macro_summaries,
         "final_layout": str(final_path),

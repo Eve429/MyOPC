@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import klayout.db as kdb
 import numpy as np
@@ -59,8 +60,10 @@ def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", **overrides):
         "epe_distance_nm": 4,
         "batch_size": 4,
         "target_cache_mb": 16,
+        "metric_trend_fields": '["total_loss", "nominal_l2_loss", "process_l2_loss", "pvband_loss", "epe", "displaced_segments"]',
         "device": "cpu",
         "save_final_lithography": "true",
+        "save_metric_trends": "false",
         "show_progress": "false",
         "final_cell_mode": "single_cell",
     }
@@ -98,10 +101,12 @@ weight_pvband = {values["weight_pvband"]}
 epe_distance_nm = {values["epe_distance_nm"]}
 batch_size = {values["batch_size"]}
 target_cache_mb = {values["target_cache_mb"]}
+metric_trend_fields = {values["metric_trend_fields"]}
 
 [output]
 work_dir = "{(tmp_path / "work").as_posix()}"
 save_final_lithography = {values["save_final_lithography"]}
+save_metric_trends = {values["save_metric_trends"]}
 show_progress = {values["show_progress"]}
 final_layout = "{(tmp_path / "final.gds").as_posix()}"
 final_cell_mode = "{values["final_cell_mode"]}"
@@ -155,6 +160,14 @@ class TestGradientConfig:
         assert gradient.iterations == 1  # 迭代
         assert str(gradient.learning_rate_nm) == "1.0"  # Decimal 学习率
         assert gradient.weight_pvband == pytest.approx(0.1)  # 权重
+        assert gradient.metric_trend_fields == (
+            "total_loss",
+            "nominal_l2_loss",
+            "process_l2_loss",
+            "pvband_loss",
+            "epe",
+            "displaced_segments",
+        )
         assert litho.device == "cpu"  # 设备在光刻段
         assert output.save_final_lithography is True  # 留档开关在输出段
 
@@ -335,6 +348,23 @@ class TestGradientRunner:
         ):
             assert field in records[0], field  # 记录字段齐全
         assert metrics["best_state_index"] == macro["best_state_index"]
+
+    def test_gradient_metric_trends_are_saved(self, tmp_path):
+        """开启趋势图后保存 Gradient 默认六项指标与通用 series 路径。"""
+        gds = _write_gds(tmp_path)  # 生成测试版图
+        summary = workflow.run_gradient_mbopc(_write_config(tmp_path, gds, save_metric_trends="true"))
+        trend = summary["metric_trends"]
+        assert trend["fields"] == [
+            "total_loss",
+            "nominal_l2_loss",
+            "process_l2_loss",
+            "pvband_loss",
+            "epe",
+            "displaced_segments",
+        ]
+        assert len(trend["series_pngs"]) == summary["macro_count"]
+        assert Path(trend["overview_png"]).is_file()
+        assert all(Path(path).is_file() for path in trend["series_pngs"].values())
 
     def test_final_layout_and_lithography(self, run):
         """最终合并 GDS 与逐 tile 光刻 PNG/manifest 落盘。"""

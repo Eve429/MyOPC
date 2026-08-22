@@ -3,6 +3,7 @@
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -12,6 +13,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from common.io import atomic_write_json, atomic_write_npz
+from common.metric_trends import save_metric_trends
 from main._mbopc_workflow import MBOPCMethod, run_mbopc_workflow
 
 # 梯度配置解析
@@ -101,9 +103,28 @@ GRADIENT_METHOD = MBOPCMethod(
 )
 
 
-def run_gradient_mbopc(config_path: str | Path) -> dict:
+def run_gradient_mbopc(
+    config_path: str | Path,
+    *,
+    overview_mode: Literal["mean", "lines"] = "mean",
+) -> dict:
     """准备并逐 macro 独立求解梯度 MB-OPC，全部完成后一次合并（任意 macro 数）。"""
-    return run_mbopc_workflow(GRADIENT_METHOD, config_path)
+    summary = run_mbopc_workflow(GRADIENT_METHOD, config_path)
+    metrics_files = {macro["macro_id"]: Path(macro["metrics_json"]) for macro in summary["macros"]}
+    best_states = {macro["macro_id"]: macro["best_state_index"] for macro in summary["macros"]}
+    summary["metric_trends"] = (
+        save_metric_trends(
+            metrics_files,
+            Path(summary["work_dir"]) / "metrics_trends",
+            summary["metric_trend_fields"],
+            best_state_indices=best_states,
+            overview_mode=overview_mode,
+        )
+        if summary["save_metric_trends"]
+        else None
+    )
+    atomic_write_json(Path(summary["work_dir"]) / "summary.json", summary)
+    return summary
 
 
 def main() -> int:
@@ -137,6 +158,8 @@ def main() -> int:
     print(f"  峰值 RSS：{summary['peak_rss_bytes'] / 1024 / 1024:.0f} MiB，CUDA 峰值：{cuda_text}")
     if summary["final_lithography_tiles"] is not None:
         print(f"  最终光刻 PNG：{summary['final_lithography_tiles']} 个 tile")
+    if summary["metric_trends"] is not None:
+        print(f"  指标趋势图：{summary['metric_trends']['directory']}")
     print(f"  最终版图：{summary['final_layout']}（{summary['final_cell_mode']}）")
     return 0  # 成功退出码
 

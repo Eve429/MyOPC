@@ -1236,3 +1236,10 @@
 - **argparse 首例**：main_test_lithography CLI 化引入（9 flag 超 hand-rolled
   argv 阈值、自带 --help、stdlib 零依赖）；仓库其余入口维持 config TOML
   驱动不变。
+- **五条风格规则**（2026-08-22，用户定，除 00_PAST 全仓无豁免）：导入行
+  不加注释；函数 docstring 简明；代码注释只在关键位置、多步骤函数逐步骤
+  开头简注；关键算法定义必须加注；ruff format 120 列。旧"紧凑排版/禁止
+  自动格式化"纪律废止——pyproject 移除 geometry/contour.py 豁免（其 I001
+  实为 import 块后两空行），门禁扩为四件套（+ruff format --check）。
+  机械迁移 68 文件 format + 161 处导入注释清扫，695+1 前后一致证明行为
+  无关；存量旧代码的逐行注释不回头重写，触碰时再迁。

@@ -574,3 +574,12 @@
    重写 + TestEntryValidation 4 例）。全量 695 passed + 1 skipped。
    文档：CLAUDE.md 入口行与计数、test_manual §4/§5/套件表、
    contracts/mbopc、development_manual、data_model、dataflow×5。
+
+## 2026-08-22（会话：五条风格规则全仓迁移）
+
+用户审查本会话代码后定五条风格规则（导入无注释/函数注释简明/步骤级
+注释/关键算法加注/ruff format 120 列），范围"除 00_PAST 无豁免"。两批：
+15b8382 全仓机械迁移（68 文件 format、161 处导入注释、contour.py 豁免
+移除、pyproject/AGENTS/CLAUDE 规则与四件套门禁同步）；429e52d 本会话
+代码按规则 2/3/5 精修（9 文件中 5 个有实质改动）。695 passed + 1
+skipped 前后一致。

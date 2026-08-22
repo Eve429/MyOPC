@@ -348,18 +348,20 @@ def merge_macro_results(
     return written  # 返回最终版图路径
 
 
-def save_final_lithography(
-        plan: dict, final_layout: Path, model, batch_size: int,
-        output_dir: Path,
+def save_lithography_pngs(
+        gds_path: Path, layer: LayerSpec, polarity: MaskPolarity,
+        core_dbu: int, context_dbu: int, pixel_dbu: int, canvas_pixels: int,
+        model, batch_size: int, output_dir: Path, *,
+        top_cell: str | None = None,
 ) -> dict:
-    """流式保存最终版图每 tile 的 nominal 连续/二值 PNG 和 manifest。"""
-    layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
-    polarity = MaskPolarity(str(plan["polarity"]))  # 极性枚举
-    pixel_dbu = int(plan["pixel_dbu"])  # 栅格像素
-    canvas_pixels = int(plan["canvas_pixels"])  # 画布
-    core_dbu = int(plan["core_size_dbu"])  # tile 尺寸
-    context_dbu = int(plan["context_dbu"])  # tile 上下文
-    with LayoutDB.open(final_layout) as database:  # 打开一次，全程在内物化消费
+    """流式保存指定版图每 tile 的 nominal 连续/二值 PNG 和 manifest。
+
+    参数全部显式（迭代工作流与 GDS 直调入口共用同一内核）：网格按给定
+    GDS 自身 layer bbox 规划，不依赖任何迭代期 plan 语义。top_cell 仅源
+    版图可能需要（多顶层歧义由 layout 层报错）；最终合并 GDS 恒单顶层，
+    调用方不传即可。
+    """
+    with LayoutDB.open(gds_path, top_cell) as database:  # 打开一次，全程在内物化消费
         bounds = database.layer_bbox(layer)  # 目标层真实包络（不用魔法框）
         if bounds is None:  # 空层无法出图
             raise ValueError("最终版图目标层为空")
@@ -439,3 +441,21 @@ def save_final_lithography(
         "tile_count": len(tiles), "tiles": tiles}
     atomic_write_json(output_dir / "manifest.json", manifest)  # 落盘清单
     return manifest  # 供 summary 消费
+
+
+def save_final_lithography(
+        plan: dict, final_layout: Path, model, batch_size: int,
+        output_dir: Path,
+) -> dict:
+    """从 plan 提取网格六键，对最终合并版图留档（save_lithography_pngs 薄包装）。
+
+    不传 top_cell：plan["top_cell"] 是源版图顶层名，最终合并 GDS 的顶层
+    是合并器写出的唯一结果 Cell，用源名打开反而失败。
+    """
+    return save_lithography_pngs(
+        final_layout,
+        LayerSpec(plan["layer"][0], plan["layer"][1]),
+        MaskPolarity(str(plan["polarity"])),
+        int(plan["core_size_dbu"]), int(plan["context_dbu"]),
+        int(plan["pixel_dbu"]), int(plan["canvas_pixels"]),
+        model, batch_size, output_dir)

@@ -17,9 +17,9 @@ import torch
 from PIL import Image
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
-_REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
-if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
-    sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/geometry 可导入
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from common.io import atomic_write_json
 from common.units import exact_dbu
@@ -129,16 +129,16 @@ def prepare_problems(
 ) -> dict:
     """执行阶段 0/1，逐 macro 生成 problem，并写出 plan.json。"""
     if output.work_dir is None:  # 本流程要求工作目录（单遍等流程可不填）
-        raise ValueError("此流程要求 [output].work_dir")  # 消费方显式报错
-    layer = LayerSpec(layout.layer, layout.datatype)  # 目标层规格
-    started = time.perf_counter()  # 阶段计时起点
-    process = psutil.Process()  # RSS 采样进程对象
-    peak_rss = process.memory_info().rss  # 峰值初值
-    with LayoutDB.open(layout.layout, layout.top_cell) as database:  # 打开并自动关闭
+        raise ValueError("此流程要求 [output].work_dir")
+    layer = LayerSpec(layout.layer, layout.datatype)
+    started = time.perf_counter()
+    process = psutil.Process()
+    peak_rss = process.memory_info().rss
+    with LayoutDB.open(layout.layout, layout.top_cell) as database:
         top_cell_name = database.top_cell_name  # 在库存活期内捕获顶层名
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
         layer_bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生逐层，不物化）
-        if layer_bounds is None:  # 目标层在顶层子树内无图形
+        if layer_bounds is None:
             # 空层无法规划网格
             raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
         # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化
@@ -156,7 +156,7 @@ def prepare_problems(
             canvas_pixels=litho.canvas_pixels,
         )
         # ownership 复核——面积和恰等于父框即无正面积重叠。
-        if sum(macro.ownership_box.area for macro in macros) != bounds.area:  # 面积守恒
+        if sum(macro.ownership_box.area for macro in macros) != bounds.area:
             raise RuntimeError("macro ownership 面积和不等于版图 bbox 面积")
         # 负板补铬告知（每运行恰一次，补铬本身在各 prepare 内部按极性进行）：
         # 仅当 field 严格大于数据包络（存在环带）时提示；无 field 的常规运行
@@ -182,13 +182,13 @@ def prepare_problems(
                 f"{Decimal(layer_bounds.top) * scale}) nm",
                 stacklevel=2,
             )
-        problems_dir = output.work_dir / "problems"  # problem 存放目录
-        problems_dir.mkdir(parents=True, exist_ok=True)  # 创建目录结构
-        entries = []  # 逐 macro 计划条目
-        segment_count_sum = 0  # 段数累计
-        membership_count_sum = 0  # membership 累计
-        maximum_problem_bytes = 0  # 最大 problem 字节数
-        maximum_problem_macro_id = ""  # 最大 problem 所属 macro
+        problems_dir = output.work_dir / "problems"
+        problems_dir.mkdir(parents=True, exist_ok=True)
+        entries = []
+        segment_count_sum = 0
+        membership_count_sum = 0
+        maximum_problem_bytes = 0
+        maximum_problem_macro_id = ""
         for macro in macros:  # 按行优先顺序逐 macro 准备
             # 完整相交物化（不裁剪 occurrence）
             batch = database.query([layer], macro.query_box).materialize_intersecting()
@@ -197,13 +197,12 @@ def prepare_problems(
                 batch, layer, layout.polarity, runtime.fragmentation, macro, data_bounds=layer_bounds
             )
             problem_path = problem.save(problems_dir / f"{macro.macro_id}.npz")  # 原子落盘
-            problem_bytes = problem_path.stat().st_size  # 文件字节数即持久字节数
-            segment_count_sum += problem.segments.segment_count  # 累计段数
-            membership_count_sum += len(problem.member_segment_indices)  # 累计 membership
-            if problem_bytes > maximum_problem_bytes:  # 更新最大 problem
-                maximum_problem_bytes = problem_bytes  # 记录字节
-                maximum_problem_macro_id = macro.macro_id  # 记录 macro
-            # 单 macro 计划条目
+            problem_bytes = problem_path.stat().st_size
+            segment_count_sum += problem.segments.segment_count
+            membership_count_sum += len(problem.member_segment_indices)
+            if problem_bytes > maximum_problem_bytes:
+                maximum_problem_bytes = problem_bytes
+                maximum_problem_macro_id = macro.macro_id
             entries.append(
                 {
                     "macro_id": macro.macro_id,
@@ -220,10 +219,10 @@ def prepare_problems(
                     "problem_bytes": problem_bytes,
                 }
             )
-            peak_rss = max(peak_rss, process.memory_info().rss)  # 采样峰值
+            peak_rss = max(peak_rss, process.memory_info().rss)
             del batch, problem  # 立即释放当前 macro 大对象再进入下一个
     # 全部 problem 成功且 LayoutDB 已关闭，才允许写出表示「准备完成」的 plan。
-    prepare_seconds = time.perf_counter() - started  # 阶段耗时
+    prepare_seconds = time.perf_counter() - started
     # 完整计划（后续阶段唯一允许消费的产物）
     plan = {
         "format_version": _PLAN_FORMAT_VERSION,
@@ -267,22 +266,21 @@ def write_macro_gds(layer: LayerSpec, region: kdb.Region, path: Path, dbu_um: fl
     """
     layout = kdb.Layout()  # 独立原生版图对象
     layout.dbu = dbu_um  # 与源版图一致的 DBU，整数坐标物理尺寸不变
-    cell = layout.create_cell("RESULT")  # 固定结果 Cell 名
-    # 目标层
+    cell = layout.create_cell("RESULT")
     index = layout.layer(kdb.LayerInfo(layer.layer, layer.datatype))
-    region.insert_into(layout, cell.cell_index(), index)  # 插入完整候选 Region
-    path.parent.mkdir(parents=True, exist_ok=True)  # 确保目录存在
+    region.insert_into(layout, cell.cell_index(), index)
+    path.parent.mkdir(parents=True, exist_ok=True)
     # 同目录临时文件
     handle, temporary_name = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=path.suffix, dir=path.parent)
-    os.close(handle)  # 关闭句柄
-    temporary = Path(temporary_name)  # Path 化
-    try:  # 写出并原子替换
-        layout.write(str(temporary))  # KLayout 完整写出
+    os.close(handle)
+    temporary = Path(temporary_name)
+    try:
+        layout.write(str(temporary))
         os.replace(temporary, path)  # 原子替换
-    finally:  # 清理
-        if temporary.exists():  # 尚存
-            temporary.unlink()  # 删除
-    return path  # 返回路径
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return path
 
 
 def merge_macro_results(
@@ -293,30 +291,30 @@ def merge_macro_results(
     cell_mode: Literal["single_cell", "macro_cells"],
 ) -> Path:
     """按 plan 选择各 macro ownership 权威覆盖并写出一个全局结果。"""
-    if cell_mode not in ("single_cell", "macro_cells"):  # 模式枚举校验
-        raise ValueError(f"未知 cell_mode：{cell_mode}")  # 拒绝拼错
-    layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
+    if cell_mode not in ("single_cell", "macro_cells"):
+        raise ValueError(f"未知 cell_mode：{cell_mode}")
+    layer = LayerSpec(plan["layer"][0], plan["layer"][1])
     dbu_um = float(plan["dbu_um"])  # 源版图 DBU
-    identifiers = set()  # macro ID 去重集合
+    identifiers = set()
     for entry in plan["macros"]:  # 先核对计划条目自身无重复
-        macro_id = entry["macro_id"]  # macro 编号
-        if macro_id in identifiers:  # 重复 macro ID
-            raise ValueError(f"重复 macro ID：{macro_id}")  # 明确失败
-        identifiers.add(macro_id)  # 记录
+        macro_id = entry["macro_id"]
+        if macro_id in identifiers:
+            raise ValueError(f"重复 macro ID：{macro_id}")
+        identifiers.add(macro_id)
     # 映射完整性：调用方必须显式给出每个 macro 的 GDS，函数不猜任何路径。
-    missing = sorted(identifiers - set(macro_gds_paths))  # 缺失映射
-    if missing:  # 有 macro 没给 GDS
-        raise ValueError(f"macro GDS 映射缺失：{missing}")  # 明确失败
-    extra = sorted(set(macro_gds_paths) - identifiers)  # 多余映射
-    if extra:  # 映射含计划外的 macro
-        raise ValueError(f"macro GDS 映射多余：{extra}")  # 明确失败
-    patches: list[GeometryPatch] = []  # 权威 patch 集合
-    area_before = 0  # merge 前覆盖面积
-    for entry in plan["macros"]:  # 按计划顺序逐 macro
-        macro_id = entry["macro_id"]  # macro 编号
-        gds_path = Path(macro_gds_paths[macro_id])  # 该 macro 的 GDS 路径
-        if not gds_path.is_file():  # 缺失 macro GDS
-            raise FileNotFoundError(f"缺失 macro GDS：{gds_path}")  # 明确失败
+    missing = sorted(identifiers - set(macro_gds_paths))
+    if missing:
+        raise ValueError(f"macro GDS 映射缺失：{missing}")
+    extra = sorted(set(macro_gds_paths) - identifiers)
+    if extra:
+        raise ValueError(f"macro GDS 映射多余：{extra}")
+    patches: list[GeometryPatch] = []
+    area_before = 0
+    for entry in plan["macros"]:
+        macro_id = entry["macro_id"]
+        gds_path = Path(macro_gds_paths[macro_id])
+        if not gds_path.is_file():
+            raise FileNotFoundError(f"缺失 macro GDS：{gds_path}")
         with LayoutDB.open(gds_path) as database:  # 回读完整候选
             # 空 macro 候选是合法形态（如像素 ILT 的无材料区域或全暗
             # 优化结果）：GDS 不保存空层，层缺失等价于零覆盖 Region，
@@ -325,27 +323,27 @@ def merge_macro_results(
                 layer_bounds = database.layer_bbox(layer)  # 候选层真实包络
             except LayerNotFoundError:
                 layer_bounds = None
-            if layer_bounds is None:  # 候选无任何图形
+            if layer_bounds is None:
                 region = kdb.Region()  # 空覆盖直接构造，不查询
             else:
                 # 层包络内查询物化（不用魔法框：
                 batch = database.query([layer], layer_bounds).materialize()
-                region = batch.region(layer)  # 候选 Region
-        if not region.has_valid_polygons():  # 无效 polygon
-            raise RuntimeError(f"{macro_id} 候选 Region 含无效 polygon")  # 明确失败
-        ownership = DbuBox(*entry["ownership_box"])  # macro ownership 框
+                region = batch.region(layer)
+        if not region.has_valid_polygons():
+            raise RuntimeError(f"{macro_id} 候选 Region 含无效 polygon")
+        ownership = DbuBox(*entry["ownership_box"])
         # 权威覆盖选择：完整候选只贡献自身 ownership 内的部分，消除相邻 macro
         # context 的正面积重复；裁剪不是最终结果，seam 由写出端全局 merge 消除。
-        clipped = region & kdb.Region(ownership.to_native())  # 精确相交
-        area_before += int(clipped.area())  # 统计覆盖面积
-        patches.append(GeometryPatch(macro_id, layer, clipped, ownership))  # 收集
+        clipped = region & kdb.Region(ownership.to_native())
+        area_before += int(clipped.area())
+        patches.append(GeometryPatch(macro_id, layer, clipped, ownership))
     # 按配置模式写出最终版图
     written = PatchWriter.write_macro_results(patches, output_path, dbu_um, cell_mode=cell_mode)
     # 回读验证：merge/normalize 只能改变表示方式，不得改变物理覆盖面积。
     # 逐 macro 在自身 ownership 窗口统计面积后累加——ownership 半开不重叠、
     # 最终图形不越出 bbox，分块求和与全量面积数学等价，且避免第二个全量
     # Region 常驻（每窗口 Region 用完即弃）；失败时可定位到具体 macro。
-    area_after = 0  # 回读累计面积
+    area_after = 0
     with LayoutDB.open(written) as database:  # 回读最终版图
         for entry in plan["macros"]:  # 逐 macro 窗口
             ownership = DbuBox(*entry["ownership_box"])  # 该 macro 计分框
@@ -358,14 +356,12 @@ def merge_macro_results(
                 region = window.region(layer) & kdb.Region(ownership.to_native())
             except LayerNotFoundError:
                 region = kdb.Region()
-            if not region.has_valid_polygons():  # 无效 polygon
-                # 明确失败并定位 macro
+            if not region.has_valid_polygons():
                 raise RuntimeError(f"{entry['macro_id']} 窗口含无效 polygon")
-            area_after += int(region.area())  # 累计窗口面积
+            area_after += int(region.area())
     if area_after != area_before:  # 覆盖面积被 normalize 改变
-        # 明确失败
         raise RuntimeError(f"merge 前后覆盖面积改变：{area_before} -> {area_after}")
-    return written  # 返回最终版图路径
+    return written
 
 
 def save_lithography_pngs(

@@ -13,9 +13,9 @@ import psutil
 import torch
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
-_REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
-if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
-    sys.path.insert(0, str(_REPO_ROOT))  # 使 layout/opc/lithography 可导入
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from common.io import atomic_write_json, atomic_write_npz
 from common.runtime import resolve_device
@@ -77,17 +77,17 @@ def prepare_pixel_problems(
     layout: LayoutConfig, partition: PartitionConfig, litho: LithographyConfig, output: OutputConfig
 ) -> dict:
     """像素 ILT 阶段 0/1：逐 macro 一次栅格化并写出 ilt_plan.json。"""
-    if output.work_dir is None:  # 本流程要求工作目录
+    if output.work_dir is None:
         raise ValueError("此流程要求 [output].work_dir")
-    layer = LayerSpec(layout.layer, layout.datatype)  # 目标层规格
-    started = time.perf_counter()  # 阶段计时起点
-    process = psutil.Process()  # RSS 采样进程对象
-    peak_rss = process.memory_info().rss  # 峰值初值
-    with LayoutDB.open(layout.layout, layout.top_cell) as database:  # 打开并自动关闭
+    layer = LayerSpec(layout.layer, layout.datatype)
+    started = time.perf_counter()
+    process = psutil.Process()
+    peak_rss = process.memory_info().rss
+    with LayoutDB.open(layout.layout, layout.top_cell) as database:
         top_cell_name = database.top_cell_name  # 在库存活期内捕获顶层名
         dbu_nm = Decimal(str(database.dbu_um)) * 1000  # 0.0001 µm/DBU → 0.1 nm/DBU
         layer_bounds = database.layer_bbox(layer)  # 目标层整体 bbox（原生，不物化）
-        if layer_bounds is None:  # 目标层无图形
+        if layer_bounds is None:
             raise ValueError(f"目标层 {layer.layer}/{layer.datatype} 不含任何图形")
         # 处理框（field_box/field_size）：未配置时即 layer bbox，零行为变化；
         # 环带光学处理在 prepare 内按极性完成（opaque 补铬，clear 天然暗）
@@ -129,9 +129,9 @@ def prepare_pixel_problems(
                 f"{Decimal(layer_bounds.top) * scale}) nm",
                 stacklevel=2,
             )
-        problems_dir = output.work_dir / "pixel_problems"  # problem 存放目录
-        problems_dir.mkdir(parents=True, exist_ok=True)  # 创建目录结构
-        entries = []  # 逐 macro 计划条目
+        problems_dir = output.work_dir / "pixel_problems"
+        problems_dir.mkdir(parents=True, exist_ok=True)
+        entries = []
         pixel_count_sum = 0  # macro ownership 像素总数（summary 规模键）
         for macro in macros:  # 行优先顺序逐 macro 准备
             # 完整相交物化一次；实际 box 整像素校验在 problem 构造内前置
@@ -155,7 +155,7 @@ def prepare_pixel_problems(
                     "problem_bytes": problem_path.stat().st_size,
                 }
             )
-            peak_rss = max(peak_rss, process.memory_info().rss)  # 采样峰值
+            peak_rss = max(peak_rss, process.memory_info().rss)
             del batch, problem  # 立即释放当前 macro 大对象
     # 全部 problem 成功且 LayoutDB 已关闭才写出"准备完成"的 plan；
     # 键集与 merge_macro_results/save_final_lithography 消费面保持一致。
@@ -204,8 +204,8 @@ def _evaluate_best_binary(
 ) -> tuple[int, int]:
     """在 best 二值掩膜上执行最终前向并按 ownership 统计 L2/PVBand。"""
     core_count = problem.macro.core_count
-    binary_l2 = 0  # 二值 L2 累计
-    pvband = 0  # 二值 PVBand 累计
+    binary_l2 = 0
+    pvband = 0
     with torch.no_grad():  # 纯推理终评
         for batch_start in range(0, core_count, config.batch_size):
             core_indices = list(range(batch_start, min(batch_start + config.batch_size, core_count)))
@@ -237,29 +237,29 @@ def _evaluate_best_binary(
 
 def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     """像素 ILT 公共生命周期：准备→逐 macro 求解/终评/产物→恰一次合并→summary。"""
-    total_started = time.perf_counter()  # 全流程计时
-    process = psutil.Process()  # RSS 采样进程句柄
-    rss_start = process.memory_info().rss  # 起点 RSS
+    total_started = time.perf_counter()
+    process = psutil.Process()
+    rss_start = process.memory_info().rss
     layout, partition, litho, algo, output = load_config(
         config_path, LayoutConfig, PartitionConfig, LithographyConfig, method.config_type, OutputConfig
     )
     plan = prepare_pixel_problems(layout, partition, litho, output)
-    rss_after_prepare = process.memory_info().rss  # 准备后 RSS
-    peak_rss = max(rss_start, rss_after_prepare)  # 峰值初值
+    rss_after_prepare = process.memory_info().rss
+    peak_rss = max(rss_start, rss_after_prepare)
     device = resolve_device(litho.device)  # 设备解析（auto→实际）
     # CUDA 峰值统计设备必须显式指定（与 MB-OPC 工作流同款约束）
     cuda_stats_device = torch.device(device) if device.startswith("cuda") else None
-    model = ICCAD13Lithography(device=device)  # 固定 ICCAD13 模型
+    model = ICCAD13Lithography(device=device)
     if cuda_stats_device is not None:  # 从模型加载后开始计量
         torch.cuda.reset_peak_memory_stats(cuda_stats_device)
     conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))
-    layer = LayerSpec(plan["layer"][0], plan["layer"][1])  # 目标层
+    layer = LayerSpec(plan["layer"][0], plan["layer"][1])
     dbu_um = float(plan["dbu_um"])  # 源版图 DBU
-    macro_count = plan["macro_count"]  # macro 总数
+    macro_count = plan["macro_count"]
     work_dir = output.work_dir  # 非 None 已由 prepare 保证
     macros_dir = work_dir / "macros"  # 逐 macro 产物根目录
     macro_gds: dict[str, Path] = {}  # macro_id → best GDS（merge 显式映射）
-    macro_summaries = []  # 逐 macro 摘要
+    macro_summaries = []
     outer_bar = None  # 多 macro 外层进度条
     if macro_count > 1 and output.show_progress:
         from tqdm import tqdm
@@ -267,9 +267,9 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
         outer_bar = tqdm(total=macro_count, desc="macros", unit="macro", position=0)
     try:  # 异常路径也要收尾外层进度条
         for entry in plan["macros"]:  # 稳定顺序逐 macro 独立求解
-            macro_id = entry["macro_id"]  # macro 编号
+            macro_id = entry["macro_id"]
             problem = PixelMacroProblem.load(Path(entry["problem_file"]))
-            started = time.perf_counter()  # 单 macro 计时
+            started = time.perf_counter()
             bar = None  # 内层 tile 进度条
             if output.show_progress:
                 from tqdm import tqdm
@@ -282,7 +282,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
                     position=1 if outer_bar is not None else 0,
                     leave=outer_bar is None,
                 )
-            on_tiles = None if bar is None else bar.update  # 批完成回调
+            on_tiles = None if bar is None else bar.update
             try:  # 异常路径同样收尾内层条
                 result = method.optimize_macro(problem, model, algo, on_tiles_completed=on_tiles)
             finally:
@@ -292,7 +292,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
             binary_l2, binary_pvband = _evaluate_best_binary(
                 problem, result, model, algo, conditions, method.build_fixed_context_canvas
             )
-            macro_dir = macros_dir / macro_id  # 产物目录
+            macro_dir = macros_dir / macro_id
             macro_dir.mkdir(parents=True, exist_ok=True)
             # 像素 → Region → best GDS（RESULT Cell，完整 macro 候选）
             region = reconstruct_pixel_region(problem, result.binary_mask)
@@ -319,8 +319,8 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
                 "core_count": problem.macro.core_count,
             }
             atomic_write_json(macro_dir / "metrics.json", metrics)
-            elapsed = time.perf_counter() - started  # 单 macro 耗时
-            peak_rss = max(peak_rss, process.memory_info().rss)  # 逐 macro 采峰
+            elapsed = time.perf_counter() - started
+            peak_rss = max(peak_rss, process.memory_info().rss)
             macro_summaries.append(
                 {
                     "macro_id": macro_id,
@@ -358,7 +358,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
         source_manifest = save_source_lithography(
             plan, Path(plan["layout"]), model, algo.batch_size, work_dir / "final_lithography_source"
         )
-    peak_rss = max(peak_rss, process.memory_info().rss)  # 收尾前采峰
+    peak_rss = max(peak_rss, process.memory_info().rss)
     cuda_peak = int(torch.cuda.max_memory_allocated(cuda_stats_device)) if cuda_stats_device is not None else None
     summary = {
         "method": method.method_name,

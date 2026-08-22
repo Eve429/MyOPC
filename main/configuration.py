@@ -12,9 +12,9 @@ from typing import Literal, get_args, get_origin, get_type_hints
 from tomllib import loads as toml_loads
 
 # 仓库根 = main/ 的上一级；直接运行脚本时把它加入 sys.path。
-_REPO_ROOT = Path(__file__).resolve().parents[1]  # 计算仓库根目录
-if str(_REPO_ROOT) not in sys.path:  # 避免重复插入
-    sys.path.insert(0, str(_REPO_ROOT))  # 使 opc 可导入
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from common.units import exact_dbu
 from opc.input import MaskPolarity
@@ -69,12 +69,11 @@ class PartitionConfig:
     def __post_init__(self) -> None:
         """互斥与正数契约：macro_grid 与 macro_size_nm 恰好一个非空。"""
         if (self.macro_grid is None) == (self.macro_size_nm is None):  # 同空同非空
-            raise ValueError("macro_grid 与 macro_size_nm 必须恰好填写一个")  # 报互斥
-        if self.core_size_nm <= 0 or self.context_nm < 0:  # 尺寸非法
-            raise ValueError("core_size_nm 必须为正，context_nm 必须非负")  # 报范围
-        # 数量模式元素必须为正
+            raise ValueError("macro_grid 与 macro_size_nm 必须恰好填写一个")
+        if self.core_size_nm <= 0 or self.context_nm < 0:
+            raise ValueError("core_size_nm 必须为正，context_nm 必须非负")
         if self.macro_grid is not None and (self.macro_grid[0] <= 0 or self.macro_grid[1] <= 0):
-            raise ValueError("macro_grid 必须是两项正整数 [列, 行]")  # 报格式
+            raise ValueError("macro_grid 必须是两项正整数 [列, 行]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,11 +87,10 @@ class LithographyConfig:
     def __post_init__(self) -> None:
         """画布冻结、像素正数与设备枚举契约。"""
         if self.canvas_pixels != 256:  # 模型资产契约
-            raise ValueError("canvas_pixels 当前固定为 256")  # 报冻结
-        if self.pixel_nm <= 0:  # 像素非法
-            raise ValueError("pixel_nm 必须为正")  # 报范围
-        if not _DEVICE_PATTERN.match(self.device):  # 设备枚举
-            # 报设备
+            raise ValueError("canvas_pixels 当前固定为 256")
+        if self.pixel_nm <= 0:
+            raise ValueError("pixel_nm 必须为正")
+        if not _DEVICE_PATTERN.match(self.device):
             raise ValueError(f"未知 device：{self.device}（只接受 auto/cpu/cuda[:N]）")
 
 
@@ -107,11 +105,10 @@ class EdgeConfig:
 
     def __post_init__(self) -> None:
         """边段几何契约：正长度与位移上限、miter 正数。"""
-        # 段长
         if self.corner_nm <= 0 or self.segment_nm <= 0 or self.max_displacement_nm <= 0:
-            raise ValueError("corner_nm/segment_nm/max_displacement_nm 必须为正")  # 报
-        if self.miter_limit <= 0.0:  # miter
-            raise ValueError("miter_limit 必须为正数")  # 报
+            raise ValueError("corner_nm/segment_nm/max_displacement_nm 必须为正")
+        if self.miter_limit <= 0.0:
+            raise ValueError("miter_limit 必须为正数")
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,11 +124,10 @@ class MBOPCConfig:
 
     def __post_init__(self) -> None:
         """迭代与批处理正数契约。"""
-        # 迭代类
         if self.iterations < 1 or self.decay_every < 1 or self.batch_size < 1 or self.target_cache_mb < 0:
-            raise ValueError("iterations/decay_every/batch_size 必须为正，cache 为非负")  # 报
-        if self.initial_step_nm <= 0 or self.epe_distance_nm <= 0:  # 物理量
-            raise ValueError("initial_step_nm 与 epe_distance_nm 必须为正")  # 报
+            raise ValueError("iterations/decay_every/batch_size 必须为正，cache 为非负")
+        if self.initial_step_nm <= 0 or self.epe_distance_nm <= 0:
+            raise ValueError("initial_step_nm 与 epe_distance_nm 必须为正")
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,22 +147,21 @@ class GradientConfig:
 
     def __post_init__(self) -> None:
         """迭代/学习率正数与四权重非负且至少一正。"""
-        if self.iterations < 1 or self.batch_size < 1:  # 迭代与批
-            raise ValueError("iterations/batch_size 必须为正")  # 报
-        if self.target_cache_mb < 0:  # 缓存
-            raise ValueError("target_cache_mb 必须为非负")  # 报
-        if self.learning_rate_nm <= 0:  # 学习率
-            raise ValueError("learning_rate_nm 必须为正")  # 报
-        # 三权重
+        if self.iterations < 1 or self.batch_size < 1:
+            raise ValueError("iterations/batch_size 必须为正")
+        if self.target_cache_mb < 0:
+            raise ValueError("target_cache_mb 必须为非负")
+        if self.learning_rate_nm <= 0:
+            raise ValueError("learning_rate_nm 必须为正")
         weights = (self.weight_nominal_l2, self.weight_process_l2, self.weight_pvband, self.weight_epe)
-        if any(weight < 0.0 for weight in weights):  # 负权重
-            raise ValueError("loss 权重必须非负")  # 报
-        if not any(weight > 0.0 for weight in weights):  # 全零
-            raise ValueError("四个 loss 权重至少一个为正")  # 报
-        if self.epe_distance_nm <= 0:  # 探针
-            raise ValueError("epe_distance_nm 必须为正")  # 报
-        if self.epe_steepness <= 0.0:  # EPE 陡度
-            raise ValueError("epe_steepness 必须为正数")  # 报
+        if any(weight < 0.0 for weight in weights):
+            raise ValueError("loss 权重必须非负")
+        if not any(weight > 0.0 for weight in weights):
+            raise ValueError("四个 loss 权重至少一个为正")
+        if self.epe_distance_nm <= 0:
+            raise ValueError("epe_distance_nm 必须为正")
+        if self.epe_steepness <= 0.0:
+            raise ValueError("epe_steepness 必须为正数")
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,8 +179,7 @@ class ValidationConfig:
 
     def __post_init__(self) -> None:
         """双轮位移冻结为 [+2,-2]：只查和为零会放行 [3,-3]，回零失去约束力。"""
-        if self.round_deltas_nm != (Decimal(2), Decimal(-2)):  # 值不符
-            # 报冻结要求与实际值
+        if self.round_deltas_nm != (Decimal(2), Decimal(-2)):
             raise ValueError(f"round_deltas_nm 当前冻结为 [+2nm, -2nm]，实际为 {list(self.round_deltas_nm)}")
 
 
@@ -215,90 +209,86 @@ CONFIG_SECTIONS: dict[type, str] = {
     ValidationConfig: "iteration",
     OutputConfig: "output",
 }
-_SECTION_TO_TYPE = {name: cls for cls, name in CONFIG_SECTIONS.items()}  # 反查表
+_SECTION_TO_TYPE = {name: cls for cls, name in CONFIG_SECTIONS.items()}
 
 
 def _parse_scalar(annotation: object, value: object, name: str, base_dir: Path) -> object:
     """按字段注解把 TOML 原始值解析为目标类型（拒绝 bool 冒充数值等）。"""
-    origin = get_origin(annotation)  # 泛型起源
+    origin = get_origin(annotation)
     if origin is types.UnionType:  # X | None：TOML 无显式 null，仅解非 None 分支
-        inner = [a for a in get_args(annotation) if a is not type(None)]  # 去None
-        return _parse_scalar(inner[0], value, name, base_dir)  # 递归单分支
+        inner = [a for a in get_args(annotation) if a is not type(None)]
+        return _parse_scalar(inner[0], value, name, base_dir)
     if annotation is bool:  # 布尔先于 int 判定（bool 是 int 子类）
-        if not isinstance(value, bool):  # 非布尔
-            raise ValueError(f"{name} 必须是布尔值")  # 报类型
-        return value  # 原样
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} 必须是布尔值")
+        return value
     if annotation is int:  # 严格整数（拒 bool/float/str）
-        if not isinstance(value, int) or isinstance(value, bool):  # 非纯int
-            raise ValueError(f"{name} 必须是整数，不接受 {value!r}")  # 报类型
-        return value  # 原样
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{name} 必须是整数，不接受 {value!r}")
+        return value
     if annotation is float:  # 数值（拒 bool/str；int 可升 float）
-        if not isinstance(value, (int, float)) or isinstance(value, bool):  # 非数值
-            raise ValueError(f"{name} 必须是数值，不接受 {value!r}")  # 报类型
-        return float(value)  # 统一 float
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"{name} 必须是数值，不接受 {value!r}")
+        return float(value)
     if annotation is Decimal:  # 十进制精确数值（nm 参数换算链的事实源）
-        if not isinstance(value, (int, float)) or isinstance(value, bool):  # 非数值
-            raise ValueError(f"{name} 必须是数值，不接受 {value!r}")  # 报类型
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"{name} 必须是数值，不接受 {value!r}")
         try:  # str(int/float) 是十进制短串，Decimal 无二进制误差
-            return Decimal(str(value))  # 精确转换
+            return Decimal(str(value))
         except InvalidOperation as exc:  # 理论不可达，防御
-            raise ValueError(f"{name} 无法解析为十进制数") from exc  # 报解析
-    if annotation is str:  # 字符串
-        if not isinstance(value, str):  # 非字符串
-            raise ValueError(f"{name} 必须是字符串")  # 报类型
-        return value  # 原样
+            raise ValueError(f"{name} 无法解析为十进制数") from exc
+    if annotation is str:
+        if not isinstance(value, str):
+            raise ValueError(f"{name} 必须是字符串")
+        return value
     if annotation is Path:  # 路径三态：绝对/相对 TOML 目录/~/expanduser
-        if not isinstance(value, str):  # 非字符串
-            raise ValueError(f"{name} 必须是字符串路径")  # 报类型
-        expanded = Path(value).expanduser()  # 展开 ~
-        return expanded if expanded.is_absolute() else (base_dir / expanded).resolve()  # 归一
+        if not isinstance(value, str):
+            raise ValueError(f"{name} 必须是字符串路径")
+        expanded = Path(value).expanduser()
+        return expanded if expanded.is_absolute() else (base_dir / expanded).resolve()
     if annotation is MaskPolarity:  # 极性枚举（值集唯一事实源）
         try:  # 枚举构造自身校验合法值
-            return MaskPolarity(str(value))  # 转枚举
-        except ValueError as exc:  # 未知极性
-            raise ValueError(f"不支持的极性：{value!r}") from exc  # 报极性
+            return MaskPolarity(str(value))
+        except ValueError as exc:
+            raise ValueError(f"不支持的极性：{value!r}") from exc
     if origin is tuple:  # 元组注解：定长（macro_grid [列,行]）或变长（scales）
         args = get_args(annotation)
         if len(args) == 2 and args[1] is Ellipsis:  # 变长 tuple[X, ...]
-            if not isinstance(value, list):  # TOML 数组形态
-                raise ValueError(f"{name} 必须是列表")  # 报类型
+            if not isinstance(value, list):
+                raise ValueError(f"{name} 必须是列表")
             return tuple(_parse_scalar(args[0], item, name, base_dir) for item in value)
-        if not isinstance(value, list) or len(value) != len(args):  # 定长形状
-            raise ValueError(f"{name} 必须是列表 [列, 行]")  # 报形状
-        # 逐元素
+        if not isinstance(value, list) or len(value) != len(args):
+            raise ValueError(f"{name} 必须是列表 [列, 行]")
         return tuple(_parse_scalar(args[0], item, name, base_dir) for item in value)
     if origin is Literal:  # 字面量枚举（final_cell_mode 等）
-        choices = get_args(annotation)  # 合法值集
-        if value not in choices:  # 越界
-            # 报枚举
+        choices = get_args(annotation)
+        if value not in choices:
             raise ValueError(f"{name} 必须是 {list(choices)} 之一，不接受 {value!r}")
-        return value  # 原样
-    raise ValueError(f"{name} 的类型注解 {annotation!r} 不受通用解析器支持")  # 兜底
+        return value
+    raise ValueError(f"{name} 的类型注解 {annotation!r} 不受通用解析器支持")
 
 
 def _parse_config(raw: dict, config_path: Path, config_type: type) -> object:
     """从已解析的 TOML 字典构造一个 Config（必填/默认/类型/未知字段）。"""
-    section_name = CONFIG_SECTIONS[config_type]  # 段名查表
-    section = raw.get(section_name, {})  # 本段原始字典
+    section_name = CONFIG_SECTIONS[config_type]
+    section = raw.get(section_name, {})
     base_dir = config_path.parent  # 相对路径基准
-    known = {field.name for field in fields(config_type)}  # 字段名全集
-    unknown = set(section) - known  # 段内未知键
+    known = {field.name for field in fields(config_type)}
+    unknown = set(section) - known
     if unknown:  # 拼写错误必须在加载期暴露
-        raise ValueError(f"[{section_name}] 含未知键：{sorted(unknown)}")  # 报键
+        raise ValueError(f"[{section_name}] 含未知键：{sorted(unknown)}")
     # 经 get_type_hints 解析真实注解：外部 dataclass（如 ILT 求解器 Config）
     # 启用 postponed annotations 时 field.type 只是字符串，直接交给
     # _parse_scalar 会落到"不受支持"兜底；解析失败的原异常必须传播。
     hints = get_type_hints(config_type)
-    kwargs = {}  # 构造参数
-    for field in fields(config_type):  # 逐字段
-        if field.name in section:  # TOML 显式给出
-            # 类型解析
+    kwargs = {}
+    for field in fields(config_type):
+        if field.name in section:
             kwargs[field.name] = _parse_scalar(
                 hints[field.name], section[field.name], f"[{section_name}].{field.name}", base_dir
             )
-        # 无默认值
         elif field.default is MISSING and field.default_factory is MISSING:
-            raise ValueError(f"[{section_name}] 缺少必填键：['{field.name}']")  # 报必填
+            raise ValueError(f"[{section_name}] 缺少必填键：['{field.name}']")
     return config_type(**kwargs)  # dataclass 默认值兜底 + __post_init__ 业务校验
 
 
@@ -308,17 +298,17 @@ def load_config(config_path: str | Path, *config_types: type) -> tuple:
     未请求的合法 section 只做未知字段检查（不查必填）；未知 section
     一律报错——两者保证任何拼写错误都在加载期暴露，与请求无关。
     """
-    path = Path(config_path).expanduser().resolve()  # 配置绝对路径
+    path = Path(config_path).expanduser().resolve()
     raw = toml_loads(path.read_text(encoding="utf-8"))  # 唯一一次读盘解析
-    unknown_sections = set(raw) - set(_SECTION_TO_TYPE)  # 未注册段
-    if unknown_sections:  # 拼错段名
-        raise ValueError(f"{path}：未知配置段 {sorted(unknown_sections)}")  # 报段
+    unknown_sections = set(raw) - set(_SECTION_TO_TYPE)
+    if unknown_sections:
+        raise ValueError(f"{path}：未知配置段 {sorted(unknown_sections)}")
     for section_name in raw:  # 出现的每个段（含未请求）都查未知字段
-        config_type = _SECTION_TO_TYPE[section_name]  # 段归属的 Config
-        known = {field.name for field in fields(config_type)}  # 字段全集
-        unknown = set(raw[section_name]) - known  # 段内未知键
+        config_type = _SECTION_TO_TYPE[section_name]
+        known = {field.name for field in fields(config_type)}
+        unknown = set(raw[section_name]) - known
         if unknown:  # 未请求段的拼写错误同样致命
-            raise ValueError(f"[{section_name}] 含未知键：{sorted(unknown)}")  # 报
+            raise ValueError(f"[{section_name}] 含未知键：{sorted(unknown)}")
     # 按请求顺序解析
     return tuple(_parse_config(raw, path, config_type) for config_type in config_types)
 
@@ -340,9 +330,9 @@ def resolve_grid_config(partition: PartitionConfig, litho: LithographyConfig, db
     像素整除契约，抽出到独立入口避免它伪造边段配置才可用。
     """
     # 全部 nm 参数精确换算：不能整除直接失败，不四舍五入吸收误差。
-    core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")  # core
-    context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")  # context
-    pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")  # pixel
+    core_dbu = exact_dbu(partition.core_size_nm, dbu_nm, "core_size_nm")
+    context_dbu = exact_dbu(partition.context_nm, dbu_nm, "context_nm")
+    pixel_dbu = exact_dbu(litho.pixel_nm, dbu_nm, "pixel_nm")
     # 尺寸模式才换算；数量模式保持 None
     macro_size_dbu = (
         exact_dbu(partition.macro_size_nm, dbu_nm, "macro_size_nm") if partition.macro_size_nm is not None else None
@@ -364,9 +354,8 @@ def resolve_prepare_config(
     """把划分/光刻/边段配置换算为 DBU 级准备参数并构造边段配置。"""
     # 网格换算与像素契约复用算法无关入口，保证 edge 与像素流程同源。
     grid = resolve_grid_config(partition, litho, dbu_nm)
-    corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")  # 拐角段
-    segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")  # 中段
-    # 位移上限
+    corner_dbu = exact_dbu(edge.corner_nm, dbu_nm, "corner_nm")
+    segment_dbu = exact_dbu(edge.segment_nm, dbu_nm, "segment_nm")
     max_displacement_dbu = exact_dbu(edge.max_displacement_nm, dbu_nm, "max_displacement_nm")
     if max_displacement_dbu > grid.context_dbu:  # context 必须覆盖最大位移
         raise ValueError("context_nm 必须不小于 max_displacement_nm")
@@ -378,7 +367,6 @@ def resolve_prepare_config(
         max_displacement_dbu=float(max_displacement_dbu),
         miter_limit=edge.miter_limit,
     )
-    # 打包 problem 准备消费的解析结果
     return PrepareRuntime(grid=grid, fragmentation=fragmentation)
 
 
@@ -386,9 +374,9 @@ def resolve_mbopc_config(
     mbopc: MBOPCConfig, partition: PartitionConfig, edge: EdgeConfig, dbu_nm: Decimal
 ) -> SimpleMBOPCConfig:
     """校验 simple 跨段契约并构造 DBU 级求解器配置。"""
-    if mbopc.initial_step_nm > edge.max_displacement_nm:  # 步长超位移上限
+    if mbopc.initial_step_nm > edge.max_displacement_nm:
         raise ValueError("initial_step_nm 不得超过 max_displacement_nm")
-    if mbopc.epe_distance_nm > partition.context_nm:  # 探针越上下文
+    if mbopc.epe_distance_nm > partition.context_nm:
         raise ValueError("epe_distance_nm 不得超过 context_nm")
     # nm→DBU 运行时派生（solver 输入包）
     return SimpleMBOPCConfig(
@@ -416,7 +404,7 @@ def resolve_gradient_config(
             UserWarning,
             stacklevel=2,
         )
-    if gradient.epe_distance_nm > partition.context_nm:  # 探针越上下文
+    if gradient.epe_distance_nm > partition.context_nm:
         raise ValueError("epe_distance_nm 不得超过 context_nm")
     # nm→DBU 运行时派生（solver 输入包）
     return GradientMBOPCConfig(

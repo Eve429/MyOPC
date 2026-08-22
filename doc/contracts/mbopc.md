@@ -87,8 +87,14 @@ _solve_macro(method, problem, model, cfg, cache, out_dir, *, dbu_um,
             show_progress, progress_position, leave_progress)
     # 公共包装：tqdm total=(iterations+1)×core_count，unit=tile，
     # try/finally 收尾（内层条与外层 macro 条均有 finally 纪律）
+save_lithography_pngs(gds_path, layer, polarity, core/context/pixel/canvas,
+                      model, batch_size, output_dir, *, top_cell=None)
+    # 留档内核：独立规整 tile 网格；with 内逐 tile 窗口物化；PNG+manifest
+    # （PNG 在 I/O 边界上下翻转，行 0=顶部）
 save_final_lithography(plan, final_layout, model, batch_size, output_dir)
-    # 独立规整 tile 网格；with 内逐 tile 窗口物化；PNG+manifest
+    # 薄包装（plan 六键）：不传 top_cell——final GDS 恒单顶层
+save_source_lithography(plan, source_layout, model, batch_size, output_dir)
+    # 同内核对源（未 OPC）版图留档：显式传 plan["top_cell"]（源可多顶层）
 ```
 
 - **独立 macro**：macro 间不交换中间状态；全部完成后恰一次
@@ -98,7 +104,9 @@ save_final_lithography(plan, final_layout, model, batch_size, output_dir)
 - **macro 数量**：不加人为约束——macro_grid/macro_size_nm 是几就按几求解
   （单/多共用一个入口，数量模式配置层校验、size 模式 plan 后兜底）。
 - **产物**：macros/<id>/{result.npz(format v2，键 best_state_index),
-  best.gds, metrics.json} + final.gds + 可选 final_lithography/ +
+  best.gds, metrics.json} + final.gds + 可选 final_lithography/ 与
+  final_lithography_source/（源版图对照，同网格参数、tile 网格按各自
+  bbox 规划不保证重合；summary 记 source_lithography_tiles）+
   summary.json（summary 逐 macro 键与 gradient 入口对称：
   best_state_index/state_count）。
 - **内存**：target uint8 LRU；GPU 批后释放；最终 PNG/merge 验证逐窗口物化

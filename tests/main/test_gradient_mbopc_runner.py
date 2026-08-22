@@ -230,12 +230,13 @@ class TestGradientRunner:
         assert "epe_steepness" in summary  # EPE 陡度顶层键
         for key in ("rss_start_bytes", "rss_after_prepare_bytes",  # 资源字段
                     "peak_rss_bytes", "cuda_peak_bytes",
-                    "final_lithography_tiles", "merge_seconds",
-                    "total_seconds"):
+                    "final_lithography_tiles", "source_lithography_tiles",
+                    "merge_seconds", "total_seconds"):
             assert key in summary, key
         assert summary["cuda_peak_bytes"] is None  # CPU 时无 CUDA 峰值
         assert summary["peak_rss_bytes"] >= summary["rss_start_bytes"] > 0
         assert summary["final_lithography_tiles"] > 0  # 配置开启了留档
+        assert summary["source_lithography_tiles"] > 0  # 源对照同批产出
 
     def test_gradient_artifacts(self, run):
         """每 macro 的 NPZ/JSON/best GDS 满足 §8.2 契约。"""

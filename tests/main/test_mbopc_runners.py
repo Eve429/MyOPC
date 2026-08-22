@@ -159,6 +159,46 @@ class TestSingleMacroRunner:
             assert len(tile["ownership_box"]) == 4  # 计分框四元组
         assert summary["final_lithography_tiles"] == manifest["tile_count"]
 
+    def test_source_lithography_archive_written(self, single):
+        """save=true 同批落盘源版图对照目录，summary 记源 tile 数。"""
+        tmp, summary = single  # 解包
+        out_dir = tmp / "work" / "final_lithography_source"  # 源对照目录
+        manifest = json.loads(  # 读清单
+            (out_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["tile_count"] > 0  # 至少一个 tile
+        for tile in manifest["tiles"]:  # 逐 tile 检查
+            assert (out_dir / tile["nominal_png"]).is_file()  # 连续 PNG
+            assert (out_dir / tile["binary_png"]).is_file()  # 二值 PNG
+        assert summary["source_lithography_tiles"] == manifest["tile_count"]
+
+    def test_source_lithography_skipped_when_disabled(self, tmp_path):
+        """save=false 时两留档目录都不产生，summary 两键恒在、值为 None。"""
+        gds = _write_gds(tmp_path)  # 生成版图
+        summary = workflow.run_mbopc(  # 关闭留档的完整流程
+            _write_config(tmp_path, gds, save_final_lithography="false"))
+        assert summary["final_lithography_tiles"] is None  # 最终键 None
+        assert summary["source_lithography_tiles"] is None  # 源键同款语义
+        work = tmp_path / "work"  # 工作目录
+        assert not (work / "final_lithography").exists()  # 无最终目录
+        assert not (work / "final_lithography_source").exists()  # 无源目录
+
+    def test_multi_top_cell_source_archive_completes(self, tmp_path):
+        """源版图多顶层时源对照仍完成（显式传 plan 顶层名，回归守卫）。"""
+        layout = kdb.Layout()  # 双顶层版图：TOP 之外平级 UNUSED
+        layout.dbu = 0.001  # 1 nm/DBU
+        top = layout.create_cell("TOP")  # 配置指名的顶层
+        top.shapes(layout.layer(1, 0)).insert(kdb.Box(10, 10, 90, 80))
+        unused = layout.create_cell("UNUSED")  # 平级干扰顶层
+        unused.shapes(layout.layer(1, 0)).insert(kdb.Box(200, 10, 260, 80))
+        gds = tmp_path / "dual_top.gds"  # 输出路径
+        layout.write(str(gds))  # 写盘
+        # 不指名顶层时 LayoutDB.open 对多顶层报歧义错误——源留档必须带
+        # plan 顶层名打开，全流程才能走到收尾
+        summary = workflow.run_mbopc(_write_config(tmp_path, gds))
+        assert summary["source_lithography_tiles"] > 0  # 源留档完成
+        assert (tmp_path / "work" / "final_lithography_source"
+                / "manifest.json").is_file()  # 清单在案
+
 class TestMultiMacroRunner:
     """多 macro 入口的独立迭代、一次合并与差异量化。"""
 

@@ -58,7 +58,7 @@ main/run_ilt_simple.py::main（可选位置参数，默认 config/simple_ilt.tom
       │  │    恰一次 merge；极性逆变换只在回写边界）
       │  └─ write_macro_gds → simple_ilt_result.npz + metrics.json
       ├─ merge_macro_results（恰一次；空 macro 候选按零覆盖容忍）
-      ├─ save_final_lithography（可选）
+      ├─ save_final_lithography（可选，同批源版图对照 save_source_lithography）
       └─ summary.json（seam_strategy=macro_independent_fixed_context 入档）
 ```
 

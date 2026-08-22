@@ -161,7 +161,9 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
   持有全部 clipped——PatchWriter 接口属 geometry/，为已知上界）。
 - **产物**：`work_dir/macros/<id>/{result.npz,best.gds,metrics.json}` +
   `final.gds` + 可选 `final_lithography/`（逐 tile nominal/binary PNG +
-  manifest）；`[mbopc]` 段 `show_progress` 控制 tqdm（自动测试一律 false）。
+  manifest，PNG 在 I/O 边界上下翻转）与 `final_lithography_source/`（源
+  版图对照留档，同网格参数；开启后收尾阶段前向次数翻倍）；
+  `[mbopc]` 段 `show_progress` 控制 tqdm（自动测试一律 false）。
 
 ## 8. 梯度 MB-OPC（opc/iteration/mbopc/gradient.py，2026-08-17 迁移）
 
@@ -192,7 +194,8 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc_gradient.py config/gradien
   整数契约）；epe_distance 等其余 nm 参数仍走精确整数换算。
 - **产物**：`work_dir/macros/<id>/{gradient_result.npz,best.gds,
   gradient_metrics.json}`（文件名独立于 simple）+ summary（含 RSS 三采样与
-  CUDA 峰值）+ final.gds + 可选 final_lithography/。
+  CUDA 峰值）+ final.gds + 可选 final_lithography/ 与源对照
+  final_lithography_source/。
 - **simple 兼容**：`TargetCanvasCache` 移至 `_cache.py`（两方法共享），包级与
   simple 模块级导入路径不变。
 

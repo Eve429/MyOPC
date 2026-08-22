@@ -48,4 +48,5 @@
 | `round_*/results/*.npz` | `run_round` | 累计位移 + 每核 transmission（验证管线） |
 | `final.gds` | `merge_macro_results` | ownership 权威覆盖，single_cell/macro_cells；空 macro 候选按零覆盖容忍 |
 | `final_lithography/` | `save_final_lithography` | 逐 tile nominal/binary PNG + manifest |
+| `final_lithography_source/` | `save_source_lithography` | 源（未 OPC）版图对照留档，同网格参数、显式 top_cell |
 | `plan.json`/`summary.json` | `atomic_write_json` | 网格契约 / 全流程摘要 |

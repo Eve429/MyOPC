@@ -57,6 +57,7 @@ main/run_mbopc_gradient.py::main
       │  └─ _solve_macro 尾部：write_macro_gds → save_macro_result
       │     （gradient_result.npz + metrics.json 含逐 state epe_loss）
       ├─ merge_macro_results 恰一次 → 可选 save_final_lithography
+      │  （同批 save_source_lithography 对源版图出对照目录）
       └─ summary.json（loss_weights 含 epe、epe_steepness、best_epe_loss）
 ```
 

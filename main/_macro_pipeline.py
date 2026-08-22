@@ -443,6 +443,14 @@ def save_lithography_pngs(
     return manifest  # 供 summary 消费
 
 
+def _plan_lithography_arguments(plan: dict) -> tuple:
+    """从 plan 提取留档内核所需六实参（层/极性/网格），final/source 包装共用。"""
+    return (LayerSpec(plan["layer"][0], plan["layer"][1]),
+            MaskPolarity(str(plan["polarity"])),
+            int(plan["core_size_dbu"]), int(plan["context_dbu"]),
+            int(plan["pixel_dbu"]), int(plan["canvas_pixels"]))
+
+
 def save_final_lithography(
         plan: dict, final_layout: Path, model, batch_size: int,
         output_dir: Path,
@@ -452,10 +460,27 @@ def save_final_lithography(
     不传 top_cell：plan["top_cell"] 是源版图顶层名，最终合并 GDS 的顶层
     是合并器写出的唯一结果 Cell，用源名打开反而失败。
     """
+    layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = (
+        _plan_lithography_arguments(plan))
     return save_lithography_pngs(
-        final_layout,
-        LayerSpec(plan["layer"][0], plan["layer"][1]),
-        MaskPolarity(str(plan["polarity"])),
-        int(plan["core_size_dbu"]), int(plan["context_dbu"]),
-        int(plan["pixel_dbu"]), int(plan["canvas_pixels"]),
-        model, batch_size, output_dir)
+        final_layout, layer, polarity, core_dbu, context_dbu, pixel_dbu,
+        canvas_pixels, model, batch_size, output_dir)
+
+
+def save_source_lithography(
+        plan: dict, source_layout: Path, model, batch_size: int,
+        output_dir: Path,
+) -> dict:
+    """同一内核对源（未 OPC）版图留档：与最终留档同参数、可逐 tile 对照。
+
+    与 save_final_lithography 的唯一差异是显式传 plan["top_cell"]——源
+    版图可能有多个顶层 Cell，不指名时打开即歧义失败。tile 网格按源 GDS
+    自身 layer bbox 规划，与最终目录的网格不保证逐 tile 重合，对照以
+    各自 manifest 的 ownership_box 对账。
+    """
+    layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = (
+        _plan_lithography_arguments(plan))
+    return save_lithography_pngs(
+        source_layout, layer, polarity, core_dbu, context_dbu, pixel_dbu,
+        canvas_pixels, model, batch_size, output_dir,
+        top_cell=plan["top_cell"])

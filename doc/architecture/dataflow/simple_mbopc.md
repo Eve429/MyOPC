@@ -50,7 +50,7 @@ main/run_mbopc.py::main
       │     → run_mbopc.py::save_macro_result（result.npz + metrics.json）
       │     → macro_summary
       ├─ merge_macro_results（全部完成后恰一次，显式 macro_id→GDS 映射）
-      ├─ save_final_lithography（可选）
+      ├─ save_final_lithography（可选，同批源版图对照 save_source_lithography）
       └─ atomic_write_json(summary.json)（方法/资源公共键 + 适配器附加键）
 ```
 

@@ -450,6 +450,18 @@ class TestFieldBounds:
         assert manifest.is_file()
         assert summary["final_lithography_tiles"] > 0
 
+    def test_source_lithography_with_field_writes_artifacts(self, tmp_path):
+        """field + opaque 下源版图对照留档同批产出（save=true 双目录）。"""
+        layout_path = _write_gds(tmp_path)
+        config_path = _write_config(
+            tmp_path, layout_path, layout_extra=self.FIELD,
+            polarity="opaque", save_final_lithography="true")
+        with pytest.warns(UserWarning, match="环带"):
+            summary = simple_workflow.run_simple_ilt(config_path)
+        source = tmp_path / "work" / "final_lithography_source" / "manifest.json"
+        assert source.is_file()
+        assert summary["source_lithography_tiles"] > 0
+
     def test_opaque_interior_background_still_transparent(self, tmp_path):
         """opaque 数据包络内背景仍透光（补铬只发生在包络外）。"""
         _, _target = self._run_with_field(tmp_path, "opaque")

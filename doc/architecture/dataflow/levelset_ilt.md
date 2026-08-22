@@ -58,7 +58,7 @@ main/run_ilt_levelset.py::main（可选位置参数，默认 config/levelset_ilt
       │  └─ write_macro_gds → levelset_ilt_result.npz + metrics.json
       │       （best_parameters 语义为 phi）
       ├─ merge_macro_results（恰一次；空 macro 候选按零覆盖容忍）
-      ├─ save_final_lithography（可选）
+      ├─ save_final_lithography（可选，同批源版图对照 save_source_lithography）
       └─ summary.json（seam_strategy=macro_independent_fixed_context 入档）
 ```
 

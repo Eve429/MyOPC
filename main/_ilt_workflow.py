@@ -28,6 +28,7 @@ from main._macro_pipeline import (
     merge_macro_results,
     resolve_field_bounds,
     save_final_lithography,
+    save_source_lithography,
     write_macro_gds,
 )
 
@@ -347,8 +348,11 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     final_path = merge_macro_results(plan, macro_gds, output.final_layout, cell_mode=output.final_cell_mode)
     merge_seconds = time.perf_counter() - merge_started
     manifest = None  # 最终光刻留档
-    if output.save_final_lithography:  # 只对最终合并 GDS 运行一次
+    source_manifest = None  # 源版图光刻对照留档
+    if output.save_final_lithography:  # 开启时优化后与源版图各留档一套
         manifest = save_final_lithography(plan, final_path, model, algo.batch_size, work_dir / "final_lithography")
+        # 源版图对照：同一模型同一网格参数（收尾前向次数翻倍的既定代价）
+        source_manifest = save_source_lithography(plan, Path(plan["layout"]), model, algo.batch_size, work_dir / "final_lithography_source")
     peak_rss = max(peak_rss, process.memory_info().rss)  # 收尾前采峰
     cuda_peak = int(torch.cuda.max_memory_allocated(cuda_stats_device)) if cuda_stats_device is not None else None
     summary = {
@@ -372,6 +376,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
         "peak_rss_bytes": peak_rss,
         "cuda_peak_bytes": cuda_peak,
         "final_lithography_tiles": (None if manifest is None else manifest["tile_count"]),
+        "source_lithography_tiles": (None if source_manifest is None else source_manifest["tile_count"]),
     }
     atomic_write_json(work_dir / "summary.json", summary)
     return summary

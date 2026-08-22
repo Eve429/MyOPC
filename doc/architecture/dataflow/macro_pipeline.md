@@ -41,8 +41,10 @@ main/run_macro_pipeline.py::main → run(config_path)
 └─ summary.json
 
 可选尾部（其他工作流复用）：
-main/_macro_pipeline.py::save_final_lithography
+main/_macro_pipeline.py::save_lithography_pngs
   独立规整 tile 网格（macro_grid=(1,1)）逐批 forward → nominal/binary PNG + manifest
+  （save_final_lithography/save_source_lithography 为 plan 六键薄包装，
+  后者对源版图留档并显式传 top_cell）
 ```
 
 ## 伪代码

@@ -24,6 +24,7 @@ from main._macro_pipeline import (
     merge_macro_results,
     prepare_problems,
     save_final_lithography,
+    save_source_lithography,
     write_macro_gds,
 )
 
@@ -177,11 +178,16 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
         cell_mode=output.final_cell_mode)
     merge_seconds = time.perf_counter() - merge_started  # 合并耗时
     manifest = None  # 最终光刻留档
-    if output.save_final_lithography:  # 只对最终合并 GDS 运行一次
-        # 逐 tile 流式 PNG
+    source_manifest = None  # 源版图光刻对照留档
+    if output.save_final_lithography:  # 开启时优化后与源版图各留档一套
+        # 逐 tile 流式 PNG（最终合并 GDS）
         manifest = save_final_lithography(
             plan, final_path, model, solver_config.batch_size,
             work_dir / "final_lithography")
+        # 源版图对照：同一模型同一网格参数（收尾前向次数翻倍的既定代价）
+        source_manifest = save_source_lithography(
+            plan, Path(plan["layout"]), model, solver_config.batch_size,
+            work_dir / "final_lithography_source")
     peak_rss = max(peak_rss, process.memory_info().rss)  # 收尾前采峰
     # 同卡峰值
     cuda_peak = (int(torch.cuda.max_memory_allocated(cuda_stats_device))
@@ -204,6 +210,8 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
         "rss_after_prepare_bytes": rss_after_prepare,
         "peak_rss_bytes": peak_rss,
         "cuda_peak_bytes": cuda_peak,
-        "final_lithography_tiles": None if manifest is None else manifest["tile_count"]}
+        "final_lithography_tiles": None if manifest is None else manifest["tile_count"],
+        "source_lithography_tiles": (None if source_manifest is None
+                                     else source_manifest["tile_count"])}
     atomic_write_json(work_dir / "summary.json", summary)  # 落盘
     return summary  # 返回摘要

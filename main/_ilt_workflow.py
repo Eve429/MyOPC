@@ -21,7 +21,7 @@ from common.io import atomic_write_json, atomic_write_npz
 from common.runtime import resolve_device
 from evaluation import evaluate_binary_l2, evaluate_pvband
 from layout import LayerSpec, LayoutDB
-from lithography import ICCAD13Lithography
+from lithography import LithographyModel
 
 # 共用 macro 生命周期（merge/最终光刻留档/GDS 写出）
 from main._macro_pipeline import (
@@ -38,6 +38,8 @@ from main.configuration import (
     LithographyConfig,
     OutputConfig,
     PartitionConfig,
+    TorchLithoConfig,
+    build_lithography_model,
     load_config,
     resolve_grid_config,
 )
@@ -200,7 +202,7 @@ def _binary_canvas(
 
 
 def _evaluate_best_binary(
-    problem: PixelMacroProblem, result, model: ICCAD13Lithography, config, conditions, build_context: Callable
+    problem: PixelMacroProblem, result, model: LithographyModel, config, conditions, build_context: Callable
 ) -> tuple[int, int]:
     """在 best 二值掩膜上执行最终前向并按 ownership 统计 L2/PVBand。"""
     core_count = problem.macro.core_count
@@ -240,8 +242,14 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     total_started = time.perf_counter()
     process = psutil.Process()
     rss_start = process.memory_info().rss
-    layout, partition, litho, algo, output = load_config(
-        config_path, LayoutConfig, PartitionConfig, LithographyConfig, method.config_type, OutputConfig
+    layout, partition, litho, torchlitho, algo, output = load_config(
+        config_path,
+        LayoutConfig,
+        PartitionConfig,
+        LithographyConfig,
+        TorchLithoConfig,
+        method.config_type,
+        OutputConfig,
     )
     plan = prepare_pixel_problems(layout, partition, litho, output)
     rss_after_prepare = process.memory_info().rss
@@ -249,7 +257,7 @@ def run_ilt_workflow(method: ILTMethod, config_path: str | Path) -> dict:
     device = resolve_device(litho.device)  # 设备解析（auto→实际）
     # CUDA 峰值统计设备必须显式指定（与 MB-OPC 工作流同款约束）
     cuda_stats_device = torch.device(device) if device.startswith("cuda") else None
-    model = ICCAD13Lithography(device=device)
+    model = build_lithography_model(litho, torchlitho, device)
     if cuda_stats_device is not None:  # 从模型加载后开始计量
         torch.cuda.reset_peak_memory_stats(cuda_stats_device)
     conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))

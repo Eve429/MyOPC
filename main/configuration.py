@@ -17,6 +17,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from common.units import exact_dbu
+from lithography import ICCAD13Lithography, LithographyModel
+from lithography.torchlitho import TorchLithoConfig, TorchLithoLithography
 from opc.input import MaskPolarity
 from opc.input.edge.fragmentation import FragmentationConfig
 
@@ -81,8 +83,9 @@ class LithographyConfig:
     """光刻采样与执行环境（[lithography] 段），算法无关。"""
 
     pixel_nm: Decimal  # 采样像素尺寸（网格对齐粒度共享）
-    canvas_pixels: int = 256  # 冻结为 ICCAD13 画布 256
+    canvas_pixels: int = 256  # 画布冻结 256（iccad13 资产与 torchlitho 共用）
     device: str = "auto"  # 全 run 执行环境 auto/cpu/cuda[:N]
+    model: Literal["iccad13", "torchlitho"] = "iccad13"  # 光刻模型分派（torchlitho 参数见 [torchlitho] 段）
 
     def __post_init__(self) -> None:
         """画布冻结、像素正数与设备枚举契约。"""
@@ -214,6 +217,7 @@ CONFIG_SECTIONS: dict[type, str] = {
     LayoutConfig: "layout",
     PartitionConfig: "partition",
     LithographyConfig: "lithography",
+    TorchLithoConfig: "torchlitho",
     EdgeConfig: "edge",
     MBOPCConfig: "mbopc",
     GradientConfig: "gradient",
@@ -436,3 +440,11 @@ def resolve_gradient_config(
         batch_size=gradient.batch_size,
         target_cache_bytes=gradient.target_cache_mb * 1024 * 1024,
     )
+
+
+def build_lithography_model(litho: LithographyConfig, torchlitho: TorchLithoConfig, device: str) -> LithographyModel:
+    """按 [lithography].model 分派光刻模型；iccad13 路径与引入分派前行为一致。"""
+    if litho.model == "torchlitho":
+        # torchlitho 是物理参数化模型：画布沿用 256 冻结值，物理视场由 pixel_nm 表达。
+        return TorchLithoLithography(torchlitho, litho.canvas_pixels, float(litho.pixel_nm), device=device)
+    return ICCAD13Lithography(device=device)

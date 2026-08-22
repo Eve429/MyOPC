@@ -13,6 +13,7 @@ if str(_REPO_ROOT) not in sys.path:
 from common.units import exact_dbu
 from layout import LayerNotFoundError, LayerSpec, LayoutDB
 from lithography import ICCAD13Lithography
+from lithography.torchlitho import TorchLithoConfig, TorchLithoLithography
 from main._macro_pipeline import save_lithography_pngs
 from opc.input import MaskPolarity
 
@@ -54,6 +55,12 @@ def _parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=4, help="光刻前向批大小（默认 4）")
     parser.add_argument("--device", default="auto", help="计算设备 auto/cpu/cuda（默认 auto）")
     parser.add_argument(
+        "--model",
+        choices=("iccad13", "torchlitho"),
+        default="iccad13",
+        help="光刻模型（默认 iccad13；torchlitho 用 --pixel-nm 作物理像素）",
+    )
+    parser.add_argument(
         "--out", type=Path, default=None, help="留档目录（默认 output/lithography/<GDS 主干名>/，仓库根锚定）"
     )
     args = parser.parse_args(argv)
@@ -85,7 +92,10 @@ def main(argv: list[str] | None = None) -> int:
     pixel_dbu = exact_dbu(args.pixel_nm, dbu_nm, "--pixel-nm")
 
     # 模型加载最贵放最后；core+2*context 与像素的画布契约由内核内 plan_macros 校验
-    model = ICCAD13Lithography(device=args.device)
+    if args.model == "torchlitho":
+        model = TorchLithoLithography(TorchLithoConfig(), 256, float(args.pixel_nm), device=args.device)
+    else:
+        model = ICCAD13Lithography(device=args.device)
     print(f"device={model.device}")
     manifest = save_lithography_pngs(
         args.gds,

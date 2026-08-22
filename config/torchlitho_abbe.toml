@@ -1,0 +1,46 @@
+# TorchLitho Abbe 方法 smoke：单 macro Simple ILT 一轮更新，物理参数化光刻模型。
+# 与 simple_ilt.toml 同底（corners_unit 版图），仅光刻模型换为 torchlitho。
+
+[layout]
+layout = "../TestReticle/corners_unit_clear.gds"
+top_cell = "TOP"
+layer = 11
+datatype = 0
+polarity = "clear"
+
+[partition]
+macro_grid = [1, 1]
+core_size_nm = 512
+context_nm = 256
+
+[lithography]
+model = "torchlitho"
+pixel_nm = 4
+canvas_pixels = 256
+device = "auto"
+
+[torchlitho]
+method = "abbe"
+source_shape = "point"
+sigma = 0.05
+wavelength_nm = 193.0
+na = 1.35
+refractive_index = 1.44
+defocus_min_nm = 40.0
+
+[simple_ilt]
+iterations = 1
+step_size = 1.0
+sigmoid_steepness = 4.0
+weight_process_l2 = 1.0
+weight_pvband = 0.5
+curvature_weight = 0.0
+mask_threshold = 0.5
+batch_size = 8
+
+[output]
+save_final_lithography = true
+show_progress = true
+work_dir = "../output/torchlitho_abbe"
+final_layout = "../output/torchlitho_abbe/corners_unit_torchlitho_abbe.gds"
+final_cell_mode = "single_cell"

@@ -17,7 +17,6 @@ if str(_REPO_ROOT) not in sys.path:
 
 from common.io import atomic_write_json
 from common.runtime import resolve_device
-from lithography import ICCAD13Lithography
 
 # 共用 macro 生命周期
 from main._macro_pipeline import (
@@ -35,6 +34,8 @@ from main.configuration import (
     LithographyConfig,
     OutputConfig,
     PartitionConfig,
+    TorchLithoConfig,
+    build_lithography_model,
     load_config,
 )
 
@@ -104,8 +105,15 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
     total_started = time.perf_counter()
     process = psutil.Process()
     rss_start = process.memory_info().rss
-    layout, partition, litho, edge, algo, output = load_config(
-        config_path, LayoutConfig, PartitionConfig, LithographyConfig, EdgeConfig, method.algo_config_type, OutputConfig
+    layout, partition, litho, torchlitho, edge, algo, output = load_config(
+        config_path,
+        LayoutConfig,
+        PartitionConfig,
+        LithographyConfig,
+        TorchLithoConfig,
+        EdgeConfig,
+        method.algo_config_type,
+        OutputConfig,
     )
     # 准备 problem（共用生命周期）
     plan = prepare_problems(layout, partition, litho, edge, output)
@@ -117,7 +125,7 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
     device = resolve_device(litho.device)
     # CUDA 峰值统计设备必须显式指定：不传 device 时 PyTorch 统计当前设备
     cuda_stats_device = torch.device(device) if device.startswith("cuda") else None
-    model = ICCAD13Lithography(device=device)
+    model = build_lithography_model(litho, torchlitho, device)
     if cuda_stats_device is not None:
         torch.cuda.reset_peak_memory_stats(cuda_stats_device)
     macro_count = plan["macro_count"]

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from lithography import TorchLithoConfig
 from main import configuration
 from main.configuration import (
     GradientConfig,
@@ -381,3 +382,60 @@ class TestGridRuntime:
             configuration.resolve_prepare_config(
                 self._partition(), LithographyConfig(pixel_nm=Decimal(8)), edge, Decimal(1)
             )
+
+
+class TestLithographyModelDispatch:
+    """[lithography].model 分派与 [torchlitho] 段的解析契约。"""
+
+    def test_default_model_is_iccad13(self, tmp_path):
+        """现有 config 不写 model 键时默认 iccad13，工厂返回 ICCAD13 模型。"""
+        from lithography import ICCAD13Lithography
+
+        path = _write(tmp_path)
+        (litho,) = load_config(path, LithographyConfig)
+        assert litho.model == "iccad13"
+        model = configuration.build_lithography_model(litho, TorchLithoConfig(), "cpu")
+        assert isinstance(model, ICCAD13Lithography)
+
+    def test_torchlitho_dispatch_builds_model_with_canvas_and_pixel(self, tmp_path):
+        """model=torchlitho 时工厂构造 TorchLitho 模型并透传画布与物理像素。"""
+        from lithography import TorchLithoLithography
+        from lithography.contracts import LithographyModel
+
+        dispatch_toml = _FULL_TOML.replace('device = "auto"', 'device = "cpu"\nmodel = "torchlitho"') + (
+            '\n[torchlitho]\nmethod = "hopkins"\nsource_shape = "disk"\nsigma = 0.3\n'
+        )
+        path = _write(tmp_path, text=dispatch_toml, name="dispatch.toml")
+        litho, torchlitho = load_config(path, LithographyConfig, TorchLithoConfig)
+        assert torchlitho.method == "hopkins" and torchlitho.source_shape == "disk"
+        model = configuration.build_lithography_model(litho, torchlitho, "cpu")
+        assert isinstance(model, TorchLithoLithography)
+        assert isinstance(model, LithographyModel)
+        assert model.config.canvas == 256
+        assert model._pixel_nm == 8.0
+
+    def test_torchlitho_section_defaults_when_absent(self, tmp_path):
+        """[torchlitho] 段缺省时全默认构造（point 源 abbe）。"""
+        path = _write(tmp_path)
+        (torchlitho,) = load_config(path, TorchLithoConfig)
+        assert torchlitho == TorchLithoConfig()
+
+    def test_invalid_model_value_rejected(self, tmp_path):
+        """model 非法字面量在加载期拒绝。"""
+        path = _write(
+            tmp_path,
+            text=_FULL_TOML.replace('device = "auto"', 'model = "openilt"'),
+            name="bad_model.toml",
+        )
+        with pytest.raises(ValueError, match="model"):
+            load_config(path, LithographyConfig)
+
+    def test_torchlitho_unknown_key_rejected(self, tmp_path):
+        """[torchlitho] 拼写错误在加载期暴露（含未请求段检查）。"""
+        path = _write(
+            tmp_path,
+            text=_FULL_TOML + '\n[torchlitho]\nmetod = "abbe"\n',
+            name="bad_key.toml",
+        )
+        with pytest.raises(ValueError, match="未知键"):
+            load_config(path, LithographyConfig)

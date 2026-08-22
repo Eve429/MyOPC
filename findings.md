@@ -1243,3 +1243,12 @@
   实为 import 块后两空行），门禁扩为四件套（+ruff format --check）。
   机械迁移 68 文件 format + 161 处导入注释清扫，695+1 前后一致证明行为
   无关；存量旧代码的逐行注释不回头重写，触碰时再迁。
+- **注释精修补齐三批**（2026-08-22，用户定批，tests 不做）：生产树
+  common/layout/geometry（2b4c573，实际仅 common 3 文件需动——layout 与
+  geometry 的注释本就全为 why/契约类）、lithography/evaluation/opc
+  （ce15090，删 ~50 处表面注释+压 8 长段+修 2 处注释内过期事实）、main
+  （1b796a7，删 ~392 处表面注释）。验证手段：tmp/ast_check.py 对每个改动
+  文件做"剥离注释与 docstring 后 AST 逐位一致"校验（首版脚本有把整个
+  函数体替换为 Pass 的 bug，反例自检抓出后修正），比人工 diff 复核更强。
+  生产树各包注释质量本就高于测试树：mask/sampling/_common/_skeleton/
+  contracts 核查后零改动。

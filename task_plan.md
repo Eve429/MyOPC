@@ -22,6 +22,9 @@ CHG-20260818-levelset-ilt：SciPy SDF/halo STE/宏 Adam）；CurvMulti ILT
 - [completed] main_test_lithography.py 由合成演示改写为 GDS→光刻结果
   CLI（逐 tile PNG+manifest，与管线同一内核；argparse 首例）。
   全量 695 passed + 1 skipped。
+- [completed] 五条风格规则的存量注释精修补齐：生产树三批（common/
+  layout/geometry；lithography/evaluation/opc；main），tests 不做；
+  每批 AST 等价校验 + 四件套门禁 695+1（2026-08-22）。
 
 ## 当前会话：项目现状复核（2026-08-19）
 

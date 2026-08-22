@@ -126,3 +126,16 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 - 完整 `ruff check .` 在未纳入本任务的 `geometry/contour.py` 有一个既存
   导入空行告警；专项范围（layout/geometry/opc/lithography/main/tests）
   必须全绿。
+
+
+## TorchLitho 一致性测试（2026-08-23 起）
+
+- `tests/lithography/test_torchlitho.py`（36 例）：条件/配置校验、padding
+  与 ICCAD13 逐位、协议结构检查、sigmoid 出口、点源解析一致、瞳平移回归
+  （R2）、源形状计数、TCC 每 defocus 恰一次、两方法梯度互证。
+- `tests/lithography/test_torchlitho_golden.py`（49 例，点名交付）：8 图案
+  × 2 方法 × 2 离焦两级判定（abbe 逐位 / hopkins float32 包络）、rank-1
+  独立校验、disk TCC 逐位、R2 差异上界、resize 两分支、离散化数值锁定。
+  golden 三份数据在 `tests/lithography/golden/`（自含，不依赖外部库）；再
+  生成步骤见 CHG-20260823-torchlitho/test_report.md §3（需外部原库与
+  opencv-python，仅再生成用，迁移后代码零 opencv 依赖）。

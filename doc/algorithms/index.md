@@ -9,6 +9,8 @@
 | 算法 | 文档 | 代码入口 | 用途 |
 |---|---|---|---|
 | 边段几何重建 | [`reconstruct_geometry.md`](reconstruct_geometry.md) | `opc/input/edge/reconstruction.py::_reconstruct_geometry` | 将参考边段与法向位移恢复为合法轮廓/Region |
+| Abbe 光刻成像 | [`abbe.md`](abbe.md) | `lithography/torchlitho/model.py::TorchLithoLithography._abbe_aerial` | 有效光源逐点相干成像叠加（含 R2 缺陷修正记录） |
+| Hopkins 光刻成像 | [`hopkins.md`](hopkins.md) | `lithography/torchlitho/tcc.py` + `model.py::_hopkins_aerial` | TCC 构造、本征核分解与点源 rank-1 证明 |
 
 ## 阅读顺序
 

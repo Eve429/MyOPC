@@ -9,6 +9,9 @@
 # torch 的 CUDA/CPU 构建选择见 doc/development_manual.md §5；
 # 不在本文件硬编码任何私有下载源。
 # 2026-08-20 新增 scipy（LevelSet ILT 的精确 EDT；WSL myopc312 实测 1.18.0）。
+# 2026-08-23 注：opencv-python（5.0.0）仅在 TorchLitho golden 再生成时对照原库
+# cv2 resize 分支使用（见 CHG-20260823-torchlitho/test_report.md §3）；生产与
+# 测试代码零 opencv 依赖，故不列入下方清单。
 
 klayout
 matplotlib

@@ -1252,3 +1252,29 @@
   函数体替换为 Pass 的 bug，反例自检抓出后修正），比人工 diff 复核更强。
   生产树各包注释质量本就高于测试树：mask/sampling/_common/_skeleton/
   contracts 核查后零改动。
+
+## 公共趋势图组件（2026-08-23）
+
+Simple 原趋势图实现只依赖已写出的 records，但放在 runner 内会把输出能力绑定
+到 MB-OPC。已移至 `common/metric_trends.py`，公共输入改为结果序列到 metrics
+文件的映射；因此 ILT 后续可直接复用，而不需要引入 MB-OPC 类型或 workflow。
+
+## TorchLitho-2.0 光刻模型迁移（2026-08-23，CHG-20260823-torchlitho）
+
+- 原库三处实现事实决定迁移形态：①Abbe getSourcePoints 返回频率范数标量
+  （瞳同心放大而非平移，非点源物理错误且无法表达多极）→ R2 向量源点修正；
+  ②TCC 的 srcPoint 仅 DC（σ 不进 TCC）→ 点源是原库 Hopkins 唯一被验证过的
+  源形状，且此时 TCC 恒 rank-1（R1 外积证明）→ SVD 输出可用 abbe 互证；
+  ③原库 TCC 链 numpy float64/complex128、前向 torch float32 → 迁移按两侧
+  精度对齐（frequency_grid/pupil_function dtype 跟随），这是 TCC 权重与原库
+  maxrel=0.0 逐位一致的关键。
+- 原库 Hopkins 前向 prod(conved.shape) 归一在 B>1 时除 B·H·W（批大小泄漏进
+  幅度）；迁移按 H·W 修正，B=1 与原库逐位。非点源下原库 TCC 以谱 J(f1+f2)
+  进入（幅度比逐源点平均小 ≈1/S²）：忠实保留，物理正确的部分相干走 abbe。
+- torch F.interpolate(bilinear) 与 cv2.resize(INTER_LINEAR) 半像素对齐下数值
+  等价（4096nm 视场真插值路径实测差 ≤5.1e-7、rel_L2=0）——"去 opencv"在同构
+  替换下没有付出精度代价。
+- dense_lines 周期图案下 R2 修正版与原库缺陷版 rel_L2 恰为 0（对称采样点
+  数值巧合）；差异随图案谱宽增大（random_blobs 0.371）。
+- golden 数据（tests/lithography/golden/，3.2 MiB 三份）自含 mask 与参数，
+  测试不依赖外部库；生成脚本不提交、步骤全文在 test_report §3/附录 A。

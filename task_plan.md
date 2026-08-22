@@ -5,6 +5,25 @@
 把全 AI 编写的旧代码库（归档于 `00_PAST/`，只读参照）按依赖顺序亲手迁移/过滤到新树，
 使每个模块都被项目所有者理解并拥有；每个批次闭环 = 迁移 → 清理 → 测试 → 演示 → 本地提交。
 
+## 当前会话：TorchLitho-2.0 光刻模型迁移（2026-08-23，进行中）
+
+外部库 `D:\00_WorkSpace\02_CodeStorage\01_OPC\TorchLitho-2.0`（Apache 2.0）的
+Abbe/Hopkins 两方法迁入 `lithography/torchlitho/` 子包，满足现有 LithographyModel
+协议。用户裁决：Hopkins 走 Option 2（忠实迁移 genTCC+randomized SVD，源形状参数化
+point/disk/dipole/quadrupole）；Abbe 修正原库源点缺陷（R2：范数标量→向量源点，
+瞳平移语义）；交付多图案 golden 一致性测试报告（点源逐位、盘源差异量化）。
+
+- [completed] 批 A：模型核心（6e1f779，36 用例；点源两方法互证 8.3e-7）
+- [completed] 批 B：golden 多图案一致性（82f5789，49 用例；abbe 逐位、hopkins
+  float32 包络、TCC 逐位、resize 双分支 ulp 级、R2 差异 0.13~0.37 量化）
+- [completed] 批 C：配置分派与三入口接线（9065555；ILT CUDA 冒烟贯通）
+- [completed] 批 D：算法文档两篇 + CHG 三件套（test_report 为点名交付物）
+
+2026-08-23 完成。TorchLitho-2.0 两方法迁入 lithography/torchlitho/，Option 2
+忠实迁移（genTCC+randomized SVD 逐位一致）+ R2 向量源点修正；全量
+786 passed + 1 skipped（tests/main 10 failed 为并行工作现场，集合与批 A 前
+完全相同）。
+
 ## Next Step
 
 **Phase 6 剩余（ilt 后三方法）**：Simple ILT 与像素管线完成；Gradient
@@ -13,6 +32,13 @@ CHG-20260818-levelset-ilt：SciPy SDF/halo STE/宏 Adam）；CurvMulti ILT
 完成（2026-08-21，CHG-20260818-curvmulti-ilt：多尺度控制网格/wafer
 曲率，660 passed）；Multilevel 规格待批。
 随后 Phase 7（旧 main 入口评审 + 收尾审计）。
+
+## 当前会话：公共迭代指标趋势图（2026-08-23）
+
+- [completed] 新增 `common/metric_trends.py`，解除趋势图对 MB-OPC 的依赖。
+- [completed] Simple/Gradient 接入 `series_pngs` 输出和可配置指标列表。
+- [completed] 增加公共组件、Gradient runner 与配置回归测试。
+- [completed] 更新开发/测试/契约文档及专项报告。
 
 ## 2026-08-22 补充：光刻留档工具化（非阶段项）
 

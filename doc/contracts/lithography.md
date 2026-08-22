@@ -62,3 +62,43 @@ class LithographyModel(Protocol):                 # device/config/condition/forw
 
 `tests/lithography/`（81 例，coverage 100%；CPU sums 与 OpenILT 基线逐位
 一致；CUDA parity 1e-4）。
+
+## TorchLitho 物理参数化模型（2026-08-23 迁移，CHG-20260823-torchlitho）
+
+锚点：`lithography/torchlitho/`（model/source/tcc 三模块）。满足同一
+`LithographyModel` 协议，与 ICCAD13 并列；算法详解见
+`doc/algorithms/{abbe,hopkins}.md`，一致性证明见
+`doc/changes/completed/CHG-20260823-torchlitho/test_report.md`。
+
+```python
+class TorchLithoConfig:                # [torchlitho] 段，全默认
+    method: "abbe" | "hopkins"
+    source_shape: "point" | "disk" | "dipole" | "quadrupole"   # dipole/quadrupole 要求 pole_center>0
+    sigma / pole_center / wavelength_nm / na / refractive_index / defocus_min_nm
+    dose 三值 + 胶模型三参数            # 默认对齐 iccad13.txt
+
+@dataclass(frozen=True, slots=True)
+class TorchLithoCondition:             # 与 ProcessCondition 鸭子类型并存
+    name: str; defocus_nm: float; dose: float
+
+class TorchLithoLithography(torch.nn.Module):
+    TorchLithoLithography(config, canvas, pixel_nm, device=None)
+    device -> torch.device             # buffer 所在设备
+    config -> 视图(canvas, print_threshold)   # 满足 LithographyConfigView
+    def condition(self, name) -> TorchLithoCondition   # nominal/dose_max/defocus_min
+    def forward / forward_many(...)     # 同 ICCAD13 语义：透光率→printed，同形
+```
+
+要点：
+
+- **条件令牌不透明**：求解器只经 `model.condition(name)` 产生并传回
+  `forward_many`，从不访问字段（这是两种条件类型并存的依据）；
+  `TorchLithoCondition.defocus_nm` 是连续值（瞳/TCC 维度），dose 语义同
+  ICCAD13（强度按 dose² 缩放）。
+- **画布/物理像素**：canvas 沿用 `[lithography].canvas_pixels`（256 冻结），
+  物理视场由 `[lithography].pixel_nm` 表达；居中 padding 与 ICCAD13 逐位一致
+  （测试锁定）。
+- **模型选择**：`[lithography].model = "iccad13" | "torchlitho"`（默认
+  iccad13），分派在 `main/configuration.build_lithography_model`。
+- **非点源 Hopkins 的幅度语义**：忠实原库（谱 J(f₁+f₂) 进入，比逐源点平均
+  小 ≈1/S²）；物理正确的部分相干请用 `method="abbe"`——详见 hopkins.md §5。

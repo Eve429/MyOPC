@@ -622,3 +622,35 @@ passed；全量 runner 仍有既有入口路径/field warning 失败，详见本
 位移物化、ring 邻接、同数学边处理、corner miter/bevel、Gradient 当前中点、
 整数化去重、拓扑守卫、Region 转换、伪代码、复杂度和失败语义；`doc/INDEX.md`
 新增算法文档导航。未修改业务代码、layout 或 geometry。
+
+## 2026-08-23（会话：TorchLitho-2.0 光刻模型迁移启动）
+
+用户指派：参照现有 lithography 接口迁移 TorchLitho-2.0 的 Abbe/Hopkins 两方法，
+doc/algorithms/ 详解两算法，交付多图案一致性测试报告。plan mode 完成探索与设计
+（三 Explore + 一 Plan agent + 主会话独立复核），用户裁决：Hopkins 走 Option 2
+（忠实迁移 genTCC+randomized SVD+源形状参数化 dipole/quadrupole）；设计期两项
+关键发现——R1 点源 TCC 恒 rank-1（外积证明，转作文档与测试资产）、R2 原库 Abbe
+源点为范数标量导致瞳同心放大而非平移（物理缺陷，迁移修正为向量源点；点源参数
+下与原库逐位一致不受影响，盘源差异量化入报告）。计划存
+.claude/plans/dazzling-waddling-pancake.md，四批实施（A 模型核心 / B golden 多
+图案一致性 / C 配置接线 / D 算法文档与 CHG 三件套）。
+
+## 2026-08-23（会话：公共迭代指标趋势图）
+
+新增 `common.metric_trends`，输入为结果序列到 metrics JSON 的映射，输出使用
+`series_pngs`/`series_<id>.png`，不绑定 MB-OPC。Simple 与 Gradient 已接入，指标
+分别由 `[mbopc]`/`[gradient]` 配置；Gradient 默认六项。ILT runner 本次未接入，
+但 ILT 风格 loss records 已通过公共接口测试。专项报告位于
+`doc/changes/active/CHG-20260823-shared-metric-trends/`。
+
+## 2026-08-23（会话：TorchLitho-2.0 光刻模型迁移完成）
+
+四批实施全部完成并 push：6e1f779 模型核心（torchlitho/ 四文件 + 36 用例，
+点源两方法互证 8.3e-7）→ 82f5789 golden 多图案一致性（49 用例：abbe 逐位、
+hopkins float32 包络 ≤4.8e-7、disk TCC 权重逐位 maxrel=0、resize 双分支
+ulp 级、R2 差异 0.13~0.37 量化）→ 9065555 配置分派接线（[lithography].model
++ 工厂 + 三入口 + 2 示例 config；ILT CUDA 冒烟 1.19s 贯通）→ 批 D 文档
+（abbe.md/hopkins.md 详解 + CHG 三件套，test_report 为用户点名交付物）。
+全量 786+1（tests/main 10 failed 为并行现场，集合与批 A 前相同）。期间在
+myopc 环境安装 opencv-python 5.0.0（用户授权；仅 golden 再生成对照原库 cv2
+分支用，生产/测试零 opencv 依赖）。

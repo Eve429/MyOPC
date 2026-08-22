@@ -87,7 +87,7 @@ D:/app/miniforge/envs/myopc/python.exe main/run_macro_pipeline.py config/macro_p
 | 通用辅助函数 | `common.io`（atomic_write_json/npz）、`common.units`（exact_dbu）、`common.runtime`（resolve_device）、`common.arrays`（as_vector/as_matrix/as_points） |
 | 跨段契约与派生值 | 各 workflow 装配处（步长/探针≤上限、lr 超限 warning；nm→DBU 内联换算） |
 
-## 5. 光刻模型 lithography（ICCAD13，2026-08-16 迁移）
+## 5. 光刻模型 lithography（ICCAD13 + TorchLitho，2026-08-16/08-23 迁移）
 
 - 唯一具体模型 `ICCAD13Lithography(torch.nn.Module)`（`lithography/iccad13.py`）；
   `lithography/contracts.py` 的 `LithographyModel` 薄 Protocol 已随 simple
@@ -309,3 +309,20 @@ layout / geometry / opc.input(+edge+pixel) / lithography / evaluation /
 opc.iteration.mbopc（simple + gradient）/ opc.iteration.ilt（simple + levelset + curvmulti）已完成；ilt 的
 multilevel 与 main 旧入口待评审。
 历史架构参照 `00_PAST/doc/`（只读归档）。
+
+
+### 5.1 TorchLitho 物理参数化模型（2026-08-23，CHG-20260823-torchlitho）
+
+- `lithography/torchlitho/`（model/source/tcc）满足同一 `LithographyModel`
+  协议；`[lithography].model = "torchlitho"` 经
+  `main.configuration.build_lithography_model` 分派，默认 iccad13 行为不变。
+- 两方法：`method="abbe"`（逐源点相干成像叠加，向量源点修正版，支持
+  point/disk/dipole/quadrupole 四种源形状）、`method="hopkins"`（TCC +
+  randomized SVD 本征核，忠实原库数值链，实测逐位一致）。
+- 物理参数在 `[torchlitho]` 段（NA/波长/σ/极心/折射率/离焦），全默认；画布
+  256 冻结、物理视场 = 256 × `[lithography].pixel_nm`；零运行时资产。
+- Hopkins TCC 构造约 1.4 s/defocus 值（惰性缓存，三命名条件最多两份）。
+- 算法详解 `doc/algorithms/{abbe,hopkins}.md`；一致性证明
+  `doc/changes/completed/CHG-20260823-torchlitho/test_report.md`。
+- 示例配置 `config/torchlitho_{abbe,hopkins}.toml`；直跑 CLI
+  `python main/main_test_lithography.py <gds> --model torchlitho`。

@@ -186,8 +186,8 @@ class _EdgeGradientMask(torch.autograd.Function):
         y0 = torch.floor(yc)  # 下行整数格点
         x1 = (x0 + 1.0).clamp(max=float(size - 1))  # 右列（边界折回，权重为 0）
         y1 = (y0 + 1.0).clamp(max=float(size - 1))  # 上行（边界折回，权重为 0）
-        wx = xc - x0  # x 方向权重
-        wy = yc - y0  # y 方向权重
+        wx = xc - x0
+        wy = yc - y0
         # 扁平索引四角一次取值：每条 membership 只读 4 个像素，避免整图 gather。
         plane = size * size  # 单张图像素数
         base = batch_indices * plane  # [M] 扁平基址
@@ -245,9 +245,9 @@ def _prepare_gradient_context(
 ) -> _GradientContext:
     """一次构造 gradient 专有静态（参数映射/采样 membership/EPE profile）。"""
     macro_id = problem.macro.macro_id  # 错误消息的 macro 部分
-    pixel_dbu = int(problem.macro.pixel_dbu)  # 栅格像素
-    core_count = problem.macro.core_count  # tile 总数
-    canvas_pixels = int(problem.macro.canvas_pixels)  # 问题侧画布
+    pixel_dbu = int(problem.macro.pixel_dbu)
+    core_count = problem.macro.core_count
+    canvas_pixels = int(problem.macro.canvas_pixels)
     owner_ids = np.flatnonzero(problem.owner_indices >= 0)  # owner 段全局号
     segment_count = problem.segments.segment_count  # 段数 S
     # 初始化：owner 映射、参考中点/法向与探针坐标只建一次，全部状态迭代
@@ -317,7 +317,7 @@ def _prepare_gradient_context(
     if pack.total_pixels == 0:
         # 有 owner 段却算不出任何计分像素，属于数据损坏，不能静默除零。
         raise ValueError("存在 owner 段但 ownership 计分像素为 0（数据不一致）")
-    device = model.device  # 参数与批张量的目标设备
+    device = model.device
     threshold = float(model.config.print_threshold)  # 离散诊断二值阈值
     # 三工艺角一次前向
     conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))
@@ -354,9 +354,9 @@ def _evaluate_state(
     只允许 backward：zero_grad 与 optimizer.step 属于调用方的更新职责，
     本函数绝不触碰参数值——同轮多批梯度因此天然累积在同一参数快照上。
     """
-    sums = {"nominal": 0.0, "process": 0.0, "pvband": 0.0, "epe": 0.0}  # 连续分量累计（epe 为加权前 L_epe）
+    sums = {"nominal": 0.0, "process": 0.0, "pvband": 0.0, "epe": 0.0}  # epe 分量为加权前 L_epe
     diag = {"l2": 0, "pvband": 0, "epe": 0, "valid": 0, "ambiguous": 0}
-    started = time.perf_counter()  # 本状态评价计时
+    started = time.perf_counter()
     # 公共组批（target 缓存/当前候选栅格/静态计分画布）单源共用；
     # rasterize 钩子传本模块全局，monkeypatch 锚点保持在求解器模块。
     for core_indices, targets, masks, ownership in iter_core_batches(
@@ -394,7 +394,6 @@ def _evaluate_state(
             # 批号与参数索引一次上设备
             slots = torch.from_numpy(np.concatenate(member_slots)).to(ctx.device)
             owned = torch.from_numpy(np.concatenate(member_params)).to(ctx.device)
-            # 中点坐标转 float32 上设备
             mids = torch.from_numpy(np.concatenate(member_mids)).to(device=ctx.device, dtype=torch.float32)
             local = parameters[owned]  # gather 出 [M]，autograd 边
             # pixel_dbu 随批传入：backward 把采样梯度换算回 DBU 单位。

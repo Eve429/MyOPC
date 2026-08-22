@@ -118,10 +118,9 @@ def evaluate_state(
 ) -> SimpleMBOPCStep:
     """评价一个 macro 当前状态，并产生同步 owner 位移提案。
 
-    pack 是每 macro 打包一次的静态评价输入（计分画布/参考探针坐标/
-    零位移参考候选），optimize_simple_macro 预打包后逐状态复用；直接调用缺省
-    时现算（reference 同理，两条 None 路径等价）。pack 优先时 reference
-    参数不参与本调用。
+    pack（计分画布/参考探针/零位移参考候选）由 optimize_simple_macro
+    预打包逐状态复用，缺省时现算，reference 同理（两条 None 路径等价）；
+    pack 优先时 reference 不参与本调用。
     """
     # 入口契约：位移形状/有限性/context 归零与 canvas 一致性。MacroProblem 构造
     # 已保证 owner/CSR 不变量，这里不重复校验。
@@ -132,15 +131,15 @@ def evaluate_state(
     context_mask = problem.owner_indices < 0  # 只读 context 段
     if len(current) and np.any(current[context_mask] != 0.0):
         raise ValueError("context 段（owner=-1）位移必须恒为 0")
-    canvas_pixels = int(problem.macro.canvas_pixels)  # 问题侧画布
+    canvas_pixels = int(problem.macro.canvas_pixels)
     if int(model.config.canvas) != canvas_pixels:
         raise ValueError("模型画布与 problem 画布不一致")
     if not np.isfinite(step_dbu) or step_dbu < 0.0:
         raise ValueError("step_dbu 必须是非负有限数")
     # 固定几何：参考（零位移）端点/法向与探针坐标、计分画布均每 macro 一次。
-    if pack is None:  # 直接调用方未预打包
+    if pack is None:
         if reference is None:
-            reference = problem.segments.materialize()  # 现算参考几何
+            reference = problem.segments.materialize()
         pack = pack_macro_statics(
             problem,
             epe_distance_dbu=config.epe_distance_dbu,
@@ -148,13 +147,13 @@ def evaluate_state(
             reference_region=reconstruct_region(problem, np.zeros(segment_count, dtype=np.float64)),
             to_canvas=points_to_canvas,
         )
-    max_displacement = float(problem.fragmentation.max_displacement_dbu)  # 位移上限
+    max_displacement = float(problem.fragmentation.max_displacement_dbu)
     next_values = current.copy()  # 提案缓冲（can_update=False 时不写方向）
     written = np.zeros(segment_count, dtype=np.bool_)  # 方向唯一写标记
     # 批间标量累计
     totals = {"epe": 0, "l2": 0, "pvband": 0, "valid": 0, "ambiguous": 0}
     threshold = float(model.config.print_threshold)  # 像素指标二值阈值
-    device = model.device  # 目标设备
+    device = model.device
     # 三工艺角条件：标称 / 大剂量 / 离焦小剂量（每 macro 一次，与
     # gradient 的 ctx.conditions 同语义）
     conditions = (model.condition("nominal"), model.condition("dose_max"), model.condition("defocus_min"))
@@ -188,10 +187,10 @@ def evaluate_state(
                 totals["epe"] += epe_result.violation_count  # 违规段数
                 # 回切整 batch 化：每张小张量只做一次设备→主机搬运，随后全部
                 # 统计与写回在 numpy 侧切片完成，避免逐 core 的 GPU 同步。
-                valid_all = epe_result.valid.cpu().numpy()  # 一次取回
-                ambiguous_all = epe_result.ambiguous.cpu().numpy()  # 一次取回
-                totals["valid"] += int(valid_all.sum())  # 整批求和
-                totals["ambiguous"] += int(ambiguous_all.sum())  # 整批求和
+                valid_all = epe_result.valid.cpu().numpy()
+                ambiguous_all = epe_result.ambiguous.cpu().numpy()
+                totals["valid"] += int(valid_all.sum())
+                totals["ambiguous"] += int(ambiguous_all.sum())
                 if can_update:  # 方向只写提案缓冲，current 全程只读
                     # -1/0/+1 方向 × 当前提案步长（一次取回）
                     moves = epe_result.directions.cpu().numpy().astype(np.float64) * step_dbu
@@ -200,10 +199,10 @@ def evaluate_state(
                         idx = pack.owner_members[core_index]
                         if not len(idx):  # 空 owner core 无探针
                             continue
-                        piece = slice(cursor, cursor + len(idx))  # 该 core 段
+                        piece = slice(cursor, cursor + len(idx))
                         cursor += len(idx)
-                        next_values[idx] += moves[piece]  # 在 current 基础上移动
-                        written[idx] = True  # 唯一写标记
+                        next_values[idx] += moves[piece]
+                        written[idx] = True
             # 释放：批结束只保留标量与方向，GPU 张量立即失去引用。
             del printed, mask_tensor, target_tensor, ownership_tensor
         if on_tiles_completed is not None:  # 释放后才报告进度
@@ -249,16 +248,15 @@ def optimize_simple_macro(
         return config.initial_step_dbu * 0.5 ** ((target_state - 1) // config.decay_every)
 
     segment_count = problem.segments.segment_count  # 段数 S
-    owner_count = int(np.count_nonzero(problem.owner_indices >= 0))  # owner 段数
+    owner_count = int(np.count_nonzero(problem.owner_indices >= 0))
     zeros = np.zeros(segment_count, dtype=np.float64)  # 零位移状态
     # 参考几何整个迭代只物化一次：baseline 与每个移动后状态的评价复用同一
     # 份端点/法向（探针始终围绕参考边定义，与位移状态无关）。
-    reference = problem.segments.materialize()  # 唯一物化
-    # 静态打包每 macro 一次：计分画布/参考探针坐标/零位移参考候选。target
-    # 缓存 miss 源与 baseline mask 共用同一次零位移重构（重构是纯函数，
-    # 确定性成立）；此前探针与计分画布逐状态重算，属结构性浪费。
-    started = time.perf_counter()  # baseline 计时
-    baseline_region = reconstruct_region(problem, zeros)  # 零位移候选
+    reference = problem.segments.materialize()
+    # 静态打包每 macro 一次：计分画布/参考探针坐标/零位移参考候选；target
+    # 缓存 miss 源与 baseline mask 共用同一次零位移重构（纯函数，确定性）。
+    started = time.perf_counter()
+    baseline_region = reconstruct_region(problem, zeros)
     pack = pack_macro_statics(
         problem,
         epe_distance_dbu=config.epe_distance_dbu,
@@ -297,9 +295,9 @@ def optimize_simple_macro(
     ]
     best_epe = proposal.epe  # 最佳状态 EPE（EPE 相同保留较早状态，由严格小于实现）
     best_state_index = 0  # baseline 先当最佳
-    best_displacements = zeros.copy()  # 零位移副本
-    stop_reason: str | None = None  # 停止原因
-    stop_detail: str | None = None  # 非法候选原因
+    best_displacements = zeros.copy()
+    stop_reason: str | None = None
+    stop_detail: str | None = None
     if owner_count and proposal.valid_probes == 0:  # 有段却无有效探针
         # 「无法评价」不是「零违规」：探针越过窄特征落入异侧（如 2nm 壁 +
         # 8nm 探针距离）时全部探针被判无效，epe 恒为 0；此时以零位移为 best
@@ -317,16 +315,14 @@ def optimize_simple_macro(
                 # 直接停止，省去一次完整重建与光刻前向。
                 stop_reason = "no_update"
                 break
-            started = time.perf_counter()  # 本状态计时（重建 + 评价）
+            started = time.perf_counter()
             try:  # 候选必须先通过方向/hole/有效性守卫
                 candidate_region = reconstruct_region(problem, candidate)
             except (ValueError, ReconstructionError) as exc:  # 非法几何终止
-                # 捕获 ValueError 有实测依据：几何退化（如共线 ring 少于三
-                # 顶点）会以 ValueError 从 KLayout 数组校验冒出，并非只有
-                # ReconstructionError；把它包装进 ReconstructionError 需要
-                # 改 reconstruction.py，故维持宽捕获。
-                # 位移 shape/有限性由 evaluate_state 入口契约先行拦截，
-                # 此处的 ValueError 几乎只可能是几何退化。
+                # 宽捕获有实测依据：几何退化（如共线 ring 少于三顶点）会以
+                # ValueError 从 KLayout 冒出而非 ReconstructionError，收窄需
+                # 改 reconstruction.py 包装；位移 shape/有限性已在
+                # evaluate_state 入口拦截，此处 ValueError 几乎只可能是几何退化。
                 stop_reason = "invalid_geometry"  # 保留最后合法 best
                 # 错误原因不得吞掉
                 stop_detail = f"state {state_index} 候选重建失败：{exc}"

@@ -160,7 +160,7 @@ def optimize_curvmulti_macro(
             control.requires_grad_(build_gradient)
             if build_gradient:
                 optimizer.zero_grad(set_to_none=True)
-            started = time.perf_counter()  # 本状态全部 core 评价计时
+            started = time.perf_counter()
 
             def slot_values(pack: BatchPack, _control=control) -> SlotForward:
                 """可微链：控制网格 -> 平滑 sigmoid -> nearest 上采样 -> 槽位

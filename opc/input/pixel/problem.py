@@ -228,11 +228,10 @@ def prepare_pixel_macro_problem(
     """从一次完整相交物化构造像素 macro 问题（一次栅格化，不提边）。
 
     planning_bounds 是 plan_macros 所用的规划边界（field，未配置处理框时
-    即 layer bbox）：ownership 四向包含校验的依据。data_bounds 是全局
-    数据包络（layer bbox）：负板在栅格化之前补画包络外到查询边界的
-    不透光图形（2026-08-22 几何方案，与 edge 路径同一语义）——环带
-    coverage=1 → transmission=0；clear 包络外无图形天然恒暗、无对应
-    操作。两参数必填无默认，缺省会静默保留边界缺陷，契约必须显式。
+    即 layer bbox），供 ownership 四向包含校验。data_bounds 是全局数据包络
+    （layer bbox）：负板在栅格化前补画包络外到查询边界的不透光图形
+    （2026-08-22 几何方案，同 edge 路径），环带 coverage=1→transmission=0；
+    clear 包络外无图形天然恒暗。两参数必填无默认——缺省会静默保留边界缺陷。
     """
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")

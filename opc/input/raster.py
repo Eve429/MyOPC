@@ -66,11 +66,10 @@ def rasterize_mask_canvas(
     *,
     polarity: MaskPolarity | str,
 ) -> NDArray[np.float32]:
-    """把 context 透光率居中放入固定 canvas，所有外围 padding 填 0。
+    """把 context 透光率居中放入固定 canvas，外围 padding 恒 0。
 
-    窗口外的暗场由几何保证（2026-08-22 起：负板在 prepare 阶段已把数据
-    包络外补画不透光图形，正板包络外无图形天然 coverage=0），本函数只做
-    极性变换与居中 padding，不再有暗界参数。
+    窗口外暗场由几何保证（负板 prepare 已补铬、正板包络外天然 coverage=0，
+    2026-08-22 起），本函数只做极性变换与居中 padding，无暗界参数。
     """
     try:
         normalized = polarity if isinstance(polarity, MaskPolarity) else MaskPolarity(polarity)
@@ -94,10 +93,9 @@ def rasterize_mask_canvas(
         )
     coverage = rasterize_region_window(region, context_box, pixel_dbu)
     low_y, _, low_x, _ = _center_padding(int(coverage.shape[0]), int(coverage.shape[1]), canvas_pixels)
-    # 数组值在所有极性下遵守同一光学定义：1.0 = 透光、0.0 = 不透光。
-    # clear 时源 polygon coverage 即透光；opaque 时局部 context 背景先填 1
-    # 再减去 coverage（field − opaque 图形），两种极性 canvas 外围 padding
-    # 恒为 0，极性只改变「源 polygon 如何转换为透光率」。
+    # 数组值恒为光学定义 1.0=透光、0.0=不透光：clear 时 coverage 即透光，
+    # opaque 时 1−coverage（field − 不透光图形）。两种极性外围 padding 恒 0，
+    # 极性只改变「源 polygon 如何转换为透光率」。
     canvas = np.zeros((canvas_pixels, canvas_pixels), dtype=np.float32)
     if normalized is MaskPolarity.CLEAR:
         local = coverage

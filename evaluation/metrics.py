@@ -76,9 +76,7 @@ def evaluate_edge_probes(
 ) -> EPEEvaluation:
     """批量评价 inner/outer 探针并生成 -1/0/+1 法向移动方向。
 
-    默认阈值与 L2/PVBand 统一为 0.5；求解器必须显式传入
-    model.config.print_threshold，保证同一状态的三类指标共用同一
-    "打印轮廓"定义。
+    求解器必须显式传入 model.config.print_threshold，与 L2/PVBand 共用同一"打印轮廓"。
     """
     target, nominal = _aligned_images(target, nominal)
     device = target.device

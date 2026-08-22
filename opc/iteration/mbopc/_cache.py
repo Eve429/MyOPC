@@ -18,30 +18,30 @@ class TargetCanvasCache:
         self._max_bytes = max_bytes  # 0 表示完全禁用缓存
         # (macro_id, core_index) → uint8 canvas，最新在尾
         self._entries: OrderedDict[tuple[str, int], NDArray[np.uint8]] = OrderedDict()
-        self._used_bytes = 0  # 当前缓存占用字节数
+        self._used_bytes = 0
 
     def get(self, macro_id: str, core_index: int) -> NDArray[np.uint8] | None:
         """命中时返回缓存 canvas 并把它标记为最新，未命中返回 None。"""
         key = (macro_id, core_index)  # key 必须包含 macro ID，防止跨 macro 误用
-        entry = self._entries.get(key)  # 查找
-        if entry is None:  # 未命中
-            return None  # 调用方自行栅格化
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
         self._entries.move_to_end(key)  # LRU：刚访问的移到最新端
         return entry  # 只读语义由调用方遵守
 
     def put(self, macro_id: str, core_index: int, value: NDArray[np.uint8]) -> None:
         """写入或替换一个 target canvas，超上限时从最旧端驱逐。"""
         if self._max_bytes == 0:  # 0 上限禁用缓存
-            return  # 不存任何条目
-        nbytes = int(value.nbytes)  # 以实际数组字节计量
-        if nbytes > self._max_bytes:  # 单项超过总上限则不缓存
-            return  # 宁可每次重算也不驱逐整个缓存
-        key = (macro_id, core_index)  # 缓存键
+            return
+        nbytes = int(value.nbytes)
+        if nbytes > self._max_bytes:  # 单项超上限不入缓存：宁可每次重算也不驱逐整缓存
+            return
+        key = (macro_id, core_index)
         old = self._entries.pop(key, None)  # 替换语义：先移除旧值
-        if old is not None:  # 旧值占用的字节先归还
+        if old is not None:
             self._used_bytes -= int(old.nbytes)
-        while self._used_bytes + nbytes > self._max_bytes:  # 腾出足够空间
-            _, evicted = self._entries.popitem(last=False)  # 驱逐最旧
-            self._used_bytes -= int(evicted.nbytes)  # 归还字节
+        while self._used_bytes + nbytes > self._max_bytes:
+            _, evicted = self._entries.popitem(last=False)  # 驱逐最旧端
+            self._used_bytes -= int(evicted.nbytes)
         self._entries[key] = value  # 存入最新端
-        self._used_bytes += nbytes  # 计入占用
+        self._used_bytes += nbytes

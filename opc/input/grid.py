@@ -172,7 +172,7 @@ def _core_cuts(start: int, end: int, core_size: int) -> IntArray:
     if end <= start or core_size <= 0:
         raise ValueError("macro range and core size must be positive")
     count = (end - start + core_size - 1) // core_size
-    # 与 _cuts_by_size 同一数学形式但语义独立：这里保证的是「macro 内 core 切线」，
+    # 与 _macro_cuts_by_size 同一数学形式但语义独立：这里保证的是「macro 内 core 切线」，
     # 末端缩短只会发生在版图最外侧 macro 内，符合名义 core 整数倍的规划约定。
     cuts = start + np.arange(count + 1, dtype=np.int64) * core_size
     cuts[-1] = end

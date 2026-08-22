@@ -212,7 +212,7 @@ def optimize_levelset_macro(
             if not np.isfinite(grad_magnitude).all():
                 raise FloatingPointError(f"{problem.macro.macro_id} state {state_index} grad magnitude 非有限")
             macro_gradient = np.zeros_like(phi_flat)
-        started = time.perf_counter()  # 本状态全部 core 评价计时
+        started = time.perf_counter()
 
         def slot_values(
             pack: BatchPack,

@@ -83,13 +83,10 @@ class MacroProblem:
             raise ValueError("core membership offsets are invalid")
         if len(members) and (np.any(members < 0) or np.any(members >= segment_count)):
             raise ValueError("member_segment_indices 超出 segment 范围")
-        # own ⊆ membership：每个 owner>=0 的 segment 必然出现在其 owner 的
-        # CSR 区间内。逐条目比对 entry 所属 core 与该段 owner，标记命中后
-        # 与「owner>=0」全集比较，一次向量化完成，不进入 Python 循环。
-        # 检查不能被「membership 为空」跳过：否则「有 owner 却无任何
-        # membership」的损坏对象（截断 NPZ 或手工构造）会被静默接受。
-        # 空 membership 下 seen 全 False，恰好与全 -1 的合法纯 context 状态
-        # 相等、与任何 owner>=0 的状态不等，语义自然正确。
+        # own ⊆ membership：每个 owner>=0 的 segment 必然出现在其 owner 的 CSR
+        # 区间内；逐条目标记命中后与「owner>=0」全集比较，一次向量化完成。
+        # 空 membership 时 seen 全 False＝全 -1 的合法纯 context 状态，与任何
+        # owner>=0 状态不等——截断 NPZ/手工构造的损坏对象仍被拒绝。
         entry_cores = np.repeat(np.arange(core_count, dtype=np.int64), np.diff(offsets))
         matched = owners[members] == entry_cores
         seen = np.zeros(segment_count, dtype=np.bool_)
@@ -116,7 +113,7 @@ class MacroProblem:
         return members[self.owner_indices[members] == core_index]
 
     def _arrays(self) -> dict[str, np.ndarray]:
-        """按格式版本 1 的键名打包全部待持久化数组。"""
+        """按当前格式版本的键名打包全部待持久化数组。"""
         macro, segments = self.macro, self.segments
         contours = segments.contours
         return {
@@ -377,10 +374,9 @@ def _build_macro_ownership(
 def _opaque_surround(query: DbuBox, data_bounds: DbuBox) -> kdb.Region:
     """返回负板数据包络外到查询边界的补铬区（2026-08-22 几何方案）。
 
-    补到查询边界而非处理框边界：铬连续越过 field 边界，该处不产生轮廓
-    （外框边不成为可优化段）；field 外的 context 扩张带同样被覆盖，
-    与透光率置零方案在光学上逐位同值（T=0）。clear 无对应操作——包络外
-    无图形，coverage=0 天然恒暗。
+    补到查询边界而非处理框边界：铬连续越过 field 边界，该处不产生轮廓（外
+    框边不成为可优化段）；field 外 context 扩张带同样被覆盖，与透光率置零
+    方案光学逐位同值（T=0）。clear 无对应操作——包络外无图形天然恒暗。
     """
     return kdb.Region(query.to_native()) - kdb.Region(data_bounds.to_native())
 
@@ -396,12 +392,11 @@ def prepare_macro_problem(
 ) -> MacroProblem:
     """从完整相交图形一次生成可供多轮迭代复用的 macro 参考问题。
 
-    data_bounds 是全局数据包络（layer bbox，须由调用方显式提供——各
-    macro 局部 region 的 bbox 只是包络的局部投影，不可代推）。负板在
-    提边之前补画包络外到查询边界的不透光图形：与既有铬共线相接处在
-    布尔并中融合（不产生虚假可动边）；补区外缘落在查询边界上，恒为
-    context-only 段（owner=-1，不可动、不进输出）；包络边有透光缺口时
-    缺口处形成真实铬|石英边（物理真实边，正常参与优化）。
+    data_bounds 是全局数据包络（layer bbox，须由调用方显式提供——macro
+    局部 region 的 bbox 只是包络的局部投影，不可代推）。负板在提边之前
+    补画包络外到查询边界的不透光图形：共线相接处在布尔并中融合（不产生
+    虚假可动边）；补区外缘恒为 context-only 段（owner=-1，不可动、不进
+    输出）；包络边透光缺口处形成真实铬|石英边，正常参与优化。
     """
     if batch.query_box != macro.query_box:
         raise ValueError("batch.query_box 必须等于 macro.query_box")

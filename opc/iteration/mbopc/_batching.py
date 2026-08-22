@@ -1,13 +1,10 @@
 """simple 与 gradient 共享的静态评价打包与批量离散诊断（A1 骨架）。
 
-两个求解器的批量评价段此前各自实现且已漂移（gradient 预计算静态量、
-simple 逐状态重算探针与计分画布）。本模块只承载与"更新策略"无关的
-公共计算：每 macro 打包一次的静态画布（ownership/参考探针坐标）、
-target 缓存 miss 回填、公共组批（iter_core_batches/upload_eval_batch）
-与批后离散诊断。凡被测试按求解器模块名
-monkeypatch 的函数（rasterize_mask_canvas / points_to_canvas /
-evaluate_*）一律由调用方以自身模块全局显式传入——补丁锚点不随代码
-搬迁失效（与 ilt/_skeleton 的钩子纪律同源）。
+只承载与"更新策略"无关的公共计算（防两求解器漂移）：每 macro 打包一次
+的静态画布与参考探针坐标、target 缓存 miss 回填、公共组批与批后离散
+诊断。凡被测试按求解器模块名 monkeypatch 的函数（rasterize_mask_canvas /
+points_to_canvas / evaluate_*）由调用方以自身模块全局显式传入——补丁
+锚点不随代码搬迁失效。
 """
 
 from __future__ import annotations
@@ -144,13 +141,12 @@ def iter_core_batches(
     求解器模块）。
     """
     for batch_start in range(0, pack.core_count, batch_size):
-        # 本批 core（行优先稳定序）
         core_indices = list(range(batch_start, min(batch_start + batch_size, pack.core_count)))
-        batch_count = len(core_indices)  # 本批 tile 数
+        batch_count = len(core_indices)
         targets = np.empty((batch_count, pack.canvas_pixels, pack.canvas_pixels), dtype=np.uint8)
         masks = np.empty((batch_count, pack.canvas_pixels, pack.canvas_pixels), dtype=np.float32)
         ownership = np.empty((batch_count, pack.canvas_pixels, pack.canvas_pixels), dtype=np.bool_)
-        for slot, core_index in enumerate(core_indices):  # 逐 core 组批
+        for slot, core_index in enumerate(core_indices):
             spec = problem.macro.core(core_index)  # 即时构造 CoreSpec，不常驻
             targets[slot] = cached_target_canvas(problem, pack, target_cache, core_index, rasterize=rasterize)
             masks[slot] = rasterize(

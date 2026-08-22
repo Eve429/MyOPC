@@ -279,10 +279,9 @@ class ICCAD13Lithography(nn.Module):
             dtype=spectrum.dtype,
             device=spectrum.device,
         )
-        # 保持 OpenILT 的频域象限约定，不显式执行 fftshift；四次批量赋值
-        # 避免对 kernel 或像素的 Python 循环，是 GPU 热路径的主要性能
-        # 不变量。赋值顺序固定左上→右上→左下→右下：DC 与 Nyquist 的重叠
-        # 行/列由后写的象限覆盖。
+        # 保持 OpenILT 频域象限约定，不显式执行 fftshift；四次批量赋值避免对 kernel
+        # 或像素的 Python 循环，是 GPU 热路径的主要性能不变量。赋值顺序固定
+        # 左上→右上→左下→右下：DC 与 Nyquist 的重叠行/列由后写的象限覆盖。
         output[:, :, : half_height + 1, : half_width + 1] = (
             spectrum[:, :, : half_height + 1, : half_width + 1]
             * kernels[None, :kernel_count, -(half_height + 1) :, -(half_width + 1) :]
@@ -319,11 +318,9 @@ class ICCAD13Lithography(nn.Module):
         if len(set(names)) != len(names):
             raise ValueError("同一次仿真的工艺条件名称不能重复")
         prepared, (top, bottom, left, right), was_single = self._prepare_mask(mask)
-        # 所有条件共享同一 mask FFT；相同 kernel bank 的单位剂量强度也只
-        # 传播一次。剂量乘在振幅上，强度严格按 dose² 缩放，因此 dose 只
-        # 通过 dose² 因子复用同一 unit。缓存仅存在于本次调用的 autograd
-        # 图中，不跨 mask 保存——MB-OPC 的 no_grad 推理与 ILT 的 backward
-        # 走同一条路径。
+        # 所有条件共享同一 mask FFT，相同 bank 的单位剂量强度只传播一次；剂量乘在振幅上、
+        # 强度严格按 dose² 缩放，故各 dose 只以 dose² 因子复用同一 unit。缓存仅存在于本次
+        # 调用的 autograd 图、不跨 mask 保存——MB-OPC 的 no_grad 推理与 ILT 的 backward 同路径。
         spectrum = torch.fft.fft2(prepared.to(torch.complex64).unsqueeze(1), norm="forward")
         steepness = self.config.print_steepness
         density = self.config.target_density

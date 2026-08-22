@@ -88,17 +88,15 @@ def _reconstruct_geometry(
     梯度路径请求；simple 等热路径调用方默认不承担该成本。
     """
     segments, config = problem.segments, problem.fragmentation
-    # 检查 displacements 有效性
     values = _validated_displacements(segments, displacements, config)
-    # 得到边段移动后的start、end
     geometry = segments.materialize(values)
     count = segments.segment_count
     if not count:
         return ReconstructionResult(segments.contours, np.empty((0, 2), dtype=np.float64) if with_midpoints else None)
-    # 构造previous，让每条边段知道自己前一条是什么
+    # previous[i] = 环内前一段，各环首段回卷到本环末段
     previous = np.arange(count, dtype=np.int64) - 1
     previous[segments.ring_segment_offsets[:-1]] = segments.ring_segment_offsets[1:] - 1
-    # previous_edges、current_edges表示上一条边和当前边；相同就表示原本是一条边而不是corner
+    # 前一段/当前段的端点与数学边号：边号相同即原本是一条数学边，此处不是 corner
     previous_ends = geometry.ends[previous]
     current_starts = geometry.starts
     previous_edges = segments.edge_ids[previous]
@@ -115,18 +113,15 @@ def _reconstruct_geometry(
         vertices = segments.contours.vertices
         # 压缩到拐角子集：前一/当前段的数学边起点顶点索引，后续全部向量化
         first_ids, second_ids = previous_edges[corners], current_edges[corners]
-        # 前一条边的方向向量（终点顶点 − 起点顶点），定义拐角处第一条无限直线
+        # 前/当前边方向向量（终点顶点 − 起点顶点）：定义拐角处的两条无限直线
         first_vectors = (vertices[segments.edge_next_ids[first_ids]] - vertices[first_ids]).astype(np.float64)
-        # 当前边的方向向量，定义第二条无限直线
         second_vectors = (vertices[segments.edge_next_ids[second_ids]] - vertices[second_ids]).astype(np.float64)
         # 位移后两线不再共点：delta = 当前段起点 − 前一段终点，是两条直线的相对错位
         delta = current_starts[corners] - previous_ends[corners]
-        # 二维叉积（z 分量）= |a||b|·sinθ：两条边方向的平行判定基础
+        # 二维叉积（z 分量）= |a||b|·sinθ：平行/共线时直线无解析交点，走 bevel 退化
         cross = first_vectors[:, 0] * second_vectors[:, 1] - first_vectors[:, 1] * second_vectors[:, 0]
-        # 平行/共线时直线无交点，解析解不存在，必须走 bevel 退化路径
         parallel = np.isclose(cross, 0.0, atol=1e-12, rtol=0.0)
-        # 防除零：平行行把分母换成 1.0，其 factor 是垃圾值，但 parallel 标志
-        # 保证这些行最终走 bevel，垃圾结果不会被消费
+        # 防除零：平行行把分母换成 1.0，其 factor 是垃圾值但 parallel 保证不被消费
         safe_cross = np.where(parallel, 1.0, cross)
         # 克莱姆法则解 previous_end + t·first = current_start + s·second 中的 t：
         # 分子是 delta 与 second 的叉积，分母是两方向的叉积
@@ -137,8 +132,7 @@ def _reconstruct_geometry(
         original = vertices[segments.edge_next_ids[first_ids]].astype(np.float64)
         # miter 尖点偏离原角点的距离：尖角在同等位移下会把交点推得很远（尖刺）
         distance = np.linalg.norm(intersections - original, axis=1)
-        # 位移幅度标尺：取两侧位移绝对值与 1（DBU）的最大者；下界 1 保证零位移
-        # 时阈值不退化为 0，miter_limit 以「位移的倍数」表达允许的尖刺长度
+        # 位移幅度标尺：两侧位移绝对值与 1 DBU 取最大；下界 1 保证零位移时阈值不退化为 0
         scale = np.maximum.reduce(
             (np.abs(values[previous[corners]]), np.abs(values[corners]), np.ones(np.count_nonzero(corners)))
         )
@@ -161,8 +155,9 @@ def _reconstruct_geometry(
         # 取共线中点（落在合并直线上，各 fragment 采样等价）。保持
         # float64 连续域，不随下方 np.rint 整数化——梯度采样需要追踪
         # fragment 身份而非最终轮廓顶点。
-        following = np.arange(count, dtype=np.int64) + 1  # 环内下一段
-        following[segments.ring_segment_offsets[1:] - 1] = segments.ring_segment_offsets[:-1]  # 各环尾段回卷到首段
+        # following[i] = 环内下一段，各环尾段回卷到首段
+        following = np.arange(count, dtype=np.int64) + 1
+        following[segments.ring_segment_offsets[1:] - 1] = segments.ring_segment_offsets[:-1]
         segment_starts = np.where(two_points[:, None], current_starts, junctions)
         segment_ends = np.where(two_points[following, None], previous_ends[following], junctions[following])
         segment_midpoints = (segment_starts + segment_ends) * 0.5

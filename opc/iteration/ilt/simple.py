@@ -111,7 +111,7 @@ def optimize_simple_macro(
     for state_index in range(config.iterations + 1):
         build_gradient = state_index < config.iterations  # 末状态纯评价
         macro_gradient = np.zeros_like(flat_parameters) if build_gradient else None
-        started = time.perf_counter()  # 本状态全部 core 评价计时
+        started = time.perf_counter()
 
         def slot_values(
             pack: BatchPack, _build: bool = build_gradient, _gradient=macro_gradient, _parameters=flat_parameters

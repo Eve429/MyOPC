@@ -20,9 +20,8 @@ FloatArray = NDArray[np.float64]
 def _count_edge_fragments(lengths: np.ndarray, corner_dbu: float, maximum_dbu: float) -> np.ndarray:
     """按角部短段和均衡中段策略计算每条数学边的切分数量。
 
-    纯 O(edge) 向量公式，唯一调用方是 fragment_edges 的真实切分——
-    旧"物化前估算"调用方已随 00_PAST 归档消失，2026-08-21 自
-    opc/input/_fragmentation.py 并入为私有函数（消除两同名模块混淆）。
+    纯 O(edge) 向量公式，唯一调用方是 fragment_edges 的真实切分
+    （2026-08-21 自 opc/input/_fragmentation.py 并入为私有函数）。
     """
     counts = np.ceil(lengths / maximum_dbu).astype(np.int64)
     long_edges = lengths > 2.0 * maximum_dbu

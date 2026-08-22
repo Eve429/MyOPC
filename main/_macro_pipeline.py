@@ -384,10 +384,8 @@ def save_lithography_pngs(
 ) -> dict:
     """流式保存指定版图每 tile 的 nominal 连续/二值 PNG 和 manifest。
 
-    参数全部显式（迭代工作流与 GDS 直调入口共用同一内核）：网格按给定
-    GDS 自身 layer bbox 规划，不依赖任何迭代期 plan 语义。top_cell 仅源
-    版图可能需要（多顶层歧义由 layout 层报错）；最终合并 GDS 恒单顶层，
-    调用方不传即可。
+    网格按给定 GDS 自身 layer bbox 规划（不依赖迭代期 plan）；top_cell
+    仅源版图需要——多顶层不指名即歧义失败，最终合并 GDS 恒单顶层不传。
     """
     with LayoutDB.open(gds_path, top_cell) as database:  # 打开一次，全程在内物化消费
         bounds = database.layer_bbox(layer)  # 目标层真实包络（不用魔法框）
@@ -437,16 +435,13 @@ def save_lithography_pngs(
                 images = printed.cpu().numpy()  # 取回 CPU
                 del printed, mask_tensor  # 每 batch 写完立即释放
                 for spec, image in zip(specs, images):  # 逐 tile 写 PNG
-                    tile_id = spec.core_id  # 稳定 tile 编号
-                    # 图片文件第 0 行显示在顶部，而模型数组第 0 行是最低 Y——
-                    # 只在此 I/O 边界做一次上下翻转（与 geometry 栅格 PNG 同款
-                    # 约定）；翻转与逐元素灰度/阈值变换可交换，先翻后派生
+                    tile_id = spec.core_id
+                    # PNG 行 0 显示在顶部而模型数组行 0 是最低 Y，只在此 I/O
+                    # 边界翻转一次（项目方向不变量）；翻转与灰度/阈值变换可交换
                     top_down = np.flipud(image)
-                    nominal_png = output_dir / f"{tile_id}_nominal.png"  # 连续灰度
-                    # 连续值 0~255
+                    nominal_png = output_dir / f"{tile_id}_nominal.png"
                     Image.fromarray(np.rint(top_down * 255.0).astype(np.uint8), mode="L").save(nominal_png)
-                    binary_png = output_dir / f"{tile_id}_binary.png"  # 阈值二值
-                    # 阈值以上 255、其余 0
+                    binary_png = output_dir / f"{tile_id}_binary.png"
                     Image.fromarray(np.where(top_down >= threshold, 255, 0).astype(np.uint8), mode="L").save(binary_png)
                     # manifest 条目
                     tiles.append(
@@ -501,10 +496,10 @@ def save_final_lithography(
     batch_size: int,
     output_dir: Path,
 ) -> dict:
-    """从 plan 提取网格六键，对最终合并版图留档（save_lithography_pngs 薄包装）。
+    """从 plan 提取六键，对最终合并版图留档（save_lithography_pngs 薄包装）。
 
-    不传 top_cell：plan["top_cell"] 是源版图顶层名，最终合并 GDS 的顶层
-    是合并器写出的唯一结果 Cell，用源名打开反而失败。
+    不传 top_cell：plan["top_cell"] 是源版图顶层名，final GDS 顶层是
+    合并器写出的结果 Cell，用源名打开反而失败。
     """
     layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = _plan_lithography_arguments(plan)
     return save_lithography_pngs(
@@ -519,12 +514,11 @@ def save_source_lithography(
     batch_size: int,
     output_dir: Path,
 ) -> dict:
-    """同一内核对源（未 OPC）版图留档：与最终留档同参数、可逐 tile 对照。
+    """同一内核对源（未 OPC）版图留档：同参数，可逐 tile 对照。
 
-    与 save_final_lithography 的唯一差异是显式传 plan["top_cell"]——源
-    版图可能有多个顶层 Cell，不指名时打开即歧义失败。tile 网格按源 GDS
-    自身 layer bbox 规划，与最终目录的网格不保证逐 tile 重合，对照以
-    各自 manifest 的 ownership_box 对账。
+    差异点是显式传 plan["top_cell"]（源版图可多顶层）；tile 网格按源
+    GDS 自身 bbox 规划，与最终目录不保证重合，对照以 manifest 的
+    ownership_box 对账。
     """
     layer, polarity, core_dbu, context_dbu, pixel_dbu, canvas_pixels = _plan_lithography_arguments(plan)
     return save_lithography_pngs(

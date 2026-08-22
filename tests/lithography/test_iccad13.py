@@ -641,22 +641,22 @@ class TestMainEntry:
         """生成上下覆盖率不同的单层小版图（dbu=1nm，光照结果可判方向）。"""
         import klayout.db as kdb
 
-        layout = kdb.Layout()  # 独立版图
-        layout.dbu = 0.001  # 1 nm/DBU
-        top = layout.create_cell("TOP")  # 唯一顶层
+        layout = kdb.Layout()
+        layout.dbu = 0.001
+        top = layout.create_cell("TOP")
         top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 20, 120, 40))  # 下块（全宽）
         top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 60, 80, 80))  # 上块（半宽）
-        layout.write(str(path))  # 写盘
-        return path  # 返回路径
+        layout.write(str(path))
+        return path
 
     def _run_entry(self, cwd, tmp) -> subprocess.CompletedProcess:
         """以小参数直跑 GDS→光刻入口（CPU、产物显式落在 tmp）。"""
         from pathlib import Path
 
-        gds = self._write_gds(tmp / "reticle.gds")  # 生成式输入版图
-        script = Path(__file__).resolve().parents[2] / "main" / "main_test_lithography.py"  # 入口脚本
+        gds = self._write_gds(tmp / "reticle.gds")
+        script = Path(__file__).resolve().parents[2] / "main" / "main_test_lithography.py"
         # 小窗口参数：core 128 + 2×64 = 256 ≤ 画布 256×8，单 tile 跑得快
-        return subprocess.run(  # 与用户手工直跑同构
+        return subprocess.run(
             [
                 sys.executable,
                 str(script),
@@ -685,36 +685,30 @@ class TestMainEntry:
 
     def test_entry_runs_from_repository_root(self, project_root, tmp_path):
         """从仓库根直跑退出码 0，打印关键标记且产物落盘。"""
-        completed = self._run_entry(project_root, tmp_path)  # 仓库内直跑
-        assert completed.returncode == 0, completed.stderr  # 正常退出
-        for marker in ("device=", "tile 数：", "manifest：", "已保存"):  # 输出标记
-            assert marker in completed.stdout, marker  # 缺一即失败
-        out = tmp_path / "litho_out"  # 留档目录
-        manifest = json.loads(  # 读清单
-            (out / "manifest.json").read_text(encoding="utf-8")
-        )
-        assert manifest["tile_count"] > 0  # 至少一个 tile
-        for tile in manifest["tiles"]:  # 逐 tile 检查
-            assert (out / tile["nominal_png"]).is_file()  # 连续 PNG
-            assert (out / tile["binary_png"]).is_file()  # 二值 PNG
+        completed = self._run_entry(project_root, tmp_path)
+        assert completed.returncode == 0, completed.stderr
+        for marker in ("device=", "tile 数：", "manifest：", "已保存"):
+            assert marker in completed.stdout, marker
+        out = tmp_path / "litho_out"
+        manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["tile_count"] > 0
+        for tile in manifest["tiles"]:
+            assert (out / tile["nominal_png"]).is_file()
+            assert (out / tile["binary_png"]).is_file()
 
     def test_entry_runs_outside_repository(self, project_root, tmp_path):
         """从仓库外工作目录直跑同样成功（脚本自做 sys.path 引导）。"""
-        completed = self._run_entry(tmp_path, tmp_path)  # cwd=仓库外目录
-        assert completed.returncode == 0, completed.stderr  # 不依赖 cwd
-        assert "device=" in completed.stdout  # 完整跑通
+        completed = self._run_entry(tmp_path, tmp_path)
+        assert completed.returncode == 0, completed.stderr
+        assert "device=" in completed.stdout
 
     def test_entry_leaves_worktree_unchanged(self, project_root, tmp_path):
         """入口不生成仓库内临时产物（显式 --out 到 tmp，git status 前后一致）。"""
-        status = ["git", "status", "--porcelain"]  # 只读查询
-        before = subprocess.run(  # 运行前快照
-            status, cwd=project_root, capture_output=True, text=True, check=True
-        ).stdout
-        self._run_entry(project_root, tmp_path)  # 完整执行一次
-        after = subprocess.run(  # 运行后快照
-            status, cwd=project_root, capture_output=True, text=True, check=True
-        ).stdout
-        assert after == before  # 零新增产物
+        status = ["git", "status", "--porcelain"]
+        before = subprocess.run(status, cwd=project_root, capture_output=True, text=True, check=True).stdout
+        self._run_entry(project_root, tmp_path)
+        after = subprocess.run(status, cwd=project_root, capture_output=True, text=True, check=True).stdout
+        assert after == before
 
 
 class TestEntryValidation:

@@ -599,3 +599,11 @@ skipped 前后一致。
 改用 macro-only，core 内跨界段由中点 owner + membership 处理。补充两种路径
 差异和跨 core 采样回归，定向套件 170 passed；同步更新当前数据流、边段契约和
 开发手册。未修改 layout、geometry、00_PAST。
+
+## 2026-08-22（会话：Simple MB-OPC 指标趋势图）
+
+Simple 运行成功后从各 macro 的 `metrics.json` 读取已评价状态，默认保存
+`metrics_trends/macro_<id>.png` 和 `overview_mean.png`；支持 Python 参数
+`overview_mode="lines"`，`[output].save_metric_trends=false` 可关闭。新增
+summary 趋势路径元数据、四面板 PNG 测试和配置默认值测试。定向趋势测试 3
+passed；全量 runner 仍有既有入口路径/field warning 失败，详见本任务 findings。

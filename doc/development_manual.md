@@ -164,7 +164,12 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
   `final.gds` + 可选 `final_lithography/`（逐 tile nominal/binary PNG +
   manifest，PNG 在 I/O 边界上下翻转）与 `final_lithography_source/`（源
   版图对照留档，同网格参数；开启后收尾阶段前向次数翻倍）；
-  `[mbopc]` 段 `show_progress` 控制 tqdm（自动测试一律 false）。
+  `[output]` 段 `save_metric_trends` 默认开启，运行成功后额外保存
+  `metrics_trends/macro_<id>.png` 和 `overview_mean.png`；每张图包含
+  EPE/L2/PVBand/moved_segments 四个状态趋势面板。Python 调用
+  `run_mbopc(..., overview_mode="lines")` 可改为逐 macro 叠加总览；关闭
+  `save_metric_trends` 则不生成趋势图。`[mbopc]` 段 `show_progress` 控制
+  tqdm（自动测试一律 false）。
 
 ## 8. 梯度 MB-OPC（opc/iteration/mbopc/gradient.py，2026-08-17 迁移）
 

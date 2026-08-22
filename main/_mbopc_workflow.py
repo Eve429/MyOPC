@@ -182,6 +182,8 @@ def run_mbopc_workflow(method: MBOPCMethod, config_path: str | Path) -> dict:
         "macro_count": macro_count,
         "core_count": plan["core_count"],
         "segment_count_sum": plan["segment_count_sum"],
+        "work_dir": str(work_dir),
+        "save_metric_trends": output.save_metric_trends,
         "device": str(model.device),
         "iterations": solver_config.iterations,
         **method.summary_extras(solver_config),

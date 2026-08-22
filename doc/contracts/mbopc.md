@@ -109,6 +109,12 @@ save_source_lithography(plan, source_layout, model, batch_size, output_dir)
   bbox 规划不保证重合；summary 记 source_lithography_tiles）+
   summary.json（summary 逐 macro 键与 gradient 入口对称：
   best_state_index/state_count）。
+- **Simple 趋势图**：`[output].save_metric_trends` 默认开启；Simple 入口在
+  所有 macro 完成并写出 `metrics.json` 后保存
+  `metrics_trends/macro_<id>.png` 与 `overview_mean.png`。每张图含
+  EPE/L2/PVBand/moved_segments 四个面板；Python 调用可传
+  `overview_mode="lines"` 保存逐 macro 叠加总览。趋势图不重新运行模型，
+  summary 的 `metric_trends` 记录输出路径；关闭开关时该字段为 null。
 - **内存**：target uint8 LRU；GPU 批后释放；最终 PNG/merge 验证逐窗口物化
   （merge patches 持有全部 clipped 为已知上界——PatchWriter 接口在
   geometry/）。

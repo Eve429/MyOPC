@@ -34,6 +34,7 @@ target_cache_mb = 512
 
 [output]
 save_final_lithography = true
+save_metric_trends = true
 show_progress = true
 work_dir = "../output/mbopc_multi_macro"
 final_layout = "../output/mbopc_multi_macro/bench_30um_mbopc.gds"

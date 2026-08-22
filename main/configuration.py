@@ -191,6 +191,7 @@ class OutputConfig:
     final_cell_mode: Literal["single_cell", "macro_cells"]  # 写出 Cell 模式
     work_dir: Path | None = None  # 工作产物根目录；流程消费方查 None
     save_final_lithography: bool = False  # 是否保存最终光刻 PNG
+    save_metric_trends: bool = True  # 是否保存 Simple MB-OPC 指标趋势图
     show_progress: bool = False  # 是否显示 tqdm 进度
 
 

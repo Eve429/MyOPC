@@ -77,6 +77,9 @@ D:/app/miniforge/envs/myopc/python.exe main/run_mbopc.py config/mbopc_multi_macr
 通过标准：退出码 0；摘要含 device、每 macro `best_state/best_epe/stop`、
 合并耗时与最终版图；`work_dir` 下 plan.json、problems/、macros/<id>/
 {result.npz,best.gds,metrics.json}、summary.json、final.gds；
+`save_metric_trends=true` 时还必须有每 macro 四面板 PNG、overview_mean.png，
+且 summary.json 的 `metric_trends` 记录路径；关闭该开关时不得创建
+metrics_trends/；
 `save_final_lithography=true` 时 final_lithography/ 与源版图对照
 final_lithography_source/ 各有逐 tile PNG 与 manifest（summary 记
 final/source_lithography_tiles）。历史实测（`gcd_45nm`，版图已退役，现行 config 已切 `bench_30um_clear`）：

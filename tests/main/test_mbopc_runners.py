@@ -3,10 +3,12 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import klayout.db as kdb
 import numpy as np
 import pytest
+from PIL import Image
 
 import main.run_mbopc_simple as workflow
 from layout import DbuBox, LayerSpec, LayoutDB
@@ -57,6 +59,7 @@ def _write_config(tmp_path, layout_path, macro_grid="[1, 1]", layout_extra="", *
         "target_cache_mb": 16,
         "device": "cpu",
         "save_final_lithography": "true",
+        "save_metric_trends": "false",
         "show_progress": "false",
         "final_cell_mode": "single_cell",
     }
@@ -96,6 +99,7 @@ target_cache_mb = {values["target_cache_mb"]}
 [output]
 work_dir = "{(tmp_path / "work").as_posix()}"
 save_final_lithography = {values["save_final_lithography"]}
+save_metric_trends = {values["save_metric_trends"]}
 show_progress = {values["show_progress"]}
 final_layout = "{(tmp_path / "final.gds").as_posix()}"
 final_cell_mode = "{values["final_cell_mode"]}"
@@ -169,6 +173,41 @@ class TestSingleMacroRunner:
         assert records[0]["moved_segments"] == 0  # baseline 无移动
         assert len(records) <= summary["iterations"] + 1  # 不超过迭代上限
 
+    def test_metric_trend_pngs_are_saved_after_simple_run(self, tmp_path):
+        """开启趋势图后保存 macro 四面板图、总览图并回写 summary。"""
+        gds = _write_gds(tmp_path)
+        summary = workflow.run_mbopc(_write_config(tmp_path, gds, save_metric_trends="true"))
+        trend = summary["metric_trends"]
+        assert trend["overview_mode"] == "mean"
+        assert Path(trend["overview_png"]).is_file()
+        assert len(trend["macro_pngs"]) == 1
+        for path in [trend["overview_png"], *trend["macro_pngs"].values()]:
+            with Image.open(path) as image:
+                assert image.width > 0 and image.height > 0
+        saved = json.loads((tmp_path / "work" / "summary.json").read_text(encoding="utf-8"))
+        assert saved["metric_trends"] == trend
+
+    def test_metric_trend_overview_lines_mode_keeps_macro_curves(self, tmp_path):
+        """lines 模式按 macro 叠加曲线，不要求各 macro 状态数相同。"""
+        macros = []
+        for macro_id, records in {
+            "mr0c0": [
+                {"state_index": 0, "epe": 4, "l2": 8, "pvband": 2, "moved_segments": 0},
+                {"state_index": 1, "epe": 3, "l2": 6, "pvband": 1, "moved_segments": 2},
+            ],
+            "mr0c1": [
+                {"state_index": 0, "epe": 5, "l2": 9, "pvband": 3, "moved_segments": 0},
+            ],
+        }.items():
+            metrics_path = tmp_path / "macros" / macro_id / "metrics.json"
+            metrics_path.parent.mkdir(parents=True)
+            metrics_path.write_text(json.dumps({"records": records}), encoding="utf-8")
+            macros.append({"macro_id": macro_id, "metrics_json": str(metrics_path), "best_state_index": 0})
+        trend = workflow.save_metric_trends({"work_dir": str(tmp_path), "macros": macros}, overview_mode="lines")
+        assert trend["overview_mode"] == "lines"
+        assert trend["overview_png"].endswith("overview_lines.png")
+        assert Path(trend["overview_png"]).is_file()
+
     def test_final_lithography_manifest_and_pngs(self, single):
         """save_final_lithography 落盘 manifest 与逐 tile PNG。"""
         tmp, summary = single  # 解包
@@ -201,9 +240,11 @@ class TestSingleMacroRunner:
         summary = workflow.run_mbopc(_write_config(tmp_path, gds, save_final_lithography="false"))
         assert summary["final_lithography_tiles"] is None
         assert summary["source_lithography_tiles"] is None
+        assert summary["metric_trends"] is None
         work = tmp_path / "work"
         assert not (work / "final_lithography").exists()
         assert not (work / "final_lithography_source").exists()
+        assert not (work / "metrics_trends").exists()
 
     def test_multi_top_cell_source_archive_completes(self, tmp_path):
         """源版图多顶层时源对照仍完成（显式传 plan 顶层名，回归守卫）。"""

@@ -1,6 +1,7 @@
 """统一配置体系 load_config 的行为测试（规格 §24.1–24.9）。"""
 
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -102,6 +103,11 @@ class TestSingleAndMultiConfig:
         assert partition.macro_grid == (2, 2)  # 元组归一
         assert litho.pixel_nm == Decimal(8)  # Decimal 字段
         assert output.final_cell_mode == "single_cell"  # Literal 字段
+
+    def test_output_metric_trends_default_enabled(self):
+        """输出配置默认开启 Simple MB-OPC 指标趋势图。"""
+        output = OutputConfig(Path("out"), "single_cell")
+        assert output.save_metric_trends is True
 
     def test_repeated_request_returns_independent_instances(self, tmp_path):
         """同一 Config 请求两次：两次独立解析（无共享可变状态）。"""

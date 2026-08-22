@@ -403,15 +403,19 @@ def save_final_lithography(
                 del printed, mask_tensor  # 每 batch 写完立即释放
                 for spec, image in zip(specs, images):  # 逐 tile 写 PNG
                     tile_id = spec.core_id  # 稳定 tile 编号
+                    # 图片文件第 0 行显示在顶部，而模型数组第 0 行是最低 Y——
+                    # 只在此 I/O 边界做一次上下翻转（与 geometry 栅格 PNG 同款
+                    # 约定）；翻转与逐元素灰度/阈值变换可交换，先翻后派生
+                    top_down = np.flipud(image)
                     nominal_png = output_dir / f"{tile_id}_nominal.png"  # 连续灰度
                     # 连续值 0~255
                     Image.fromarray(
-                        np.rint(image * 255.0).astype(np.uint8), mode="L").save(
-                        nominal_png)
+                        np.rint(top_down * 255.0).astype(np.uint8),
+                        mode="L").save(nominal_png)
                     binary_png = output_dir / f"{tile_id}_binary.png"  # 阈值二值
                     # 阈值以上 255、其余 0
                     Image.fromarray(
-                        np.where(image >= threshold, 255, 0).astype(np.uint8),
+                        np.where(top_down >= threshold, 255, 0).astype(np.uint8),
                         mode="L").save(binary_png)
                     # manifest 条目
                     tiles.append({

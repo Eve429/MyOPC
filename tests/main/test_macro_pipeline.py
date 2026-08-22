@@ -7,11 +7,13 @@ from pathlib import Path
 import klayout.db as kdb
 import numpy as np
 import pytest
+import torch  # 存根模型设备对象
 
 import main.run_macro_pipeline as pipeline
 from layout import DbuBox, LayerSpec, LayoutDB
 from main._macro_pipeline import resolve_field_bounds  # 处理框解析
 from main.configuration import LayoutConfig  # [layout] 段
+from opc.input import rasterize_mask_canvas  # 期望画布独立重算
 from opc.input.edge import MacroProblem, reconstruct_region
 
 # 测试版图：DBU=1nm，bar 图形使目标层 bbox 为 (20,20)-(140,60)，
@@ -34,6 +36,23 @@ def _write_gds(tmp_path):
     top.shapes(layout.layer(1, 0)).insert(kdb.Box(60, 30, 100, 50))  # 内条（跨 macro 切线）
     top.shapes(layout.layer(2, 0)).insert(kdb.Box(30, 32, 130, 38))  # 非目标对照层
     path = tmp_path / "reticle.gds"  # 输出路径
+    layout.write(str(path))  # 写盘
+    return path  # 返回路径
+
+
+def _write_asymmetric_gds(tmp_path):
+    """生成上下覆盖率不同的单层 GDS 并返回路径。
+
+    共享 _write_gds 三层图形关于 y=40 镜像对称，任何 Y 翻转都无法被像素级
+    检测；这里下锚框全宽、上锚框半宽——层 bbox 与共享版图一致（默认配置
+    契约全部成立），但同列行覆盖率上下不同，方向断言有真实判别力。
+    """
+    layout = kdb.Layout()  # 独立原生版图
+    layout.dbu = 0.001  # 1 nm/DBU，配置数值直接等于 DBU
+    top = layout.create_cell("TOP")  # 唯一顶层
+    top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 20, 140, 28))  # 下锚框（全宽）
+    top.shapes(layout.layer(1, 0)).insert(kdb.Box(20, 52, 80, 60))  # 上锚框（半宽）
+    path = tmp_path / "asymmetric.gds"  # 输出路径
     layout.write(str(path))  # 写盘
     return path  # 返回路径
 
@@ -541,40 +560,39 @@ class TestFinalMerge:
             assert db.layers() == (LayerSpec(1, 0),)  # 只有目标层被复制
 
 
+class _StubLithoConfig:
+    """留档消费的最小配置视图。"""
+    canvas = 256  # 画布
+    print_threshold = 0.5  # 二值阈值
+
+
+class _StubLithoModel:
+    """直通 stub：forward_many 原样返回 mask（无光刻计算）。"""
+    device = torch.device("cpu")  # CPU 设备
+    config = _StubLithoConfig()  # 配置视图
+
+    def condition(self, name):
+        """按名返回占位条件（stub 不消费）。"""
+        from types import SimpleNamespace  # stub 条件对象
+        return SimpleNamespace(name=name)
+
+    def forward_many(self, mask, conditions):
+        """nominal = mask 直通。"""
+        return {"nominal": mask}
+
+
 class TestSaveFinalLithography:
     """公共最终光刻留档（随 save_final_lithography 迁入本模块补直测）。"""
 
     def test_manifest_and_pngs_from_stub_model(self, tmp_path):
         """stub 模型直测：manifest 键集、逐 tile 双 PNG、tile 数与返回一致。"""
-        from types import SimpleNamespace  # stub 条件对象
-
-        import torch  # stub 设备
         gds = _write_gds(tmp_path)  # 生成版图（直接当作最终版图输入）
         configs = _load(_write_config(tmp_path, gds))  # 统一加载
         plan = _prepare(configs)  # 阶段 0/1（plan 含留档所需键）
-
-        class _StubConfig:
-            """留档消费的最小配置视图。"""
-            canvas = 256  # 画布
-            print_threshold = 0.5  # 二值阈值
-
-        class _StubModel:
-            """直通 stub：forward_many 原样返回 mask（无光刻计算）。"""
-            device = torch.device("cpu")  # CPU 设备
-            config = _StubConfig()  # 配置视图
-
-            def condition(self, name):
-                """按名返回占位条件（stub 不消费）。"""
-                return SimpleNamespace(name=name)
-
-            def forward_many(self, mask, conditions):
-                """nominal = mask 直通。"""
-                return {"nominal": mask}
-
         out_dir = tmp_path / "final_png"  # 留档目录
         from main._macro_pipeline import save_final_lithography  # 公共后处理真身
         manifest = save_final_lithography(  # 直测
-            plan, gds, _StubModel(), 4, out_dir)
+            plan, gds, _StubLithoModel(), 4, out_dir)
         assert manifest["format_version"] == 1  # manifest 版本
         assert manifest["pixel_dbu"] == plan["pixel_dbu"]  # 像素一致
         assert manifest["tile_count"] == len(manifest["tiles"])  # 数目一致
@@ -583,6 +601,34 @@ class TestSaveFinalLithography:
             assert (out_dir / tile["nominal_png"]).is_file()  # 连续 PNG
             assert (out_dir / tile["binary_png"]).is_file()  # 二值 PNG
             assert len(tile["ownership_box"]) == 4  # 计分框四元组
+
+    def test_nominal_and_binary_pngs_are_top_down_flipped(self, tmp_path):
+        """PNG 内容必须等于 flipud(画布)：图片行 0 在顶部、模型行 0 在底部。"""
+        from PIL import Image  # PNG 像素读回
+
+        gds = _write_asymmetric_gds(tmp_path)  # 上下不对称版图（镜像版测不出翻转）
+        plan = _prepare(_load(_write_config(tmp_path, gds)))  # 阶段 0/1
+        out_dir = tmp_path / "flip_png"  # 留档目录
+        from main._macro_pipeline import save_final_lithography  # 公共后处理真身
+        manifest = save_final_lithography(  # 直测
+            plan, gds, _StubLithoModel(), 4, out_dir)
+        layer = LayerSpec(1, 0)  # 目标层
+        with LayoutDB.open(gds) as database:  # 期望画布的独立数据源
+            tile = manifest["tiles"][0]  # 首 tile 足以暴露翻转
+            context = DbuBox(*tile["context_box"])  # 该 tile 查询框（manifest 带全坐标）
+            region = (database.query([layer], context)
+                      .materialize_intersecting().region(layer))
+            expected = rasterize_mask_canvas(  # float 画布，行 0 = 最低 Y
+                region, context, int(plan["pixel_dbu"]),
+                int(plan["canvas_pixels"]), polarity="clear")
+        # 反退化：该 tile 覆盖率上下确实不同，方向断言有判别力
+        assert not np.array_equal(expected, np.flipud(expected))
+        nominal = np.rint(expected * 255.0).astype(np.uint8)  # 灰度期望（存根直通）
+        binary = np.where(expected >= 0.5, 255, 0).astype(np.uint8)  # 二值期望
+        got_nominal = np.asarray(Image.open(out_dir / tile["nominal_png"]))
+        got_binary = np.asarray(Image.open(out_dir / tile["binary_png"]))
+        assert np.array_equal(got_nominal, np.flipud(nominal))  # 恰一次上下翻转
+        assert np.array_equal(got_binary, np.flipud(binary))  # 二值同款翻转
 
 
 class TestResolveFieldBounds:
